@@ -1,45 +1,37 @@
-# IMPL: klepsydra#440 + New session: split button, engine menu, and sensible default (Variant A)
+# IMPL: PR #477 round 2 (ns477): + New session wired to the real app (#440)
 
-Brief: ~/.local/state/fleet-orchestrator/briefs-free/newsession-440.md
-Issue: https://github.com/ajbarea/klepsydra/issues/440
-Decision: Variant A (split button and menu) from PR #459
+Brief: ~/.local/state/fleet-orchestrator/briefs (ns477). PR #477, branch feat/new-session-split-440
+(local branch `ns477` in .claude/worktrees/ns477 pushes there). Decision: Variant A (PR #459).
 
-## Slice
-1. Create `src/fleet/newsession.js` implementing engine metadata, default engine resolution (user preference -> last used -> first installed/signed in), menu model grouping, quota calculations from existing gauge readings, and free-first route marks.
-2. Add unit tests in `src/fleet-newsession.test.js` covering default engine determination, menu contents, default engine omission from menu, and disabled states for missing/unsigned engines.
-3. Integrate split button and engine menu in `src/wall.html`, `src/fleet/wall.js`, and `src/fleet/wall.css`:
-   - Split button naming default engine with logo, account mono badge, and accessible title.
-   - Caret popover toggle with chevron icon, keyboard reachable without opening on focus.
-   - Engine menu rendered with other engines, quota room, model picker for Antigravity, recommended badge, and "Set as default".
-   - Start session wired to default engine and individual menu engines.
-4. Update `scripts/test_wall_browser.py` with browser test covering 1920 and 390 viewports in dark and light themes, verifying button labels, engine menu contents, and saving comparison screenshots to `shots/2026-11-18/new-session-build-*.png`.
-5. Run full test suite, lint, commit, push branch, open PR, and report to orchestrator.
+## Design (decided 11-19)
+- Launcher (`hooks/klepsydra-launch.sh`): `new DIR claude ACCOUNT [MODEL]` finds the config folder
+  whose login is ACCOUNT (never by folder name: on AJ's PC ~/.claude is RIT, ~/.claude-rit is
+  Personal); `new DIR copilot [MODEL]` starts Copilot locked like `fleet delegate`;
+  `new DIR agy MODEL` refuses a model whose quota group is spent (fresh `agy -p /quota`);
+  `models` adds each model's quota group from `/quota`; `engines` prints what is installed and
+  which Claude accounts have a login here.
+- Rust (`launch.rs`): launch_session takes engine, account, model; refuses an account whose
+  newest reading has a live window at 100% (`usage::spent_until`, fleet crate); writes
+  `new_session_last` to prefs.json on a launch that started. New commands: `engines_status`,
+  `new_session_prefs`, `set_new_session_default`.
+- Wall: usage from `read_usage` through `toRows` (desktop snapshot has none); menu built only on
+  open and on user actions, focus kept by stable key; Escape returns to the caret; no data
+  through innerHTML; native radios; Recommended first; install/sign-in step shown inline.
+- Follow-up issue (PR says Refs #440): Fable's own allowance (not in statusLine JSON,
+  anthropics/claude-code#73770), Copilot model list and sign-in state (no CLI command for
+  either), Claude & GPT weekly bucket in readings.
 
 ## Done
-- Created `src/fleet/newsession.js` implementing engine resolution (preferred -> last used -> first installed/signed in), menu entry construction, Antigravity model grouping, account quota room calculations, free-first recommendation marks.
-- Created `src/fleet-newsession.test.js` with 13 unit tests covering all resolution rules, menu engine listing, default exclusion, disabled states.
-- Implemented Variant A split button and engine menu in `src/wall.html`, `src/fleet/wall.js`, and `src/fleet/wall.css`:
-  - Split button naming default engine with logo, account mono badge, and accessible title.
-  - Caret button with chevron icon toggling native popover engine menu.
-  - `#new-menu` rendered with other engines, quota room, Antigravity models (grouped into Gemini usable vs Claude/GPT spent), Recommended badge, "Start session" with chosen model, and "Set as default".
-  - Popover positioning fixed for desktop (`1920x1000`) and mobile (`390x844`), with viewport boundary overrides for popover UA styles.
-- Updated browser tests in `scripts/test_wall_browser.py` (`agy_menu`):
-  - Verified 1920 and 390 viewports in dark and light schemes (28 passed, 0 failed).
-  - Saved comparison shots to `shots/2026-11-18/new-session-build-*.png` and `/mnt/c/Users/ajbar/fleet-briefing/shots/2026-11-18/`.
-- Verified all test suites pass:
-  - `node --test src/*.test.js`: 527 passed, 0 failed.
-  - `npm run lint`: Biome checked 67 files, 0 errors.
-  - `uvx ruff check`: clean.
-  - Shell suites: `statusline/test_statusline.sh`, `hooks/test_fleet.sh` (606 passed), `scripts/test_measure_memory.sh` (28 passed), `scripts/test_build_windows.sh` (14 passed).
-  - Rust suites: `cargo clippy -p klepsydra-fleet -- -D warnings` (clean), `cargo test -p klepsydra-fleet` (434 passed).
+- (nothing committed yet this round)
 
 ## Next
-- Commit and push to `feat/new-session-split-440`.
-- Open PR for #440 with labels, assignee, short top, screenshots, and live verification notes.
-- Report to Heph (orchestrator pane) via `fleet send`.
+1. Launcher + test_launch.sh cases.
+2. fleet crate spent_until + tests; launch.rs args + prefs commands + tests.
+3. newsession.js rewrite + unit tests on the real reading shape.
+4. wall.js/html/css; browser test (shots under shots/<date>/).
+5. Live: serve wall with a bridge to the real snapshot, readings and launcher; shots 1920/390
+   dark/light; launch one throwaway session per engine and close it.
 
 ## Verify
-- `node --test src/*.test.js`: 527/527 passed.
-- `scripts/test_wall_browser.py agy_menu`: 28/28 passed across 1920 and 390 dark and light viewports.
-- Biome lint & ruff check: 0 errors.
-- `cargo clippy` & `cargo test -p klepsydra-fleet`: 434/434 passed, clean.
+- node --test src/*.test.js; make test-launch; cargo test -p klepsydra-fleet;
+  scripts/test_wall_browser.py agy_menu; npm run lint; CI for the app crate.

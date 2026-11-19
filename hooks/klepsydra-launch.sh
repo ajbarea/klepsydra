@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # klepsydra's launcher, run by the overlay as
-#   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR [agy MODEL]
-#   wsl.exe -e bash -l .claude/klepsydra-launch.sh models
+#   wsl.exe -e bash -l .claude/klepsydra-launch.sh new DIR [agy MODEL | claude ACCOUNT [MODEL] | copilot [MODEL]]
+#   wsl.exe -e bash -l .claude/klepsydra-launch.sh models|engines
 #   wsl.exe -e bash .claude/klepsydra-launch.sh jump|end|interrupt|wrapup SOCKET PANE PID START
 # `new` starts claude in DIR as a window of tmux session "fleet" (socket
 # "klepsydra"), or with `agy MODEL` Antigravity's CLI on MODEL (#323), locked
-# (read-only, no shell) and once the helper rules are in agy's rules folder; `models` lists agy's models; `jump` brings PANE's window to the front of its session, once
+# (read-only, no shell) and once the helper rules are in agy's rules folder, refused while
+# the model's quota group is spent; `claude ACCOUNT` starts claude on the config folder logged
+# in to ACCOUNT (#440), `copilot` Copilot's CLI locked as `fleet delegate` runs it; `models`
+# lists agy's models with their quota group; `engines` says which engines and Claude accounts
+# can start here; `jump` brings PANE's window to the front of its session, once
 # PANE still hosts Claude process PID (START = /proc/PID/stat field 22).
 # `end` types /exit into that Claude Code, `wrapup` types /klepsydra-wrapup
 # and `interrupt` presses Esc there, on klepsydra's own tmux server only. `new` and `jump` open a Windows Terminal tab (window "fleet", titled TAB_TITLE) only when no
@@ -19,6 +23,11 @@ TAB_TITLE="klepsydra sessions" # also FLEET_TAB in src-tauri/src/launch.rs
 CONF=${KLEPSYDRA_TMUX_CONF:-$HOME/.claude/klepsydra-tmux.conf}
 CLAUDE=${KLEPSYDRA_CLAUDE:-claude}
 AGY=${KLEPSYDRA_AGY:-agy}
+COPILOT=${KLEPSYDRA_COPILOT:-copilot}
+# Claude Code keeps one login per config folder; the default one runs with
+# CLAUDE_CONFIG_DIR unset (fleet/lib.sh FLEET_DEFAULT_CONFIG, FLEET_ACCOUNTS).
+DEFAULT_CONFIG=${FLEET_DEFAULT_CONFIG:-$HOME/.claude}
+ACCOUNT_RE='^[0-9A-Za-z][0-9A-Za-z-]{0,63}$'
 # agy reads AGENTS.md or GEMINI.md, never CLAUDE.md (#323): the short working
 # rules for a fleet helper reach it as an always-on rule. Not ~/.gemini/GEMINI.md,
 # which the Antigravity IDE and Gemini CLI also write.
@@ -32,6 +41,11 @@ RULES_MAX=24000 # agy's limit for one rules file, in bytes
 AGY_LOCK=${KLEPSYDRA_AGY_LOCK:-$HOME/.claude/klepsydra-agy-locked.json}
 WINMNT=${KLEPSYDRA_WINDOWS_MOUNT:-/mnt} # the Windows drives under WSL
 MODEL_RE='^[a-z0-9][a-z0-9.-]{0,63}$'
+# What a folder may ship that an engine loads once the folder is trusted and that
+# runs outside its tool lock (hooks, plugins, skills, MCP): fleet/delegate.sh
+# ENGINE_CONFIG lists the same names. agy walks up to the repo root for its four.
+AGY_CONFIG=(.agents .agent _agents _agent)
+COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .github/extensions .github/mcp.json .mcp.json .vscode/mcp.json .copilot)
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
@@ -146,20 +160,147 @@ agy_settings() {
   printf '%s' "$AGY_LOCK"
 }
 
-# agy's models as one line of JSON, [{"id", "label"}...], since the launcher
-# says one line (`agy models` prints a fetching line, then "ID<TAB>LABEL" lines).
-models() {
-  local out
-  need "$AGY" "agy (Antigravity CLI) was not found on PATH."
-  out=$(timeout 30 "$AGY" models 2>/dev/null) || fail "agy models did not answer."
-  out=$(awk -F'\t' -v re="$MODEL_RE" 'NF == 2 && $1 ~ re && $2 != "" { print $1 "\t" $2 }' <<<"$out")
-  [[ -n $out ]] || fail "agy listed no models."
-  need jq "jq is not installed in this distro."
-  jq -Rnc '[inputs | split("\t") | {id: .[0], label: .[1]}]' <<<"$out"
+# agy's quota as `agy -p /quota --output-format json` reports it (no turn, no
+# quota spent), into QUOTA; empty when it does not answer.
+agy_quota() {
+  QUOTA=$(cd -- "$HOME" && timeout 30 "$AGY" -p /quota --output-format json 2>/dev/null) || QUOTA=""
+  jq -e '.command.data.groups | arrays' >/dev/null 2>&1 <<<"$QUOTA" || QUOTA=""
 }
 
-new() { # dir [agy model]
-  local dir=$1 tool=${2:-claude} model=${3:-} cmd=$CLAUDE what="a session" keycheck=0
+# The jq that gives each model its quota group: a group lists its members by base
+# name ("Models within this group: Claude Sonnet 4.6, ..."), a model's label is
+# that name and a variant ("Claude Sonnet 4.6 (Thinking)"); the group's key is
+# its buckets' id less the window ("3p-5h" -> "3p"), as the statusLine hook files
+# them. A model no group names gets none.
+# shellcheck disable=SC2016 # jq variables, not shell ones
+GROUP_JQ='
+  def base: sub(" \\([^)]*\\)$"; "");
+  ($q | if . == "" then [] else (fromjson | [.command.data.groups[]? | {
+      key: ((.buckets[0].id // "") | sub("-[^-]*$"; "")),
+      names: ((.description // "") | sub("^[^:]*: *"; "") | split(", ")),
+      spent: ([.buckets[]? | select((.remaining_fraction // 1) <= 0) | .reset_time] | first)
+    }]) end) as $groups
+  | [inputs | split("\t") | {id: .[0], label: .[1]} as $m
+     | ([$groups[] | select(.key != "" and (.names | index($m.label | base)))] | first) as $g
+     | $m + (if $g then {group: $g.key} + (if $g.spent then {spent: $g.spent} else {} end) else {} end)]'
+
+# agy's models, "ID<TAB>LABEL" lines, into LIST (`agy models` prints a fetching
+# line first, and nothing else is an id).
+agy_list() {
+  LIST=$(timeout 30 "$AGY" models 2>/dev/null) || fail "agy models did not answer."
+  LIST=$(awk -F'\t' -v re="$MODEL_RE" 'NF == 2 && $1 ~ re && $2 != "" { print $1 "\t" $2 }' <<<"$LIST")
+  [[ -n $LIST ]] || fail "agy listed no models."
+}
+
+# The models and their quota (asked at once, so the two waits overlap) as one
+# JSON array, [{"id", "label", "group"?, "spent"?}...]; "spent" is the time a
+# spent group comes back.
+agy_models_json() {
+  local qf
+  need "$AGY" "agy (Antigravity CLI) was not found on PATH."
+  need jq "jq is not installed in this distro."
+  qf=$(mktemp) || fail "No temporary file for agy's quota."
+  ( agy_quota; printf '%s' "$QUOTA" >"$qf" ) &
+  local qpid=$!
+  agy_list
+  wait "$qpid"
+  QUOTA=$(cat -- "$qf"); rm -f -- "${qf:?}"
+  jq -Rnc --arg q "$QUOTA" "$GROUP_JQ" <<<"$LIST"
+}
+
+# agy's models as one line of JSON, since the launcher says one line.
+models() { agy_models_json; }
+
+# Which engines can start here, as one line of JSON: {"agy", "copilot": on PATH,
+# "claude": the accounts with a login in a config folder}.
+engines() {
+  local dir id ids=() agy=false copilot=false
+  need jq "jq is not installed in this distro."
+  command -v "$AGY" >/dev/null 2>&1 && agy=true
+  command -v "$COPILOT" >/dev/null 2>&1 && copilot=true
+  while IFS= read -r dir; do
+    id=$(account_of "$dir") && [[ $id =~ $ACCOUNT_RE ]] && ids+=("$id")
+  done < <(account_dirs)
+  printf '%s\n' "${ids[@]}" | jq -Rnc --argjson agy "$agy" --argjson copilot "$copilot" \
+    '{claude: ([inputs | select(length > 0)] | unique), agy: $agy, copilot: $copilot}'
+}
+
+# The config folders a Claude login may live in, one per line: FLEET_ACCOUNTS
+# when set (the fleet's own list), else the default folder and every ~/.claude-*.
+account_dirs() {
+  local d
+  if [[ -n ${FLEET_ACCOUNTS:-} ]]; then
+    # shellcheck disable=SC2086 # one folder per word, as fleet/lib.sh reads it
+    printf '%s\n' $FLEET_ACCOUNTS
+    return
+  fi
+  printf '%s\n' "$DEFAULT_CONFIG"
+  for d in "$HOME"/.claude-*/; do [[ -d $d && ! -L ${d%/} ]] && printf '%s\n' "${d%/}"; done
+}
+
+# A config folder's global config file (fleet/lib.sh config_json).
+config_json() { # DIR
+  if [[ ${1%/} == "${DEFAULT_CONFIG%/}" ]]; then printf '%s' "${FLEET_DEFAULT_JSON:-$HOME/.claude.json}"; else printf '%s' "$1/.claude.json"; fi
+}
+
+# The account logged in at config folder DIR (fleet/lib.sh account_of). The
+# login itself (.credentials.json) is only checked for, never read.
+account_of() { # DIR
+  [[ -e $1/.credentials.json ]] || return 1
+  jq -er '.oauthAccount.accountUuid // empty' "$(config_json "$1")" 2>/dev/null
+}
+
+# The config folder logged in to ACCOUNT, by its login, never by its name.
+folder_of() { # ACCOUNT
+  local dir
+  while IFS= read -r dir; do
+    [[ $(account_of "$dir") == "$1" ]] && { printf '%s' "${dir%/}"; return 0; }
+  done < <(account_dirs)
+  return 1
+}
+
+# Refuse a folder that ships an engine's workspace configuration, from DIR up to
+# its repo root: once the folder is trusted (its trust dialog is the only gate),
+# that configuration runs commands outside the lock.
+no_engine_config() { # real-dir engine-name names...
+  local real=$1 what=$2 d top f; shift 2
+  d=$real
+  top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) || top=$real
+  while :; do
+    for f in "$@"; do
+      [[ ! -e $d/$f ]] || fail "$what is not started in $real: $d/$f ships $what workspace configuration (hooks, plugins, skills, MCP), which runs outside the lock once the folder is trusted."
+    done
+    [[ $d != "$top" && $d != / ]] || break
+    d=${d%/*}
+    [[ -n $d ]] || d=/
+  done
+}
+
+# A locked engine's workspace is the one folder its reads reach: never the home
+# folder, a folder that holds it (/home, /), or a Windows drive (/mnt/c).
+locked_workspace() { # dir engine-name: prints the real path
+  local real home
+  real=$(cd -- "$1" && pwd -P) home=$(cd -- "$HOME" && pwd -P)
+  real=${real%/} # "/" becomes "", whose pattern /* holds every path
+  case $home/ in "$real"/*) fail "$2 is not started in $1: its workspace would hold the whole home folder. Pick a project folder." ;; esac
+  [[ $real != "$WINMNT" && $real != "$WINMNT"/* ]] || fail "$2 is not started in $1: the Windows side ($WINMNT) is no workspace, its user folders hold credentials. Pick a project folder in WSL."
+  printf '%s' "${real:-/}"
+}
+
+# Refuse an agy model whose quota group is spent, by agy's own quota asked now,
+# so a menu drawn before the group ran out starts nothing. When agy does not say
+# (no answer, no group for the model) the launch goes ahead: agy reports a spent
+# quota itself.
+agy_spent() { # model
+  local got back
+  need jq "jq is not installed in this distro."
+  got=$(agy_models_json 2>/dev/null) || return 0
+  back=$(jq -r --arg m "$1" '.[] | select(.id == $m) | .spent // empty' <<<"$got" 2>/dev/null)
+  [[ -z $back ]] || fail "Not started: Antigravity's quota for $1 is spent until $back."
+}
+
+new() { # dir [agy model | claude account [model] | copilot [model]]
+  local dir=$1 tool=${2:-claude} arg=${3:-} cmodel=${4:-} cmd=$CLAUDE what="a session" keycheck=0 cfg_set=0 cfg_dir=""
   # shellcheck disable=SC2088 # a literal ~/ from the overlay
   case $dir in
     "~") dir=$HOME ;;
@@ -168,36 +309,43 @@ new() { # dir [agy model]
   [[ -d $dir ]] || fail "The folder $dir does not exist."
   need tmux "tmux is not installed in this distro."
   if [[ $tool == agy ]]; then
+    local model=$arg real
     [[ $model =~ $MODEL_RE ]] || fail "That is not an agy model id: $model"
-    # Its workspace is the one folder its reads reach: never the home folder, a folder that holds
-    # it (/home, /), or a Windows drive (/mnt/c).
-    local real home
-    real=$(cd -- "$dir" && pwd -P) home=$(cd -- "$HOME" && pwd -P)
-    real=${real%/} # "/" becomes "", whose pattern /* holds every path
-    case $home/ in "$real"/*) fail "agy is not started in $dir: its workspace would hold the whole home folder. Pick a project folder." ;; esac
-    [[ $real != "$WINMNT" && $real != "$WINMNT"/* ]] || fail "agy is not started in $dir: the Windows side ($WINMNT) is no workspace, its user folders hold credentials. Pick a project folder in WSL."
-    # A folder that ships agy hooks, plugins or skills runs commands outside the deny rules
-    # once trusted (the trust dialog is the only gate): not for a locked session.
+    real=$(locked_workspace "$dir" agy) || exit 1
     # agy reads workspace configuration from the folder and every folder above it up to the repo root,
     # from four folder names (a bare hooks.json elsewhere in the tree is loaded by nothing, tested).
-    local d=$real top f
-    top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) || top=$real
-    while :; do
-      for f in .agents .agent _agents _agent; do
-        [[ ! -e $d/$f ]] || fail "agy is not started in $dir: $d/$f ships agy workspace configuration (hooks, plugins, skills, MCP), which runs outside the lock once the folder is trusted."
-      done
-      [[ $d != "$top" && $d != / ]] || break
-      d=${d%/*}
-      [[ -n $d ]] || d=/
-    done
+    no_engine_config "$real" agy "${AGY_CONFIG[@]}"
     need "$AGY" "agy (Antigravity CLI) was not found on PATH."
+    agy_spent "$model"
     agy_rules
     local settings
     settings=$(agy_settings) || exit 1
     printf -v cmd '%q --model %s --settings %q --sandbox' "$AGY" "$model" "$settings"
     what="a locked Antigravity session ($model)"
+  elif [[ $tool == copilot ]]; then
+    local model=${arg:-auto} real
+    [[ $model =~ $MODEL_RE ]] || fail "That is not a Copilot model id: $model"
+    real=$(locked_workspace "$dir" Copilot) || exit 1
+    no_engine_config "$real" Copilot "${COPILOT_CONFIG[@]}"
+    need "$COPILOT" "copilot (GitHub Copilot CLI) was not found on PATH."
+    # fleet/engines.sh copilot:interactive: reads only, no writes, no shell, no built-in MCP.
+    printf -v cmd '%q --model %s --allow-all-tools --available-tools view,grep,glob --deny-tool=write --deny-tool=shell --disable-builtin-mcps --disallow-temp-dir' "$COPILOT" "$model"
+    what="a locked Copilot session ($model)"
   else
     need "${CLAUDE%% *}" "claude was not found on PATH."
+    if [[ $tool == claude && -n $arg ]]; then
+      [[ $arg =~ $ACCOUNT_RE ]] || fail "That is not a Claude account id: $arg"
+      [[ -z $cmodel || $cmodel =~ $MODEL_RE ]] || fail "That is not a Claude model: $cmodel"
+      need jq "jq is not installed in this distro."
+      cfg_dir=$(folder_of "$arg") || fail "No Claude Code folder here is logged in to that account; sign in with claude /login under its CLAUDE_CONFIG_DIR."
+      cfg_set=1
+      if [[ ${cfg_dir%/} == "${DEFAULT_CONFIG%/}" ]]; then
+        cmd="env -u CLAUDE_CONFIG_DIR $cmd"
+      else
+        printf -v cmd 'env CLAUDE_CONFIG_DIR=%q %s' "$cfg_dir" "$cmd"
+      fi
+      [[ -n $cmodel ]] && cmd="$cmd --model $cmodel"
+    fi
     # Subscription only (#260): no API key, token or named profile from this
     # shell or the tmux server reaches an interactive session. The same list
     # as NO_KEY_ENV in fleet/lib.sh (test_headless.sh pins the two together).
@@ -224,7 +372,9 @@ new() { # dir [agy model]
   # delegate's), else on this environment's.
   if (( keycheck )) && [[ ${KLEPSYDRA_BACKGROUND:-} != 1 ]]; then
     local key_jq f cfg=${CLAUDE_CONFIG_DIR:-}
-    if tmux "${t[@]}" list-sessions >/dev/null 2>&1; then
+    if (( cfg_set )); then
+      cfg=$cfg_dir # the folder this launch names
+    elif tmux "${t[@]}" list-sessions >/dev/null 2>&1; then
       cfg=$(tmux "${t[@]}" show-environment -g CLAUDE_CONFIG_DIR 2>/dev/null) && [[ $cfg == CLAUDE_CONFIG_DIR=* ]] && cfg=${cfg#*=} || cfg=""
     fi
     key_jq='(.apiKeyHelper // "" | tostring | length > 0) or ((.env // {}) | has("ANTHROPIC_API_KEY") or has("ANTHROPIC_AUTH_TOKEN") or has("ANTHROPIC_PROFILE"))'
@@ -510,12 +660,15 @@ voices() {
 case ${1:-} in
   new)
     if (( $# == 4 )) && [[ $3 == agy ]]; then new "$2" agy "$4"
-    else (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR [agy MODEL]"; new "$2"; fi ;;
+    elif (( $# == 4 || $# == 5 )) && [[ $3 == claude ]]; then new "$2" claude "$4" "${5:-}"
+    elif (( $# == 3 || $# == 4 )) && [[ $3 == copilot ]]; then new "$2" copilot "${4:-}"
+    else (( $# == 2 )) || fail "usage: klepsydra-launch.sh new DIR [agy MODEL | claude ACCOUNT [MODEL] | copilot [MODEL]]"; new "$2"; fi ;;
   models) (( $# == 1 )) || fail "usage: klepsydra-launch.sh models"; models ;;
+  engines) (( $# == 1 )) || fail "usage: klepsydra-launch.sh engines"; engines ;;
   voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
   interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR [agy MODEL] | models | voices | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR [agy MODEL | claude ACCOUNT [MODEL] | copilot [MODEL]] | models | engines | voices | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
 esac
