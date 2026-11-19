@@ -34,6 +34,8 @@ A test steers it through a JSON state file, re-read on every tick:
              prompt arriving as /exit goes in)
   slash_after  a line drawn between the menu and the box (output the menu
              does not explain)
+  slash_hidden  lines added to the transcript as the menu opens, under it
+             (a prompt and its spinner arriving as /exit goes in)
   exit_dialog  /exit opens Claude Code's "Background work is running" dialog
              (2.1.316, captured 2026-11-18): Enter exits, Esc cancels it
   log_typed  log each run of typed keys (TYPED <text>), so a test can tell
@@ -314,14 +316,15 @@ class Pane:
         else:
             box = [PROMPT + PLACEHOLDER]
         if self.state.get("slash_menu") and self.input.startswith("/"):
-            # Drawn over the transcript's last rows, a blank row above it.
+            # Drawn over the transcript's last rows, as many as it has (2.1.316).
             menu = SLASH_MENU_WIDE if self.state["slash_menu"] == "wide" else SLASH_MENU
-            menu = menu + (
-                [self.state["slash_after"]] if self.state.get("slash_after") else []
-            )
-            above = above[: max(0, len(above) - len(menu) - 1)]
-            above += [self.state["slash_adds"]] if self.state.get("slash_adds") else []
-            above += [""] + menu
+            if self.state.get("slash_after"):
+                menu = menu + [self.state["slash_after"]]
+            # Lines that arrive as the menu opens grow the transcript, so the screen
+            # scrolls up under the menu, which covers them.
+            above += self.state.get("slash_hidden", [])
+            adds = [self.state["slash_adds"]] if self.state.get("slash_adds") else []
+            above = above[: max(0, len(above) - len(menu) - len(adds))] + adds + menu
         below = self.state.get("below", ["  ⏵⏵ bypass permissions on · 1 shell"])
         return above + [RULE] + box + [RULE] + below
 

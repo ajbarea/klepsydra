@@ -2295,7 +2295,7 @@ state wrk7 '{"above":["done"],"busy":false,"on_submit":"none"}'; settle; : >"$wo
 check "#454 S1: a pane still there after /exit is left open, never killed (1), and its record stays" \
   "$(FLEET_CLOSE_EXIT_WAIT=2 bash "$here/fleet" close wrk7 2>&1 | grep -c "left open: $b is still there after /exit") $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk7$')" "1 1 1 1"
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none"}'; settle; : >"$work/wrk7.log"
-# Typing /exit opens Claude Code's command menu above the box; in a full screen it scrolls the transcript up.
+# Typing /exit opens Claude Code's command menu above the box, drawn over the transcript's last rows.
 long=$(jq -nc '[range(60) | "⏺ line \(.)"]')
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_adds\":\"❯ a phone prompt\",\"on_submit\":\"none\"}"; settle
 check "#454 S1: a transcript line that shows as /exit goes in refuses the close (1); our /exit is backed out, nothing submitted" \
@@ -2319,6 +2319,25 @@ check "#483: fleet close --why NAME prints the last refusal's check and reason, 
 0"
 check "#483: --why for a name with no close fails (1); --why with no name is bad usage (2)" \
   "$(bash "$here/fleet" close --why nobody >/dev/null 2>&1; echo $?) $(bash "$here/fleet" close --why >/dev/null 2>&1; echo $?)" "1 2"
+# A wrapped line one column left or right of the descriptions' column is no part of the menu (#483 review).
+for ind in 36 38; do
+  state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_after\":\"$(printf '%*s' "$ind" '')grid\",\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
+  check "#483 review: a wrapped line indented $ind, not 37, keeps the whole block: refused (1) at check transcript, nothing submitted" \
+    "$(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 transcript 0"
+done
+# A prompt and its spinner arriving as /exit goes in scroll the transcript up under the menu, which covers both (#483 review).
+state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_hidden\":[\"❯ a phone prompt\",\"✢ Churning… (1s · esc to interrupt)\"],\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
+check "#483 review: a transcript that scrolled up under the menu is refused (1) at check transcript, nothing submitted" \
+  "$(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 transcript 0"
+# The hook writes the session file up to a second after a prompt: a write just after /exit went in is seen before Enter.
+state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"; settle; : >"$work/wrk7.log"
+( for i in $(seq 100); do grep -q '^TYPED' "$work/wrk7.log" && break; sleep 0.1; done; sleep 1.2
+  jq -n --arg p "$b" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: null, background: []}' >"$work/sf.t"
+  mv -f "$work/sf.t" "$KLEPSYDRA_DIR/fleet/$SID.json" ) & wrp=$!
+check "#483 review: a session file written within the settle window after /exit went in refuses the close (1), nothing submitted, /exit backed out" \
+  "$(FLEET_CLOSE_SETTLE=3 bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 session_file 0 0"
+wait "$wrp" 2>/dev/null
+done_live "$b" "done" '[]'
 # The real menu as an 84-column pane draws it, two descriptions wrapped (the 11-19 ns477 refusals): it closes.
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
 check "#445 review: once the turn has ended the same close goes through (AJ's tmux file beside it is no bar; the menu /exit opens covers a full screen's last rows, wrapped as in an 84-column pane, #483), and its record goes" "$(bash "$here/fleet" close wrk7 2>/dev/null) $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk7$')" "closed: wrk7 ($b) 1 0"

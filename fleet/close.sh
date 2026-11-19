@@ -22,7 +22,7 @@ usage="usage: fleet close NAME | fleet close --why NAME"
 why_report() { # NAME
   local f rec=
   while IFS= read -r f; do
-    rec=$(grep -a -F '"target":"fleet::close"' -- "$f" 2>/dev/null \
+    rec=$(tr -d '\000' <"$f" 2>/dev/null | grep -a -F '"target":"fleet::close"' \
       | jq -R -c --arg n "$1" 'fromjson? | select(type == "object" and .name == $n)' 2>/dev/null | tail -1)
     [[ -n $rec ]] && break
   done < <(printf '%s\n' "$FLEET_LOG"; find "${FLEET_LOG%/*}" -maxdepth 1 -name "$(basename "${FLEET_LOG%.log}")_*.log" -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
@@ -120,16 +120,18 @@ screen_lines() { # ABOVE
     }
     print k; for (i = 1; i <= n; i++) print l[i] }'
 }
-# Whether AFTER (a screen with /exit typed) shows REF's transcript (above_raw's) unchanged: its
-# first lines or its last ones, less at most the rows the menu covers, and no line it lacks. Fails
-# with SAME_WHY set to the counts and the first lines that differ, for the refusal's log.
+# Whether AFTER (a screen with /exit typed) shows REF's transcript (above_raw's) unchanged, row for
+# row from the top: the menu is drawn over the transcript's last rows (2.1.316, at 84 and 160
+# columns), so at most the rows it covers are missing, and only from the end. A transcript that
+# scrolled up under the menu (a prompt and its spinner arriving as /exit went in) fails. Fails with
+# SAME_WHY set to the counts and the first lines that differ, for the refusal's log.
 same_transcript() { # REF AFTER
   local r a k n m
   r=$(screen_lines "$1" | tail -n +2)
   a=$(screen_lines "$(above_raw "$2")")
   k=$(head -1 <<<"$a"); a=$(tail -n +2 <<<"$a")
   n=$(grep -c . <<<"$r") m=$(grep -c . <<<"$a")
-  if (( m >= 1 && m <= n && n - m <= k + 1 )) && [[ $(head -n "$m" <<<"$r") == "$a" || $(tail -n "$m" <<<"$r") == "$a" ]]; then
+  if (( m >= 1 && m <= n && n - m <= k )) && [[ $(head -n "$m" <<<"$r") == "$a" ]]; then
     return 0
   fi
   SAME_WHY="menu lines dropped $k, transcript lines before $n, after $m; differs: $(excerpt "$r" "$a")"
@@ -145,8 +147,8 @@ excerpt() { # OLD NEW
   done < <(diff -- <(printf '%s\n' "$1") <(printf '%s\n' "$2") | grep -E '^[<>] ' | head -5)
   printf '%s' "${out:-(none)}"
 }
-# The first line of stdin, cut to 120 characters.
-clip() { local LC_ALL=C.UTF-8 l; IFS= read -r l; printf '%s' "${l:0:120}"; }
+# The first line of stdin, cut to N characters (120).
+clip() { local LC_ALL=C.UTF-8 l; IFS= read -r l; printf '%s' "${l:0:${1:-120}}"; }
 # SID's session file in brief, for a refusal's log: its state, reason, background count, and when
 # it was last written.
 session_brief() { # SID
@@ -193,17 +195,19 @@ refuse() { # NAME PANE CHECK WHY [KEY=VALUE...]
 # wrap-up's checkpoint): /exit would end the turn or kill its shells with the pane. So the pane must
 # look idle with an empty box, its session file be at rest, and then both stay unchanged for
 # FLEET_CLOSE_QUIET s (the hook writes the file async, up to a second after a prompt). /exit is
-# typed, both are read once more, and only then is Enter pressed. The pane is never killed: one that
-# does not go is left open and said so.
+# typed, both are read once more, and again after FLEET_CLOSE_SETTLE s (2: past the hook's write,
+# since the menu /exit opens covers the rows a new turn's spinner would show in), and only then is
+# Enter pressed. The pane is never killed: one that does not go is left open and said so.
 close_now() { # PANE NAME SID
-  local s ref fp why box q=${FLEET_CLOSE_QUIET:-6}
+  local s ref fp why box q=${FLEET_CLOSE_QUIET:-6} g=${FLEET_CLOSE_SETTLE:-2}
   [[ $q =~ ^[0-9]+([.][0-9]+)?$ ]] || q=6
+  [[ $g =~ ^[0-9]+([.][0-9]+)?$ ]] || g=2
   s=$(screen "$1")
-  busy "$s" && { refuse "$2" "$1" busy "working ($1 is mid-turn)" spinner="$(near 1 | clip)"; return; }
+  busy "$s" && { refuse "$2" "$1" busy "working ($1 is mid-turn)" spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)"; return; }
   if ! idle_empty "$s"; then
     box=$(input_text "$s")
     refuse "$2" "$1" input_box "unconfirmed its input box is not showing, or holds text" \
-      box="$(has_input_box "$s" && echo shown || echo missing)" text="${box:0:80}"
+      box="$(has_input_box "$s" && echo shown || echo missing)" text="$(clip 80 <<<"$box")"
     return
   fi
   fp=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$fp" session="$(session_brief "$3")"; return; }
@@ -213,7 +217,7 @@ close_now() { # PANE NAME SID
   why=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$why" session="$(session_brief "$3")"; return; }
   [[ $why == "$fp" ]] || { refuse "$2" "$1" fingerprint "working (its session file was written within ${q} s)" \
     fp_before="$fp" fp_after="$why" session="$(session_brief "$3")"; return; }
-  type_exactly "$1" "/exit" || return 13
+  type_exactly "$1" "/exit" || { flog WARN "close: /exit would not go in; left open" name="$2" pane="$1" check=typing; return 13; }
   why=$(at_rest "$1" "$3")
   s=$(screen "$1")
   box=$(input_text "$s")
@@ -227,11 +231,22 @@ close_now() { # PANE NAME SID
       check=session_file more=(session="$(session_brief "$3")")
     fi
   elif busy "$s"; then
-    check=busy why="working (a turn started as /exit went in)" more=(spinner="$(near 1 | clip)")
+    check=busy why="working (a turn started as /exit went in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
   elif ! same_transcript "$ref" "$s"; then
     check=transcript why="working (its screen changed as /exit went in)" more=(differs="$SAME_WHY")
   elif [[ $box != /exit ]]; then
-    check=input_text why="working (its box changed as /exit went in)" more=(text="${box:0:80}")
+    check=input_text why="working (its box changed as /exit went in)" more=(text="$(clip 80 <<<"$box")")
+  elif ! steady "$1" "$g" "$(above_raw "$s")"; then
+    check=quiet_screen why="working (its screen changed within ${g} s of /exit going in)" box=$(input_text "$STEADY_SCREEN")
+    more=(differs="$(excerpt "$(above_raw "$s" | plain)" "$(above_raw "$STEADY_SCREEN" | plain)")")
+  elif why=$(at_rest "$1" "$3"); [[ $why != "$fp" ]]; then
+    if [[ $why =~ ^[0-9]+\ [0-9]+$ ]]; then
+      check=fingerprint more=(fp_before="$fp" fp_after="$why" session="$(session_brief "$3")")
+      why="working (its session file was written within ${g} s of /exit going in)"
+    else
+      check=session_file more=(session="$(session_brief "$3")")
+    fi
+    box=$(input_text "$(screen "$1")")
   fi
   if [[ -n $check ]]; then
     # Back out only our own /exit: text typed after it stays, and so does the close's refusal.
@@ -276,6 +291,7 @@ elif ! pane_runs "$pane" "$sid"; then
     exit 1
   fi
 elif [[ $pane == "$(orchestrator)" ]]; then
+  flog WARN "close: the orchestrator's pane; left open" name="$name" pane="$pane" check=orchestrator
   err "refused: $pane is the orchestrator's pane"
   exit 1
 else
@@ -292,7 +308,9 @@ else
       flog WARN "close: the pane did not go after /exit; left open" name="$name" pane="$pane" rc="$rc"
       err "left open: $pane is still there after /exit$( (( rc == 16 )) && printf ' (its stop-tasks dialog would not cancel)'); look at it"
       exit 1 ;;
-    75) err "could not take $pane's lock (a send is using it); try again"; exit 1 ;;
+    75)
+      flog WARN "close: the pane's lock was busy; left open" name="$name" pane="$pane" check=lock
+      err "could not take $pane's lock (a send is using it); try again"; exit 1 ;;
     *) err "could not close $pane (/exit would not go in); it is left open"; exit 1 ;;
   esac
 fi
