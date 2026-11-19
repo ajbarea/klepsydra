@@ -22,6 +22,8 @@ import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, toRows, usageRows } from "../gauge.js";
 import { hiddenRows } from "./chips.js";
+import { wireOpacityPick } from "./opacitypick.js";
+import { subscribeOpacity } from "../opacity.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
 import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
@@ -1691,6 +1693,21 @@ new ResizeObserver(() => {
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
+
+// The floating gauge's background opacity (#438), in the app only.
+if (inTauri) {
+  const input = document.getElementById("gauge-opacity");
+  const opacityNote = document.getElementById("opacity-note");
+  input.closest("label").hidden = false;
+  wireOpacityPick({
+    input,
+    value: input.nextElementSibling,
+    invoke: tauri,
+    subscribe: (fn) => subscribeOpacity(fn, { inTauri, follow }),
+    note: (text) => setText(opacityNote, text),
+    log,
+  });
+}
 
 // Characters (#135): the theme picker, the tray's Characters menu and the
 // phone all wear one theme. html[data-theme] names it, as a CSS colour theme

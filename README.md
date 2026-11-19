@@ -462,6 +462,25 @@ taskbar and the stack to the desk. Compact opens at 100%, where four chips stand
 42px tall, and it fits inside a 48px taskbar up to 110%. The choice is remembered, and switching keeps the gauge on the
 screen edges it sits nearest, so a gauge on the taskbar stays there.
 
+### Background opacity
+
+The wall's gear menu has a **Gauge background** slider, 0 to 100% in steps of
+5 (85% to start). The gauge wears it once the slider rests (a quarter second,
+or at once on release) and it is saved in `prefs.json` (`gauge_opacity`). As the
+panel thins, its text takes stronger ink, so small text keeps 4.5:1 contrast
+(WCAG 1.4.3) over the lightest or darkest desktop:
+
+| Opacity | Text |
+|---|---|
+| 85% and up | the theme's own |
+| below 85% | the faint words (resets, labels) take the full ink |
+| below 65% (dark scheme) or 50% (light) | light ink with a dark halo, in either scheme |
+
+At 0% the panel is clear: the text, the pips and the portraits stand on the
+desktop with their halo. The tray icon keeps the theme's own colours. With
+Windows' Transparency effects off (or High Contrast on) the panel is solid,
+whatever the slider says.
+
 ### Staying in front of the taskbar
 
 The taskbar is itself a topmost window, and within that band z-order goes to

@@ -1,46 +1,56 @@
-# IMPL: klepsydra#421 + #438: gauge strip, variant A with docked faces
+# IMPL: klepsydra#438: gauge background opacity (step 2 of #421)
 
-Branch feat/gauge-strip-a-421-v2 (worktree .claude/worktrees/gauge-421-v2), cut with `--no-track` from 797336e.
-It replaces feat/gauge-strip-a-421, whose two commits reached main by accident and were reverted (#480).
-Push only with an explicit refspec: `git push -u origin HEAD:refs/heads/feat/gauge-strip-a-421-v2`. Never push to main.
-Decision: PR #459 last comment (AJ 11-18). Mockups: branch design/mockups-1118, docs/mockups/2026-11-18.
-Untracked helpers in `.live/` (excluded): live_strip.py (browser shots from real readings + live fleet at
-127.0.0.1:8318), live_app.sh (test copy of a branch klepsydra.exe beside AJ's, own KLEPSYDRA_DIR, backs up and
-restores the shared %APPDATA% .window-state.json, stops only its own PID), readings.json + fleet.json (frozen
-real data for perf). Fix SP= in live_app.sh to the session's scratchpad before running.
+Branch feat/gauge-opacity-438 (worktree .claude/worktrees/gauge-438), on main since #482 merged (958dbb2).
+Push only with `git push --force-with-lease origin HEAD:refs/heads/feat/gauge-opacity-438`. Never push to main.
+Design: AJ's pick on #459; thresholds from the mockup (docs/mockups/2026-11-18/mock.css `.panel.halo/.thin`,
+review.md), moved by measured contrast in review: full ink below 85%, halo below 65% dark / 50% light; default 85.
 
-## Plan: one PR per step
-1. **PR 1 (this branch): floating strip as variant A.** Code + review fixes committed; PR not yet open.
-2. **PR 2: #438 opacity** 0-100 step 5 in prefs.json, live. Copy the theme pattern (`set_theme` + Hub publish +
-   `theme_subscribe`, src-tauri/src/theme.rs) as `set_gauge_opacity` / `gauge_subscribe`; slider in the wall's gear.
-   Halo below 60% (dark) / 50% (light), full ink below 70% (mockup mock.css `.panel.halo/.thin`).
-3. **PR 3: docked gauges in the wall header** + floating strip hidden while the wall has focus + Settings › Gauges
-   rows (+ #479 double). Phone: usage ids are anonymised (a1..) by usage.rs but sessions keep real account ids,
-   so dockKey needs a mapping there. Also the tap/keyboard detail card (see Open).
-4. **PR 4: System chip** (off by default), only after 1-3.
+## Plan (the #421 brief, one PR per step)
+1. ✅ #482 floating strip, variant A: merged 11-19 (958dbb2).
+2. **This branch: #438 opacity.** 0-100 step 5 in prefs.json (`gauge_opacity`, default 85), live.
+3. Docked gauges in the wall header + floating strip hidden while the wall has focus + Settings › Gauges rows
+   (+ #479 double, #481 tap/keyboard detail). Phone dockKey needs an id mapping (usage ids are a1..).
+4. System chip (off by default), only after 1-3.
 
-## Done (PR 1)
-- Chips model/view, dock, icons, README (845969e). Opus review round 1: 1 blocking, 3 should-fix, nits; all
-  fixed in 21d2dc8 (per-window age, stacked tray colour, waiting fade, 30-min age text, stacked columns,
-  Intl formatters, boundary guards, phone/wall spent-week rule). 15 mutations on the new guards: all killed.
-- Unit tests and lint clean (see Verify). Live in Chromium on real readings + live fleet: no errors, faces docked.
-- CPU (headless Chromium, 3 x 120 s, median): 797336e 0.086 % vs 845969e 0.097 %; after 21d2dc8,
-  797336e 0.081 % vs 0.075 %. Live exe (stage klepsydra-build-gauge421): chips on the taskbar beside AJ's
-  main build, faces docked, native title hover shows in the unfocused window.
-- Round 2 (fresh Opus): 1-11 fixed; new N1 (waiting fade un-hid #zoom), N2 (Intl throws past Date range),
-  N3 (phone spent-week only source-tested), N4-N5 wording; all fixed (af75c1d).
-- Round 3 (fresh Opus): N1-N5 confirmed; new: #grip's own transition cancelled its fade, "resets null" for a
-  live window past Date's range, clockAt(null) read as 1970, no committed guard for the fade; all fixed + guarded.
-- PR #482 open. Browser suites vs main (ab00893): phone 88 pass / the same 5 reds as main (#266; "Play again"
-  intermittent); wall: 4 Ledger reds on the branch, main's run hit the same 2 then timed out before the other 2.
+## Done (this branch)
+- klepsydra_fleet::opacity (KEY, DEFAULT 85, snap, of, value, confirm; tested); app src-tauri/src/opacity.rs
+  (`Opacities` hub, `opacity_subscribe`, `set_gauge_opacity`, published at startup); phone serves opacity.js.
+- src/opacity.js (inkFor thresholds, applyOpacity; tested); main.js follows it and redraws on ink change;
+  style.css `--panel-alpha`, ink tokens on #panel, `[data-clear]`.
+- Wall gear slider (src/fleet/opacitypick.js: saves once it rests or on release; tested), README section.
+- Live (pre-round-1 build, stage klepsydra-build-gauge421): taskbar at 0% and 100% work
+  (/mnt/c/Users/ajbar/klepsydra-live-gauge421/exe438-op{0,100}.png).
+- Review round 1 fixed (809f5b6: thresholds by measured contrast, full ink <85, halo <65 dark / <50 light).
+- 11-19 session 2 (Personal): rounds 2 and 3 fixed (resets and route word take the ink, a stale chip keeps
+  its dim, solid under prefers-reduced-transparency, tray cache, confirm checks the stored key); #484 filed for
+  the theme save's twin gap. Rebased on main; toRows duplicate keys removed, biome noDuplicateObjectKeys on.
+  Pushed (no PR yet). Live harness: .live/live_opacity.py (real readings, 0/50/100, both schemes, both desktops).
 
-## Open
-- Hover detail is the native `title` tooltip: shown live in the unfocused window, but no tap or keyboard.
-  A toggletip card needs the window to grow from its docked edge: #481, planned with PR 3.
+- 11-19 session 3: heavy runs done. Live exe on the taskbar at 0/50/100% and solid with Windows
+  transparency off (restored to 1); browser montages at 1920/390; contrast split fresh/stale/placeholder
+  (fresh text >= 4.6:1 wherever the panel carries it); CPU 0.069 -> 0.070% (85%), 0.067 -> 0.075% (0%).
+  Stale chip's 0.5 dim is 3.1:1 in light at 100%: pre-existing (#482), filed #486. test_wall_browser's
+  2 Ledger fails are on main too (#363). Shots: fleet-briefing shots/2026-11-19/klepsydra-438-*.png.
 
-## Next
-1. Round 4 (fresh Opus) CLEAN on 8016ef6. Heph review of 0221a28: chips now read windows by routeGroup (ACCOUNT_WINDOWS, LANE_HARNESS, spent() gone; isCapped reused); fixed with failing-first tests.
-2. CI green, then report to Heph (`fleet send`), queue line; do not merge. Then PR 2 (#438) on a new branch.
+## Next (resume here)
+1. PR open for this branch (see `gh pr list --head feat/gauge-opacity-438`): wait for CI and Heph's review;
+   fix findings on this branch. Do not merge.
+2. Step 3, split in two PRs on new branches off main (after this PR merges, or stacked):
+   - 3a: chips docked in the wall header (desktop: toRows(read_usage); phone: usageRows(snapshot), one chip per
+     row, replacing the `.limits` rings), chevron to hide, pref `gauges_in_header` (default on), gear row.
+   - 3b: floating strip hidden while the wall has focus (fleet.rs wall window Focused events), floating strip
+     on/off (tray item + gear), Reset position (main.rs reset_position) and click-through in the gear.
+   Mockups: design-pass worktree docs/mockups/2026-11-18/wall-header.html, review.md; shots 2026-11-18/design-wall-header-*.
+3. Step 4 System chip only after 1-3.
+
+## Heavy runs (each under `flock -o /tmp/fleet-heavy.lock timeout N`; system python3 has no Playwright)
+- PY="uv run -q --no-project --with playwright --with pillow python -I"
+- Browser: `$PY .live/live_opacity.py . /mnt/c/Users/ajbar/AppData/Local/dev.ajsoftworks.klepsydra <out>`
+  (WIDTHS=1920 for numbers only).
+- CPU: `git worktree add --detach <scratch>/main origin/main`; `$PY scripts/perf/measure_gauge.py <main> .
+  .live/readings.json .live/fleet.json 120 3 layout=compact` (and `'layout=compact&opacity=0'`).
+- Build: `KLEPSYDRA_STAGE=klepsydra-build-gauge421 bash scripts/build-windows.sh [--check]`; live:
+  `OPACITY=0 .live/live_app.sh start <exe> compact`, `shot <name>`, `stop` (SP in the script = your scratchpad).
 
 ## Verify
-- `node --test src/*.test.js`; `npm run lint`.
+- `node --test src/*.test.js`; `npm run lint`; `(cd src-tauri && cargo fmt --all --check && cargo test -p klepsydra-fleet)`.
