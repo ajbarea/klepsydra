@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# install.sh [--dry-run] [--hooks] [--no-cutover]: install the fleet from this checkout (with
-# --hooks, only the copies in ~/.claude, which the gauge alone needs). Each script is
+# install.sh [--dry-run] [--hooks] [--force] [--no-cutover]: install the fleet from this checkout
+# (with --hooks, only the copies in ~/.claude, which the gauge alone needs; --force
+# installs from a git worktree). Each script is
 # linked into the state folder (so a pull updates the fleet), the `fleet`
 # command into ~/.local/bin, the hooks, status line, launcher and cast copied
 # into ~/.claude (FLEET_HOOK_DIR), and the fleet's services into

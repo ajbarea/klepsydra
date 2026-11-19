@@ -333,7 +333,7 @@ if [[ $pw == true ]]; then
     elif [[ -z $dns ]]; then
       report_debounced "phone wall over Tailscale" "Tailscale is not running or not logged in"
     elif [[ -z $serve_out || $serve_out == *"No serve config"* ]]; then
-      report_debounced "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
+      report_debounced "phone wall over Tailscale" "Tailscale Serve is not set up (README: Fleet on your phone)"
     else
       phone "phone wall over Tailscale" "https://$dns"
     fi
