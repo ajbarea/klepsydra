@@ -26,32 +26,31 @@ review.md), moved by measured contrast in review: full ink below 85%, halo below
   the theme save's twin gap. Rebased on main; toRows duplicate keys removed, biome noDuplicateObjectKeys on.
   Pushed (no PR yet). Live harness: .live/live_opacity.py (real readings, 0/50/100, both schemes, both desktops).
 
-## Next (resume here; nothing is running)
-1. Heavy runs, each under its own `flock -o /tmp/fleet-heavy.lock timeout N` (another agent's test-fleet held the
-   lock for 40+ min on 11-19, so none ran yet):
-   - Browser: `python3 .live/live_opacity.py . /mnt/c/Users/ajbar/AppData/Local/dev.ajsoftworks.klepsydra <out>`
-     (real readings + live fleet from :8318; 0/50/100, both schemes, dark and light desktop; prints each small
-     text's worst contrast; montage-1920/390.png). Copy montages to fleet-briefing
-     shots/2026-11-19/klepsydra-438-opacity-{1920,390}.png + a README line.
-   - CPU: `git worktree add --detach <scratch>/main origin/main`, then `python3 scripts/perf/measure_gauge.py
-     <main> . .live/readings.json .live/fleet.json 120 3 layout=compact`, and again with
-     `'layout=compact&opacity=0'` (the halo's shadows). One number each side; keep it no worse. Remove the worktree.
-   - Build: `KLEPSYDRA_STAGE=klepsydra-build-gauge421 bash scripts/build-windows.sh --check`, then without
-     --check (the brief's live proof needs the exe; AGENTS.md otherwise reserves it). Live: copy
-     `.live/live_app.sh`'s flow (`OPACITY=0|50|100 .live/live_app.sh start <exe> compact`, `shot`, `stop`).
-     Solid mode: check `matchMedia('(prefers-reduced-transparency: reduce)')` in WebView2 with Windows
-     Transparency effects off (HKCU Themes\Personalize EnableTransparency=0), then restore it to 1.
-2. PR: base main, assignee ajbarea, label enhancement, "Closes #438"; short top (why, table, status) and
-   <details> for rounds 1-3, contrast table, CPU, sources (W3C G18 halo; mrec.github.io/blog/2025/text-shadow;
-   Chrome + MDN prefers-reduced-transparency). Say: the wall's own strip view (#438's last line) comes in step 3.
-   CI green, report to Heph (`fleet send $(cat ~/.local/state/fleet-orchestrator/orchestrator.pane) -`).
-3. Step 3, split in two PRs on new branches off main (after this PR merges, or stacked):
+- 11-19 session 3: heavy runs done. Live exe on the taskbar at 0/50/100% and solid with Windows
+  transparency off (restored to 1); browser montages at 1920/390; contrast split fresh/stale/placeholder
+  (fresh text >= 4.6:1 wherever the panel carries it); CPU 0.069 -> 0.070% (85%), 0.067 -> 0.075% (0%).
+  Stale chip's 0.5 dim is 3.1:1 in light at 100%: pre-existing (#482), filed #486. test_wall_browser's
+  2 Ledger fails are on main too (#363). Shots: fleet-briefing shots/2026-11-19/klepsydra-438-*.png.
+
+## Next (resume here)
+1. PR open for this branch (see `gh pr list --head feat/gauge-opacity-438`): wait for CI and Heph's review;
+   fix findings on this branch. Do not merge.
+2. Step 3, split in two PRs on new branches off main (after this PR merges, or stacked):
    - 3a: chips docked in the wall header (desktop: toRows(read_usage); phone: usageRows(snapshot), one chip per
      row, replacing the `.limits` rings), chevron to hide, pref `gauges_in_header` (default on), gear row.
    - 3b: floating strip hidden while the wall has focus (fleet.rs wall window Focused events), floating strip
      on/off (tray item + gear), Reset position (main.rs reset_position) and click-through in the gear.
    Mockups: design-pass worktree docs/mockups/2026-11-18/wall-header.html, review.md; shots 2026-11-18/design-wall-header-*.
-4. Step 4 System chip only after 1-3.
+3. Step 4 System chip only after 1-3.
+
+## Heavy runs (each under `flock -o /tmp/fleet-heavy.lock timeout N`; system python3 has no Playwright)
+- PY="uv run -q --no-project --with playwright --with pillow python -I"
+- Browser: `$PY .live/live_opacity.py . /mnt/c/Users/ajbar/AppData/Local/dev.ajsoftworks.klepsydra <out>`
+  (WIDTHS=1920 for numbers only).
+- CPU: `git worktree add --detach <scratch>/main origin/main`; `$PY scripts/perf/measure_gauge.py <main> .
+  .live/readings.json .live/fleet.json 120 3 layout=compact` (and `'layout=compact&opacity=0'`).
+- Build: `KLEPSYDRA_STAGE=klepsydra-build-gauge421 bash scripts/build-windows.sh [--check]`; live:
+  `OPACITY=0 .live/live_app.sh start <exe> compact`, `shot <name>`, `stop` (SP in the script = your scratchpad).
 
 ## Verify
 - `node --test src/*.test.js`; `npm run lint`; `(cd src-tauri && cargo fmt --all --check && cargo test -p klepsydra-fleet)`.
