@@ -120,6 +120,19 @@ resume_typed() { # PANE
   submit "$1"
 }
 
+# ARMED: the time BELOW's last "Continuing automatically at TIME" names
+# (after screen_parse), trailing spaces cut; empty when none. Matches as grep -o
+# would: each match runs to the next "·".
+armed_at() {
+  local l rest m="" below=() re='Continuing automatically at ([^·]*)'
+  mapfile -t below <<<"$BELOW"
+  for l in "${below[@]}"; do
+    rest=$l
+    while [[ $rest =~ $re ]]; do m=${BASH_REMATCH[1]} rest=${rest#*"${BASH_REMATCH[0]}"}; done
+  done
+  ARMED=${m%"${m##*[! ]}"}
+}
+
 # When the agent in PANE (screen PLAIN) stopped: the last moment, at most 15
 # min past the clock now (a turn can end while a pass runs), whose local time
 # reads the "done 4:21 PM" its last turn printed, at the end of that minute.
@@ -129,17 +142,18 @@ resume_typed() { # PANE
 # status line redraws keep fresh, so it under-counts. Always a number: when
 # unsure, NOW.
 stopped_at() { # PANE PLAIN
-  local at day now d c k best="" stopped
+  local at day now d c k got best="" stopped
   at=$(grep -o 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$2" | tail -1 | cut -c6-)
   at=${at#0}
   now=$(clock)
-  if [[ -n $at ]] && day=$(date -d "@$now" +%F); then
+  if [[ -n $at ]] && printf -v day '%(%F)T' "$now"; then
     for d in -1 0 1; do
       # Noon is never skipped or repeated, so the day before and after are sure.
       c=$(date -d "$(date -d "$day 12:00 PM $d day" +%F) $at" +%s 2>/dev/null) || continue
       for k in -7200 -3600 -1800 0 1800 3600 7200; do
         (( c + k <= now + 900 && c + k > ${best:-0} )) || continue
-        [[ $(LC_ALL=C date -d "@$((c + k))" '+%-I:%M %p') == "$at" ]] && best=$((c + k))
+        LC_ALL=C printf -v got '%(%-I:%M %p)T' "$((c + k))"
+        [[ $got == "$at" ]] && best=$((c + k))
       done
     done
   fi
@@ -559,8 +573,8 @@ one() { # PANE
   [[ -n ${job[$p]:-} ]] && return
   launching "$p" && return
   s=$(screen "$p") || return
-  ps=$(plain <<<"$s")
-  typed=$(input_text "$s")
+  screen_parse "$s"
+  ps=$SCR_PLAIN typed=$SCR_INPUT
 
   # Claude Code's limit menu: take option 1, "Stop and wait for limit to reset";
   # on the next pass the pane reads as an ordinary limited one.
@@ -573,7 +587,8 @@ one() { # PANE
   # Claude Code's own auto-continue resumes the whole transcript; on a
   # registered pane with over FRESH_AFTER_S to wait, cancel it ("esc to
   # cancel") so the pane gets a fresh session at the reset. Never over typed text.
-  armed=$(split_screen "$s"; printf '%s\n' "$BELOW" | grep -o 'Continuing automatically at [^·]*' | tail -1 | sed 's/^Continuing automatically at //; s/ *$//')
+  armed_at
+  armed=$ARMED
   if (( !orch )) && [[ -n $armed && -z $typed ]] && registered "$p"; then
     at=$(date -d "${armed//,/}" +%s 2>/dev/null) || at=0
     (( at > 0 && NOW - at > 21600 )) && at=$((at + 86400))
