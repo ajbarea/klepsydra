@@ -22,6 +22,7 @@ import { cutsText } from "./fulltext.js";
 import { WAITING, usageRows } from "../gauge.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
+import { DEFAULT_ENGINE_KEY, pickDefaultEngine, extractLastEngineUsed, buildEngineEntries, buildMenuList } from "./newsession.js";
 
 const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
@@ -105,51 +106,303 @@ document.addEventListener("pointerdown", (e) => {
 const limitWait = limits.querySelector(".limit-wait");
 // + New session and the empty state's button start a session the same way,
 // and while one runs the other is off too.
-async function startSession(button, note) {
+async function startSession(button, note, explicitArgs = null) {
   if (button.getAttribute("aria-disabled") === "true") return;
   const other = button === newButton ? startButton : newButton;
   setOff(other, true);
+  const launchArgs = explicitArgs || (button === newButton ? defaultLaunchArgs() : null);
   try {
-    await press(button, note, () => window.__TAURI__.core.invoke("launch_session"), "Starting…");
+    await press(
+      button,
+      note,
+      () => (launchArgs ? window.__TAURI__.core.invoke("launch_session", launchArgs) : window.__TAURI__.core.invoke("launch_session")),
+      "Starting…",
+    );
   } finally {
     setOff(other, false);
   }
 }
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () => startSession(newButton, newNote));
-// + New session's other kind, Antigravity (#323): its menu shows once agy
-// has listed its models, Gemini first, since it spends Google's quota, not Claude's.
+
+// + New session split button and engine menu (#440, Variant A)
+let sessions = [];
+let latestSnapshot = null; // its usage readings draw the limit gauges
 const newKind = document.getElementById("new-kind");
 const newMenu = document.getElementById("new-menu");
-const agyModel = document.getElementById("agy-model");
-const agyStart = document.getElementById("agy-start");
+
+let userDefaultEngine = null;
+try {
+  userDefaultEngine = localStorage?.getItem(DEFAULT_ENGINE_KEY) || null;
+} catch {}
+
+let agyModels = [];
+let installedStatus = {
+  claude: { installed: true, signedIn: true },
+  agy: { installed: false, signedIn: false },
+  copilot: { installed: false, signedIn: false },
+};
+let selectedAgyModel = null;
+let openMenuEngine = null;
+
+function getCurrentDefault() {
+  const entries = buildEngineEntries({
+    usage: latestSnapshot?.usage,
+    agyModels,
+    installedStatus,
+    nowMs: Date.now(),
+  });
+  const lastUsed = extractLastEngineUsed(sessions);
+  const choice = pickDefaultEngine({
+    userChoice: userDefaultEngine,
+    lastEngineUsed: lastUsed,
+    engines: entries,
+  });
+  const defaultEntry = entries.find((e) => e.id === choice.id || e.engineId === choice.id) || entries[0];
+  return { choice, defaultEntry, entries };
+}
+
+function defaultLaunchArgs() {
+  const { defaultEntry } = getCurrentDefault();
+  if (defaultEntry.engineId === "agy") {
+    return selectedAgyModel ? { agyModel: selectedAgyModel } : null;
+  }
+  if (defaultEntry.engineId === "copilot") {
+    return { copilot: true };
+  }
+  return null;
+}
+
+function paintNewSession() {
+  if (!newButton || !newKind || !newMenu) return;
+  const { choice, defaultEntry, entries } = getCurrentDefault();
+
+  // Update split main button
+  const iconSvg = MAKER_ICONS[defaultEntry.icon] || MAKER_ICONS.claude;
+  const monoHtml = defaultEntry.mono
+    ? ` <span class="mono" title="on ${defaultEntry.mono}">${defaultEntry.mono}</span>`
+    : "";
+  newButton.innerHTML = `<span class="ico">${iconSvg}</span>New ${defaultEntry.shortName} session${monoHtml}`;
+  const roomWord = defaultEntry.room?.detail?.split?.(" ")?.[0] || "session";
+  const titleRoom =
+    defaultEntry.room?.bold && defaultEntry.room.bold !== "–"
+      ? `: ${defaultEntry.room.bold} of the ${roomWord} left`
+      : defaultEntry.room?.detail
+        ? `: ${defaultEntry.room.detail}`
+        : "";
+  newButton.title = `${defaultEntry.name}${titleRoom}`;
+
+  newKind.hidden = !inTauri;
+
+  // Render caret menu (#new-menu)
+  const menuEntries = buildMenuList(entries, defaultEntry.id);
+  if (openMenuEngine === null || openMenuEngine === defaultEntry.engineId) {
+    const firstOpenable = menuEntries.find((e) => !e.disabled);
+    openMenuEngine = firstOpenable?.engineId || menuEntries[0]?.engineId || null;
+  }
+
+  const engTpl = document.getElementById("eng-tpl");
+  const fragment = document.createDocumentFragment();
+
+  for (const e of menuEntries) {
+    const clone = engTpl.content.cloneNode(true);
+    const engEl = clone.querySelector(".eng");
+    const engHEl = clone.querySelector(".eng-h");
+    const icoEl = clone.querySelector(".ico");
+    const nameEl = clone.querySelector(".eng-name");
+    const roomBoldEl = clone.querySelector(".room b");
+    const roomDetailEl = clone.querySelector(".room-detail");
+    const fixBtn = clone.querySelector(".eng-fix");
+    const acctEl = clone.querySelector(".eng-acct");
+    const modelsEl = clone.querySelector(".models");
+    const actionsEl = clone.querySelector(".eng-actions");
+    const startBtn = clone.querySelector(".eng-start");
+    const defBtn = clone.querySelector(".eng-default");
+
+    engEl.setAttribute("aria-label", e.name);
+    icoEl.innerHTML = MAKER_ICONS[e.icon] || MAKER_ICONS.claude;
+    acctEl.textContent = e.missingReason || e.accountLabel;
+
+    if (e.disabled) {
+      engEl.setAttribute("aria-disabled", "true");
+      engEl.setAttribute("role", "menuitem");
+      nameEl.textContent = e.name;
+      roomBoldEl.remove();
+      roomDetailEl.remove();
+      fixBtn.hidden = false;
+      fixBtn.textContent = e.missingAction || "Sign in";
+      fixBtn.dataset.engine = e.engineId;
+      modelsEl.remove();
+      actionsEl.remove();
+    } else {
+      const recHtml = e.isRecommended
+        ? ' <span class="rec" title="First in the free-first route">Recommended</span>'
+        : "";
+      nameEl.innerHTML = `${e.name}${recHtml}`;
+      roomBoldEl.textContent = e.room.bold;
+      roomDetailEl.textContent = e.room.detail;
+      fixBtn.remove();
+
+      const isOpen = e.engineId === openMenuEngine;
+      if (isOpen) {
+        engEl.classList.add("open");
+        engEl.setAttribute("role", "group");
+        engHEl.setAttribute("aria-expanded", "true");
+        engHEl.dataset.toggle = e.engineId;
+
+        if (e.modelGroups?.length) {
+          modelsEl.hidden = false;
+          modelsEl.setAttribute("aria-label", `${e.name} model`);
+          modelsEl.innerHTML = e.modelGroups
+            .map(
+              (grp) => `
+            <div class="mgrp">${grp.label}</div>
+            ${grp.models
+              .map(
+                (m) => `
+              <div class="model${m.id === selectedAgyModel ? " on" : ""}" role="radio" aria-checked="${m.id === selectedAgyModel ? "true" : "false"}" ${m.disabled ? 'aria-disabled="true"' : ""} data-model="${m.id}" tabindex="${m.disabled ? -1 : 0}">
+                <span class="dot"></span>${m.label}${m.why ? `<span class="why">${m.why}</span>` : "<span></span>"}
+              </div>`,
+              )
+              .join("")}`,
+            )
+            .join("");
+        } else {
+          modelsEl.remove();
+        }
+
+        actionsEl.hidden = false;
+        startBtn.textContent = `Start ${e.shortName} session`;
+        startBtn.dataset.engine = e.engineId;
+        defBtn.dataset.engine = e.id;
+      } else {
+        engEl.setAttribute("role", "menuitem");
+        engHEl.setAttribute("aria-expanded", "false");
+        engHEl.dataset.toggle = e.engineId;
+        modelsEl.remove();
+        actionsEl.remove();
+      }
+    }
+    fragment.appendChild(engEl);
+  }
+
+  newMenu.replaceChildren();
+  const mhead = document.createElement("div");
+  mhead.className = "mhead";
+  mhead.innerHTML = "<span>Other engines</span><span>room left now</span>";
+  newMenu.appendChild(mhead);
+
+  newMenu.appendChild(fragment);
+
+  const mfoot = document.createElement("div");
+  mfoot.className = "mfoot";
+  mfoot.innerHTML = `<span>Default: ${defaultEntry.name}, ${choice.reason}.</span><a href="#settings" class="menu-settings">Change in Settings</a>`;
+  newMenu.appendChild(mfoot);
+}
+
+newMenu.addEventListener("click", (e) => {
+  const toggle = e.target.closest("[data-toggle]");
+  if (toggle) {
+    const eng = toggle.dataset.toggle;
+    openMenuEngine = openMenuEngine === eng ? null : eng;
+    paintNewSession();
+    return;
+  }
+
+  const modelEl = e.target.closest(".model:not([aria-disabled='true'])");
+  if (modelEl) {
+    selectedAgyModel = modelEl.dataset.model;
+    paintNewSession();
+    return;
+  }
+
+  const startBtn = e.target.closest(".eng-start");
+  if (startBtn) {
+    const eng = startBtn.dataset.engine;
+    newMenu.hidePopover();
+    if (eng === "agy") {
+      startSession(newKind, newNote, { agyModel: selectedAgyModel });
+    } else if (eng === "copilot") {
+      startSession(newKind, newNote, { copilot: true });
+    } else {
+      startSession(newKind, newNote, null);
+    }
+    return;
+  }
+
+  const defBtn = e.target.closest(".eng-default");
+  if (defBtn) {
+    userDefaultEngine = defBtn.dataset.engine;
+    try {
+      localStorage?.setItem(DEFAULT_ENGINE_KEY, userDefaultEngine);
+    } catch {}
+    paintNewSession();
+    return;
+  }
+
+  const settingsLink = e.target.closest(".menu-settings");
+  if (settingsLink) {
+    e.preventDefault();
+    newMenu.hidePopover();
+    gear.open = true;
+  }
+});
+
+newMenu.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    const toggle = e.target.closest("[data-toggle]");
+    if (toggle) {
+      e.preventDefault();
+      const eng = toggle.dataset.toggle;
+      openMenuEngine = openMenuEngine === eng ? null : eng;
+      paintNewSession();
+      return;
+    }
+    const modelEl = e.target.closest(".model:not([aria-disabled='true'])");
+    if (modelEl) {
+      e.preventDefault();
+      selectedAgyModel = modelEl.dataset.model;
+      paintNewSession();
+    }
+  }
+});
+
+newMenu.addEventListener("toggle", (e) => {
+  newKind.setAttribute("aria-expanded", e.newState === "open" ? "true" : "false");
+});
+
 if (inTauri) {
   window.__TAURI__.core.invoke("agy_models").then(
     (models) => {
-      if (!Array.isArray(models) || !models.length) return;
-      const gemini = models.filter((m) => m.id.startsWith("gemini"));
-      agyModel.replaceChildren(...[...gemini, ...models.filter((m) => !gemini.includes(m))].map((m) => new Option(m.label, m.id)));
-      newKind.hidden = false;
+      if (Array.isArray(models) && models.length) {
+        agyModels = models;
+        installedStatus.agy = { installed: true, signedIn: true };
+        const gemini = models.find((m) => m.id.startsWith("gemini"));
+        selectedAgyModel = gemini ? gemini.id : models[0]?.id;
+      } else {
+        installedStatus.agy = { installed: false, signedIn: false };
+      }
+      paintNewSession();
     },
-    () => {}, // no agy here: + New session starts Claude Code only, as before
+    (err) => {
+      const msg = String(err || "");
+      if (msg.includes("not found")) {
+        installedStatus.agy = { installed: false, signedIn: false };
+      } else {
+        installedStatus.agy = { installed: true, signedIn: false };
+      }
+      paintNewSession();
+    },
   );
-}
-agyStart.addEventListener("click", async () => {
-  if (agyStart.getAttribute("aria-disabled") === "true") return;
-  const model = agyModel.value;
-  newMenu.hidePopover();
-  setOff(newButton, true);
-  try {
-    await press(
-      newKind,
-      newNote,
-      () => window.__TAURI__.core.invoke("launch_session", { agyModel: model }),
-      "Starting…",
-    );
-  } finally {
-    setOff(newButton, false);
+} else {
+  if (Array.isArray(window.__agy) && window.__agy.length) {
+    agyModels = window.__agy;
+    installedStatus.agy = { installed: true, signedIn: true };
+    const gemini = agyModels.find((m) => m.id.startsWith("gemini"));
+    selectedAgyModel = gemini ? gemini.id : agyModels[0]?.id;
   }
-});
+}
+paintNewSession();
 startButton.hidden = !inTauri;
 // Its answer goes to the bar's note, which stays in view once the empty state gives way.
 startButton.addEventListener("click", () => startSession(startButton, newNote));
@@ -189,9 +442,7 @@ function updateBackdrop(theme) {
   if (bd?.secondary) wallBackdrop.style.setProperty("--bg-secondary", bd.secondary);
 }
 updateBackdrop(cast);
-let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
-let latestSnapshot = null; // its usage readings draw the limit gauges
 // The Ledger and the Queue share the right edge, one open at a time. Docked,
 // a panel narrows the wall, and Auto measures again (its ResizeObserver).
 const edge = createEdge();
@@ -914,6 +1165,7 @@ function take(message) {
     if (said.length) announce(said.join(". "));
     refillPortrait();
     drawer.refresh();
+    paintNewSession();
     if (!frameId) drawSpeaking();
     if (pending) focusCard(pending, true);
   }

@@ -1,38 +1,45 @@
-# IMPL: klepsydra#471 test_slice start barrier for capped slice OOM race
+# IMPL: klepsydra#440 + New session: split button, engine menu, and sensible default (Variant A)
 
-Issue: https://github.com/ajbarea/klepsydra/issues/471
-PR: https://github.com/ajbarea/klepsydra/pull/474
+Brief: ~/.local/state/fleet-orchestrator/briefs-free/newsession-440.md
+Issue: https://github.com/ajbarea/klepsydra/issues/440
+Decision: Variant A (split button and menu) from PR #459
 
 ## Slice
-1. In `fleet/test_slice.sh`, synchronize stand-ins and children with start barriers (`$work/ready$i`, `$work/ready$(( 3 - i ))`, `$work/ready$i.child`, and `$work/ready$(( 3 - i )).child`). Both stand-ins allocate 110 MiB, signal ready, and wait for peer before launching `hungry.py`. Both hungry children set rank 1000 and wait for peer before allocating memory, preventing the start-up race where one scope exceeded the 300 MiB slice cap before the peer spawned its rank-1000 child.
-2. Drop wrapper-rank change and `SLICE_WRAPPER_RANK` knob (wrapper, systemd-run, floor, and stand-in share one PID through exec, and `fleet_oom_floor` at `lib.sh:705` resets `oom_score_adj` to 0 before stand-in starts). Keep wrapper at standard 1000 matching tmux caller.
-3. In `fleet/test_slice.sh`, update skip handling so `SLICE_LIVE=0` prints `live runs: skipped` instead of `N/N passed`.
-4. In `.github/workflows/ci.yml`, pass `slice_live_repeat` through `env:`, sanitize with `^[1-9][0-9]*$` regex check, and fail if invalid (preventing script injection). Drop `slice_wrapper_rank`.
-5. Run 50-repeat BEFORE soak on CI and 50-repeat AFTER soak on branch, updating PR #474 description with counts.
+1. Create `src/fleet/newsession.js` implementing engine metadata, default engine resolution (user preference -> last used -> first installed/signed in), menu model grouping, quota calculations from existing gauge readings, and free-first route marks.
+2. Add unit tests in `src/fleet-newsession.test.js` covering default engine determination, menu contents, default engine omission from menu, and disabled states for missing/unsigned engines.
+3. Integrate split button and engine menu in `src/wall.html`, `src/fleet/wall.js`, and `src/fleet/wall.css`:
+   - Split button naming default engine with logo, account mono badge, and accessible title.
+   - Caret popover toggle with chevron icon, keyboard reachable without opening on focus.
+   - Engine menu rendered with other engines, quota room, model picker for Antigravity, recommended badge, and "Set as default".
+   - Start session wired to default engine and individual menu engines.
+4. Update `scripts/test_wall_browser.py` with browser test covering 1920 and 390 viewports in dark and light themes, verifying button labels, engine menu contents, and saving comparison screenshots to `shots/2026-11-18/new-session-build-*.png`.
+5. Run full test suite, lint, commit, push branch, open PR, and report to orchestrator.
 
 ## Done
-- Rebased branch on `origin/main` (commit `2507029`).
-- Diagnosed root cause: floor resets OOM score to 0; race occurred because stand-in 1 launched child which allocated up to the slice cap while stand-in 2 was starting, causing OOM kill on stand-in 2 at rank 0 before it could spawn its rank-1000 child.
-- Added start barrier to `standin.py` and `hungry.py` in `fleet/test_slice.sh`: stand-ins sync before spawning children, and children sync via `sys.argv` ready files before either allocates beyond baseline memory.
-- Removed explicit `echo 1000` from child invocation in `standin.py`, preserving `BASH_ENV=oom-tool.sh` test coverage: mutation test `FLEET_OOM_TOOL=/nonexistent SLICE_LIVE_ONLY=1 make test-slice` fails (0/1 passed, 3 fail) while normal run passes (1/1 passed, 0 fail).
-- Added in-script validation for `SLICE_LIVE_REPEAT` in `test_slice.sh` (rejects 0 or non-numeric with exit 2).
-- Cleaned `$work/ready*` in iteration teardown.
-- Restored wrapper invocation `bash -c "echo 1000 >/proc/self/oom_score_adj; exec $cmd"`.
-- Fixed skip reporting: `live()` returns 2 on skip; outer loop reports `live runs: skipped`.
-- Sanitized `ci.yml` `workflow_dispatch` input via `INPUT_REPEAT` env var with regex validation `^[1-9][0-9]*$`.
-- Completed 50-repeat AFTER soak on CI run 44483716058: 50/50 passed. Note that soak testing cannot tell fixed from unfixed code since soak passes both before and after (flake rate on CI was ~2 in 4 runs on 11-18 under specific runner conditions); the fix rests on the barrier's logic.
-- Verified local live runs with barrier: 5/5 passed (`pass=50 fail=0`), full suite passed (`pass=59 fail=0`).
-- Verified `SLICE_LIVE=0` output: prints `live runs: skipped`.
+- Created `src/fleet/newsession.js` implementing engine resolution (preferred -> last used -> first installed/signed in), menu entry construction, Antigravity model grouping, account quota room calculations, free-first recommendation marks.
+- Created `src/fleet-newsession.test.js` with 13 unit tests covering all resolution rules, menu engine listing, default exclusion, disabled states.
+- Implemented Variant A split button and engine menu in `src/wall.html`, `src/fleet/wall.js`, and `src/fleet/wall.css`:
+  - Split button naming default engine with logo, account mono badge, and accessible title.
+  - Caret button with chevron icon toggling native popover engine menu.
+  - `#new-menu` rendered with other engines, quota room, Antigravity models (grouped into Gemini usable vs Claude/GPT spent), Recommended badge, "Start session" with chosen model, and "Set as default".
+  - Popover positioning fixed for desktop (`1920x1000`) and mobile (`390x844`), with viewport boundary overrides for popover UA styles.
+- Updated browser tests in `scripts/test_wall_browser.py` (`agy_menu`):
+  - Verified 1920 and 390 viewports in dark and light schemes (28 passed, 0 failed).
+  - Saved comparison shots to `shots/2026-11-18/new-session-build-*.png` and `/mnt/c/Users/ajbar/fleet-briefing/shots/2026-11-18/`.
+- Verified all test suites pass:
+  - `node --test src/*.test.js`: 527 passed, 0 failed.
+  - `npm run lint`: Biome checked 67 files, 0 errors.
+  - `uvx ruff check`: clean.
+  - Shell suites: `statusline/test_statusline.sh`, `hooks/test_fleet.sh` (606 passed), `scripts/test_measure_memory.sh` (28 passed), `scripts/test_build_windows.sh` (14 passed).
+  - Rust suites: `cargo clippy -p klepsydra-fleet -- -D warnings` (clean), `cargo test -p klepsydra-fleet` (434 passed).
 
 ## Next
-- Commit barrier fix, CI sanitization, skip fix, SLICE_LIVE_REPEAT validation, and updated IMPL.md with hooks on.
-- Push branch `fix/slice-oom-wrapper-471` to origin (`--force-with-lease`).
-- Monitor PR #474 CI pipeline on head commit until green.
-- Update PR #474 body with mutation results, soak clarification, and barrier logic.
-- Write report to `~/.local/state/fleet-orchestrator/reports/slice-471.md` and notify orchestrator via `fleet send`.
+- Commit and push to `feat/new-session-split-440`.
+- Open PR for #440 with labels, assignee, short top, screenshots, and live verification notes.
+- Report to Heph (orchestrator pane) via `fleet send`.
 
 ## Verify
-- `env -u BASH_ENV SLICE_LIVE=0 bash fleet/test_slice.sh`: prints `live runs: skipped`.
-- `env -u BASH_ENV SLICE_LIVE_REPEAT=3 SLICE_LIVE_ONLY=1 bash fleet/test_slice.sh`: 3/3 passed.
-- `env -u BASH_ENV make test-slice`: 59/59 passed.
-- `grep -c "make test-slice .*FLEET_HEAVY_HELD=1" .github/workflows/ci.yml`: exactly 1.
+- `node --test src/*.test.js`: 527/527 passed.
+- `scripts/test_wall_browser.py agy_menu`: 28/28 passed across 1920 and 390 dark and light viewports.
+- Biome lint & ruff check: 0 errors.
+- `cargo clippy` & `cargo test -p klepsydra-fleet`: 434/434 passed, clean.

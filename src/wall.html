@@ -38,7 +38,7 @@
         <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
         <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
       </div>
-      <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary">+ New session</button><button type="button" id="new-kind" class="primary" popovertarget="new-menu" aria-label="Start another kind of session" title="Start another kind of session" hidden><span aria-hidden="true">▾</span></button></span>
+      <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary">+ New session</button><button type="button" id="new-kind" class="primary caret" popovertarget="new-menu" aria-haspopup="menu" aria-expanded="false" aria-label="Start another kind of session" title="Start another kind of session"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button></span>
       <details class="gear">
         <summary title="View settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg><span class="visually-hidden">View</span></summary>
         <div class="view">
@@ -234,13 +234,24 @@
     </article>
   </template>
 
+  <template id="eng-tpl">
+    <div class="eng">
+      <div class="eng-h" tabindex="0" role="button">
+        <span class="ico"></span>
+        <span class="eng-name"></span>
+        <span class="room"><b></b><span class="room-detail"></span><button type="button" class="btn eng-fix" hidden></button></span>
+        <span class="eng-acct"></span>
+      </div>
+      <div class="models" role="radiogroup" hidden></div>
+      <div class="eng-actions" hidden>
+        <button type="button" class="primary eng-start"></button>
+        <button type="button" class="btn eng-default">Set as default</button>
+      </div>
+    </div>
+  </template>
+
   <script type="module" src="fleet/wall.js"></script>
-  <section id="new-menu" popover aria-label="Start an Antigravity session">
-    <h2 class="new-menu-title">Antigravity</h2>
-    <label class="new-menu-model">Model <select id="agy-model"></select></label>
-    <p class="new-menu-hint">On Google's quota, not Claude's. The session starts in the launch folder.</p>
-    <button type="button" id="agy-start" class="primary">Start</button>
-  </section>
+  <section id="new-menu" popover aria-label="Start another kind of session" role="menu"></section>
   <section id="ci" popover aria-label="CI runs">
     <h2 class="ci-title"></h2>
     <ul class="ci-runs"></ul>
