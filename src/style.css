@@ -114,7 +114,7 @@ html, body {
 /* With nothing to show yet, the gauge dims rather than look like a reading.
    The portraits beside it keep full strength: a session may still need you.
    Named, not :not(#strip), so #zoom keeps its own opacity. */
-#grip, #content { transition: opacity 240ms ease; }
+#content { transition: opacity 240ms ease; } /* #grip's is with its own rule */
 #panel[data-state="waiting"] > :is(#grip, #content) { opacity: var(--waiting-opacity); }
 
 .sub {
@@ -144,7 +144,7 @@ html, body {
   background-image: radial-gradient(var(--grip-dot) var(--dot), transparent var(--dot-edge));
   background-size: calc(5px * var(--scale)) calc(5px * var(--scale));
   background-position: center;
-  transition: background-color 140ms ease;
+  transition: background-color 140ms ease, opacity 240ms ease;
 }
 #grip:hover { background-color: rgba(255, 255, 255, 0.09); }
 #grip:hover { background-image: radial-gradient(var(--grip-dot-hover) var(--dot), transparent var(--dot-edge)); }

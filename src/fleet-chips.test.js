@@ -218,10 +218,11 @@ test("clockAt: today's time alone, another day's with its weekday, as toLocale* 
   assert.equal(clockAt(sec(later), noon), "Fri 12:00 PM");
   assert.equal(clockAt(Number.NaN, noon), null);
   assert.equal(clockAt(1e13, noon), null, "past Date's range: no time, no throw");
+  assert.equal(clockAt(null, noon), null, "null is no time, not 1970");
 });
 
 test("a reset time past Date's range draws instead of stopping the redraw", () => {
   const bad = reading("me", "Personal", { five_hour: win(100, 3600), seven_day: { used_percentage: 40, resets_at: 1e13 } });
   const me = chips([bad]).find((c) => c.account === "me");
-  assert.ok(me.detail.length > 2);
+  assert.ok(me.detail.includes("This week 40% · resets at a time the reading does not give"), me.detail.join(" | "));
 });

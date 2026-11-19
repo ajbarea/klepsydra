@@ -28,16 +28,19 @@ real data for perf). Fix SP= in live_app.sh to the session's scratchpad before r
   797336e 0.081 % vs 0.075 %. Live exe (stage klepsydra-build-gauge421): chips on the taskbar beside AJ's
   main build, faces docked, native title hover shows in the unfocused window.
 - Round 2 (fresh Opus): 1-11 fixed; new N1 (waiting fade un-hid #zoom), N2 (Intl throws past Date range),
-  N3 (phone spent-week only source-tested), N4-N5 wording; all fixed in the next commit.
+  N3 (phone spent-week only source-tested), N4-N5 wording; all fixed (af75c1d).
+- Round 3 (fresh Opus): N1-N5 confirmed; new: #grip's own transition cancelled its fade, "resets null" for a
+  live window past Date's range, clockAt(null) read as 1970, no committed guard for the fade; all fixed + guarded.
+- PR #482 open. Browser suites vs main (ab00893): phone 88 pass / the same 5 reds as main (#266; "Play again"
+  intermittent); wall: 4 Ledger reds on the branch, main's run hit the same 2 then timed out before the other 2.
 
 ## Open
 - Hover detail is the native `title` tooltip: shown live in the unfocused window, but no tap or keyboard.
   A toggletip card needs the window to grow from its docked edge: #481, planned with PR 3.
 
 ## Next
-1. Browser suites (phone + wall) on the round-2 fixes; a fresh Opus verify of that commit.
-2. After #480 merges: `git rebase origin/main`, push (explicit refspec), PR (assignee ajbarea, label enhancement,
-   "Part of #421"), fresh Opus verify of 21d2dc8, shots to fleet-briefing, report to Heph, delete the old remote branch.
+1. Round 4: a fresh Opus verify of the round-3 commit (stop at the first clean round; ceiling 5).
+2. CI green, then report to Heph (`fleet send`), queue line; do not merge. Then PR 2 (#438) on a new branch.
 
 ## Verify
 - `node --test src/*.test.js`; `npm run lint`.

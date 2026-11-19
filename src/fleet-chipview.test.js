@@ -103,3 +103,18 @@ test("the stacked grid has a column per window of the widest account", () => {
   assert.equal(box.style["--cells"], "4");
   assert.equal(draw([PERSONAL], "stacked").box.style["--cells"], "2");
 });
+
+test("waiting fades the grip and chips by name: not the portraits, not the zoom readout, and both fade", async () => {
+  const { readFileSync } = await import("node:fs");
+  const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+  const waiting = [...css.matchAll(/#panel\[data-state="waiting"\]([^{]*)\{([^}]*)\}/g)];
+  assert.equal(waiting.length, 1, "one waiting rule");
+  assert.equal(waiting[0][1].trim(), "> :is(#grip, #content)");
+  assert.match(waiting[0][2], /opacity: var\(--waiting-opacity\)/);
+  // Each faded part's own transition carries opacity, or the switch snaps.
+  for (const id of ["#grip", "#content"]) {
+    const own = [...css.matchAll(new RegExp(`(?:^|\\n)${id} \\{([^}]*)\\}`, "g"))].map((m) => m[1]).join("");
+    const transitions = [...own.matchAll(/transition: ([^;]*);/g)].map((m) => m[1]);
+    assert.ok(transitions.length === 1 && /opacity/.test(transitions[0]), `${id}: ${transitions}`);
+  }
+});

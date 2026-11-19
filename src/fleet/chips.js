@@ -72,6 +72,7 @@ const WEEKDAY = new Intl.DateTimeFormat("en-US", { weekday: "short" });
 const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
 export function clockAt(sec, nowMs = Date.now()) {
+  if (typeof sec !== "number") return null; // new Date(null * 1000) is 1970, not "no time"
   const at = new Date(sec * 1000);
   // Intl throws on a time past Date's range (a reset in microseconds, 1e13 s).
   if (!Number.isFinite(at.getTime())) return null;
@@ -134,9 +135,12 @@ function windowLine(row, chip, nowMs) {
   const name = windowLabel(row.window);
   if (row.state !== "live") return `${name}: ${row.short}`;
   const pct = `${Math.floor(row.pct)}%`;
+  const at = clockAt(row.resetsAt, nowMs);
   const when = spent(row)
     ? `out ${untilReset(row, nowMs)}`
-    : `resets ${clockAt(row.resetsAt, nowMs)} (in ${formatCountdownShort(row.resetsAt, nowMs)})`;
+    : at
+      ? `resets ${at} (in ${formatCountdownShort(row.resetsAt, nowMs)})`
+      : "resets at a time the reading does not give";
   const age = rowAge(row, nowMs);
   const own = row !== chip.lead && ageText(age) && !(age <= chip.ageMs) ? ` · read ${formatAgeShort(age)} ago` : "";
   return `${name} ${pct} · ${when}${own}`;
