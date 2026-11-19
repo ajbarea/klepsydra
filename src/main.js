@@ -311,7 +311,7 @@ async function startFleet() {
     await first;
     drawStrip = mountStrip(stripEl, {
       open: (id) =>
-        inTauri && window.__TAURI__.core.invoke("open_wall", { focus: id }).catch((err) => log.error(`open_wall for session ${id} failed`, err, { session_id: id })),
+        inTauri && window.__TAURI__.core.invoke("open_wall", { focus: id ?? "" }).catch((err) => log.error(`open_wall for ${id ? `session ${id}` : "the keeper"} failed`, err, { session_id: id ?? null })),
       cast: () => theme,
     });
     subscribe(receiveFleet);

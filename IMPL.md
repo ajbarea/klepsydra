@@ -1,20 +1,17 @@
-# IMPL: docsync 11-18 (branch docs/docsync-1118)
+# IMPL: klepsydra#461 gauge strip shows the resting keeper with no sessions
 
-Full docsync of klepsydra against main (7a5c161). PRs #454, #457, #458 are not described.
+Issue: https://github.com/ajbarea/klepsydra/issues/461 · PR #463 · branch `fix/strip-keeper-461`
 
 ## Slice
-README.md, AGENTS.md, ROADMAP.md, docs/*.md, docs/characters, fleet/*.md, hooks/*.md,
-.claude/skill-context.md, CITATION.cff, GitHub About. No docs site (no zensical.toml).
+- `src/fleet/cast.js` `keeperBase` (one keeper lookup); `strip.js` draws one `.face.rest` button with no sessions (after the reader's first snapshot): keeper face, or a plain wall-mark button; click calls `open()` with no id.
+- Review fix (Opus, 11-18): `.face img { display:block }` beat `[hidden]`, so the plain button drew a broken-image sliver and a keeper switch left the old face. Fixed with `.face img[hidden] { display:none }` in `src/fleet/badge.css`, and `strip.js` clears the img `src`/`srcset` when no keeper.
 
 ## Done
-- Docsync of every file (commits a497e72, b819f2e); PR #465 closes #464.
-- README Fleet engine and CI watch detail moved to docs/fleet.md and docs/ci-watch.md; both sections under budget.
-- Heph review round 1 (not clean, no Blocking): all 7 items fixed in one commit. Dead delegate chip reader filed as #469.
-- Rebased on origin/main 7a5c161.
-
-## Verify
-lint, link check (21 files), shellcheck on fleet/fleet, fleet/install.sh pass. Whole-tree `make shellcheck`
-OOM-killed (137) again; CI runs it. CI on the pushed head: `gh pr checks 465`.
+- Code, unit tests (15 pass), lint clean; full `node --test` 514 pass.
+- Browser case `strip_keeper_states`: 3 pass with the fix, 2 fail with the CSS rule removed. Shots in fleet-briefing/shots/2026-11-18/keeper-strip-browser-*.png.
 
 ## Next
-Round 2 verify CLEAN; three optional nits folded in one commit. When CI is green: report to Heph, `fleet done`. Heph merges. Do not merge. Docs cap: 3 review rounds.
+One CI round on #463, then report to Heph (inbox/hermes-463.md if `fleet send` says not-pasted). Do not merge.
+
+## Verify
+`node --test src/fleet-strip.test.js`; `npm run lint`; `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py strip_keeper_states`.
