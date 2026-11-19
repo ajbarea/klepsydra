@@ -1159,12 +1159,21 @@ check "no phone wall fails, after a second try" "$(grep -c '^FAIL phone wall: no
 check "#328 review 1: with the wall on and down, both phone lines fail" "$(phone_lines <<<"$out")" "FAIL phone wall|FAIL phone wall over Tailscale"
 # A wall that is down because the app was quit says so, as a warning (AJ 11-17).
 mkdir -p "$KLEPSYDRA_DIR/logs"
-printf '{"ts":"%s","level":"INFO","target":"klepsydra","message":"klepsydra quitting: the phone wall and the gauge stop with it"}\n' \
-  "$(date -u -d '-20 min' +%Y-%m-%dT%H:%M:%S.000Z)" >"$KLEPSYDRA_DIR/logs/klepsydra.log"
 serve_on="https://desk.tail1.ts.net (tailnet only)"
+quit_line() {
+  printf '{"ts":"%s","level":"INFO","target":"klepsydra","message":"klepsydra quitting: the phone wall and the gauge stop with it"}\n' \
+    "$(date -u -d "$1" +%Y-%m-%dT%H:%M:%S.000Z)" >"$KLEPSYDRA_DIR/logs/klepsydra.log"
+}
+# #475: a quit on an earlier day names the date; checked on its own so the
+# same-day case below can accept either form when -20 min crosses midnight.
+quit_line '-2 days'
+check "a quit on an earlier day names its date and time" "$(DOC_SERVE=$serve_on doctor | grep -c '^warn phone wall: klepsydra is not running: it was quit at [A-Z][a-z][a-z] [0-9]\{1,\}, [0-9]\{1,\}:[0-9][0-9] [AP]M')" "1"
+quit_line now
+check "a quit earlier today names only its time" "$(DOC_SERVE=$serve_on doctor | grep -c '^warn phone wall: klepsydra is not running: it was quit at [0-9]\{1,\}:[0-9][0-9] [AP]M')" "1"
+quit_line '-20 min'
 quit_out=$(DOC_SERVE=$serve_on doctor)
 check "a quit app turns both phone lines into warnings" "$(phone_lines <<<"$quit_out")" "warn phone wall|warn phone wall over Tailscale"
-check "the warning names the quit time" "$(grep -c '^warn phone wall: klepsydra is not running: it was quit at [0-9]*:[0-9][0-9] [AP]M' <<<"$quit_out")" "1"
+check "the warning names the quit time" "$(grep -cE '^warn phone wall: klepsydra is not running: it was quit at ([A-Z][a-z]{2} [0-9]+, )?[0-9]+:[0-9]{2} [AP]M' <<<"$quit_out")" "1"
 printf '{"ts":"%s","level":"INFO","target":"klepsydra::phone","message":"phone: wall serving on 127.0.0.1:8318"}\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >>"$KLEPSYDRA_DIR/logs/klepsydra.log"
 check "#441 review: a quit line while klepsydra.exe still runs fails" "$(DOC_APP_RUNS=1 DOC_SERVE=$serve_on doctor | phone_lines)" "FAIL phone wall|FAIL phone wall over Tailscale"
