@@ -17,4 +17,4 @@ lint, link check (21 files), shellcheck on fleet/fleet, fleet/install.sh pass. W
 OOM-killed (137) again; CI runs it. CI on the pushed head: `gh pr checks 465`.
 
 ## Next
-CI green: report round 1 to Heph (`fleet send`), then `fleet done`. Do not merge. Docs cap: 3 review rounds.
+Round 1 reported to Heph (CI green on 6a6e193); `fleet done` run. A round 2 starts fresh from here. Do not merge. Docs cap: 3 review rounds.
