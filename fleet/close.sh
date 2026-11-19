@@ -123,7 +123,7 @@ screen_lines() { # ABOVE
     }
     print k; for (i = 1; i <= n; i++) print l[i] }'
 }
-# Whether AFTER (a screen with /exit typed) shows the transcript of REF (the screen before)
+# Whether AFTER (a screen with /exit typed) shows the transcript of REF (the screen read before the quiet window)
 # unchanged, row for row from the top: the menu is drawn over the transcript's last rows (2.1.316,
 # at 84 and 160 columns), so at most the rows it covers are missing, and only from the end. A
 # transcript that scrolled up under the menu (a prompt and its spinner arriving as /exit went in)

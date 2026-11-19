@@ -49,7 +49,9 @@ Do not merge: Heph reviews and merges.
   position (above_rows); blankabove-84 fixture added. Comments on the 84-column busy check and the
   fingerprint's role corrected.
 
+- Round 4: clean (19 adversarial screen pairs, the blankabove fixture pins the fix). Suite 1008/0; live rest
+  closes at 84 and 160, mid-turn refused.
+
 ## Next
-1. Suite + shellcheck on close.sh, live rest at 84/160, then a fresh Opus verify pass (round 4).
-2. Open the PR (draft /tmp/claude-1001/close-menu-handoff/pr.md), assigned ajbarea, label bug, Fixes #483;
+1. Open the PR (draft /tmp/claude-1001/close-menu-handoff/pr.md), assigned ajbarea, label bug, Fixes #483;
    CI green; report to Heph via `fleet send`; `fleet done`. Do not merge.
