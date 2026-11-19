@@ -44,6 +44,16 @@ test("the check catches a size token used without the zoom", () => {
   assert.deepEqual(unscaledSizes(`${css}\n.new { width: var(--face-size); }\n`), ["width: var(--face-size)"]);
 });
 
+test("every chips.css rule is scoped to .chips, and no :is() list repeats the scope", () => {
+  const selectors = chips.slice(chips.indexOf("*/", chips.indexOf("/* ───")) + 2).replace(/\/\*[\s\S]*?\*\//g, "").match(/[^{}]+(?=\{)/g);
+  for (const list of selectors.map((s) => s.trim())) {
+    // Split at top-level commas only: those inside :is() belong to one selector.
+    const parts = list.split(/,(?![^(]*\))/).map((s) => s.trim());
+    for (const sel of parts) assert.match(sel, /^\.chips\b/, sel);
+    for (const inner of list.matchAll(/:is\(([^)]*)\)/g)) assert.doesNotMatch(inner[1], /\.chips\b/, list);
+  }
+});
+
 test("the wall's header gives the chips a scale of 1: it has no zoom", () => {
   const wall = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
   assert.match(wall, /\.dock \{ --scale: 1;/);

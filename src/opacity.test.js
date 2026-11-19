@@ -115,18 +115,19 @@ test("no text colour carries alpha and no filter fades: words keep their ink by 
 });
 
 test("no word fades: every opacity under 1 in the stylesheet dims a part that is not text", () => {
-  const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+  // The strip's sheet and the chips' (shared with the wall's header).
+  const sheets = ["./style.css", "./fleet/chips.css"].map((f) => readFileSync(new URL(f, import.meta.url), "utf8"));
   // Every rule that sets an opacity below 1, by its selector, whatever form it takes.
-  const fades = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)]
+  const fades = sheets.flatMap((sheet) => [...sheet.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)])
     .filter(([, , body]) => [...body.matchAll(/(?:^|[;\s])opacity:\s*([^;]+)(?:;|$)/g)].some(([, v]) => v.trim() !== "1"))
     .map(([, sel]) => sel.trim().replace(/\s+/g, " "));
   assert.deepEqual(fades.sort(), [
-    "#chips[data-layout=\"linear\"] .chip + .chip::before", // the bar between accounts
-    "#chips[data-layout=\"stacked\"] .chip[data-stale] .cell .pip", // a stale window's pip
+    ".chips[data-layout=\"linear\"] .chip + .chip::before", // the bar between accounts
+    ".chips[data-layout=\"stacked\"] .chip[data-stale] .cell .pip", // a stale window's pip
     "#panel[data-state=\"waiting\"] > :is(#grip, #content)", // no reading at all yet
     "#zoom", // the size readout, hidden until a scroll
-    ".chip[data-placeholder] .mark", // Copilot's icon until #323
-    ".chip[data-stale] :is(.pips, .mark svg)", // a stale chip's pips and icon; its words and monogram keep their ink (#486)
+    ".chips .chip[data-placeholder] .mark", // Copilot's icon until #323
+    ".chips .chip[data-stale] :is(.pips, .mark svg)", // a stale chip's pips and icon; its words and monogram keep their ink (#486)
   ].sort());
   const lightFull = css.match(/@media \(prefers-color-scheme: light\) \{\s*\/\*[^*]*\*\/\s*:root\[data-ink="full"\] #panel \{([^}]*)\}/);
   assert.ok(lightFull, "the light full-ink rule");
