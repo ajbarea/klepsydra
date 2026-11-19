@@ -16,7 +16,7 @@ use klepsydra_fleet::scan::Problem;
 use klepsydra_fleet::watch::{unix_now, Reader, POLL};
 use serde_json::Value;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// The card wall's window label.
 // The window guard reads the builder's label as a literal, so it repeats this.
