@@ -151,10 +151,11 @@ jobs:
           make test-fleet FLEET_HEAVY_HELD=1
 
   # Branch protection requires this check by name: it passes only when both halves did.
+  # always(), not !cancelled(): a skipped job reports success, even as a required check.
   gate:
     name: Gauge logic + statusLine hook
     needs: [test, fleet]
-    if: ${{ !cancelled() }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
