@@ -330,9 +330,6 @@ export function stripItems(sessions, cast, nowMs, before, speaking = null) {
       face2x: who.face2x,
       pulse: pulse.has(s.session_id),
       speaking: talking,
-      // Where the portrait docks on the gauge strip (#421, chips.js dockKey).
-      account: s.account ?? null,
-      engine: s.engine ?? null,
     };
   });
 }

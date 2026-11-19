@@ -48,19 +48,17 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 
 def accounts():
-    """Three accounts as the bar shows them: Antigravity's session and week, a
-    personal session and week, and a team session with two and a half hours
-    to go."""
+    """Two accounts as the bar shows them: a personal session and week, and a
+    team session with two and a half hours to go."""
     now = int(time.time())
 
     def w(pct, reset_in):
         return {"used_percentage": pct, "resets_at": now + reset_in}
 
-    def entry(key, label, windows, **extra):
-        return {"account": key, "label": label, "written_at": now, "observed_at": now, "windows": windows, **extra}
+    def entry(key, label, windows):
+        return {"account": key, "label": label, "written_at": now, "observed_at": now, "windows": windows}
 
     return json.dumps({
-        "agy": entry("agy-primary", "Google AI Pro", {"five_hour": w(7, 6_700), "seven_day": w(4, 590_000)}, harness="agy"),
         "pers": entry("pers", "Personal", {"five_hour": w(57, 480), "seven_day": w(27, 541_000)}),
         "team": entry("team", "Team", {"five_hour": w(12, 9_000)}),
     })
@@ -145,32 +143,21 @@ def arrival(browser, port, width, height, n):
     return page
 
 
-# The demo sessions name no account; the bar's shots spread them over the
-# demo accounts, so each portrait docks beside its account's chip (#421).
-DOCK = [{"id": "pers", "label": "Personal"}, {"id": "team", "label": "Team"}, {"id": "agy-primary", "label": "Google AI Pro"}]
-
-
-def docked(fleet):
-    snapshot = json.loads(fleet)
-    for i, s in enumerate(snapshot["sessions"]):
-        s["account"] = DOCK[i % len(DOCK)]
-    return json.dumps(snapshot)
-
-
 def bar(browser, port, width, height, query, fleet):
     page = browser.new_page(viewport={"width": width, "height": height}, color_scheme=SCHEME)
     page.route("**/dev-fixture.json", json_route(accounts()))
-    page.route("**/dev-fleet.json", json_route(docked(fleet)))
+    page.route("**/dev-fleet.json", json_route(fleet))
     page.goto(f"http://127.0.0.1:{port}/src/index.html?still=1{query}")
-    page.wait_for_selector("#chips > .chip")
+    page.wait_for_selector("#rows > *")
     if json.loads(fleet)["sessions"]:
-        page.wait_for_selector("#chips .faces > .face")
+        page.wait_for_selector("#strip:not([hidden]) > *")
     page.wait_for_timeout(SETTLE_MS)
-    # Down to the panel, which holds the chips and every portrait.
+    # Down to the panel and the strip, whichever reaches further.
     box = page.evaluate("""() => {
-      const b = document.getElementById('panel').getBoundingClientRect();
-      return {x: 0, y: 0, width: Math.min(innerWidth, Math.ceil(b.right) + 8),
-              height: Math.min(innerHeight, Math.ceil(b.bottom) + 8)};
+      const r = [document.getElementById('panel'), document.getElementById('strip')]
+        .filter((e) => !e.hidden).map((e) => e.getBoundingClientRect());
+      return {x: 0, y: 0, width: Math.min(innerWidth, Math.ceil(Math.max(...r.map((b) => b.right))) + 8),
+              height: Math.min(innerHeight, Math.ceil(Math.max(...r.map((b) => b.bottom))) + 8)};
     }""")
     shot = page.screenshot(clip=box)
     page.close()
@@ -187,12 +174,12 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chrome) if chrome else p.chromium.launch()
 
-        # The bar as it sits on the taskbar: a chip per account, each with its portraits.
-        save(bar(browser, port, 1600, 48, "&layout=compact", fleet), "compact-taskbar")
-        # The full layout: a line per account with every window, and its portraits.
-        save(bar(browser, port, 1600, 200, "", fleet), "fleet-strip")
-        # Three accounts and no sessions: the keeper at rest.
-        save(bar(browser, port, 1000, 200, "", json.dumps({"sessions": []})), "two-accounts")
+        # The bar as it sits on the taskbar: three rings, then the portraits.
+        save(bar(browser, port, 1100, 48, "&layout=compact", fleet), "compact-taskbar")
+        # The full layout: a row per window, then the portraits.
+        save(bar(browser, port, 1100, 160, "", fleet), "fleet-strip")
+        # Two accounts and no sessions.
+        save(bar(browser, port, 450, 160, "", json.dumps({"sessions": []})), "two-accounts")
 
         # The wall maximised at 1920: eight cards, Comfortable, as Hephaestus arrives.
         page = arrival(browser, port, 1920, 1000, 8)

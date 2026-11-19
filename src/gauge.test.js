@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WINDOW_ORDER, ROUTE_ORDER, FLEET_ROOM_PCT, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, harnessGroups, routeLane } from "./gauge.js";
+import { WINDOW_ORDER, ROUTE_ORDER, FLEET_ROOM_PCT, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, windowNote, harnessGroups, routeLane } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -542,7 +542,13 @@ test("legacy AGY Gemini windows stay in the AGY Gemini lane", () => {
   assert.equal(routeLane({ harness: "agy", window: "gemini" }), "agy_gemini");
 });
 
-test("multi-harness toRows tags rows with harness and route recommendation", () => {
+test("windowNote provides expiry advisory for claude_gpt", () => {
+  assert.equal(windowNote("claude_gpt"), "ends Nov 18");
+  assert.equal(windowNote("five_hour"), null);
+  assert.equal(windowNote("gemini"), null);
+});
+
+test("multi-harness toRows tags rows with harness, advisory notes, and route recommendation", () => {
   const claudeAcct = {
     account: "6f5fe38b",
     label: "Personal",
@@ -581,7 +587,7 @@ test("multi-harness toRows tags rows with harness and route recommendation", () 
   assert.equal(rows.find((r) => r.key === "agy-account:seven_day").isBestRoute, true, "AGY is uncapped and recommended route when Claude is capped");
 
   const agyClaudeGpt = rows.find((r) => r.key === "agy-account:claude_gpt");
-  assert.equal(agyClaudeGpt.note, undefined, "no date typed into the code (#421): the reading says whether the window lives");
+  assert.equal(agyClaudeGpt.note, "ends Nov 18");
   assert.equal(agyClaudeGpt.isBestRoute, false, "only the selected row gets the badge");
   assert.equal(rows.filter((r) => r.isBestRoute).length, 1);
 

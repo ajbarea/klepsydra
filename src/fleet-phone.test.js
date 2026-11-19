@@ -217,14 +217,11 @@ test("the phone draws the gauge's rows with the gauge's own code: one model, no 
   const main = read("src/main.js");
   assert.match(wall, /import \{ WAITING, usageRows \} from "\.\.\/gauge\.js";/);
   assert.match(wall, /import \{ readMode, readStops, syncEntries \} from "\.\.\/gaugeview\.js";/);
+  assert.match(main, /import \{ readMode, readStops, syncEntries \} from "\.\/gaugeview\.js";/);
   assert.match(wall, /syncEntries\(limitRows, rows, \{ compact: true, stops: readStops\(\), mode: readMode\(\) \}, true\);/);
-  // The desktop strip draws chips (#421) from the same rows: toRows, then toChips.
-  assert.match(main, /import \{ readMode, readStops \} from "\.\/gaugeview\.js";/);
-  assert.match(main, /const rows = toRows\(lastPayload, now\);/);
-  assert.match(main, /chips = rows\.length \? toChips\(rows, now\) : \[\];/);
-  assert.match(main, /syncChips\(chipsEl, chips, \{/);
+  assert.match(main, /syncEntries\(rowsEl, rows, \{/);
   // The words and the ring's arithmetic live in gauge.js alone.
-  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "model.js", "strip.js", "drawer.js", "chips.js", "chipview.js"].map((f) => `src/fleet/${f}`)];
+  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "model.js", "strip.js", "drawer.js"].map((f) => `src/fleet/${f}`)];
   for (const f of others) {
     const src = read(f);
     assert.doesNotMatch(src, /function format|% used|Resets in|resets_at|used_percentage|2 \* Math\.PI|strokeDasharray = `/, f);
