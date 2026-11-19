@@ -24,6 +24,9 @@ check() {
     pass=$((pass + 1)); printf '  ok   %s\n' "$name"
   else
     fail=$((fail + 1)); printf '  FAIL %s\n       want: %s\n       got:  %s\n' "$name" "$want" "$got"
+    if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+      printf '::error file=fleet/test_slice.sh,line=%s,title=slice test failed::%s (want: %s, got: %s)\n' "${BASH_LINENO[0]}" "$name" "$want" "$got"
+    fi
   fi
 }
 units=""
@@ -35,11 +38,15 @@ cleanup() {
     for s in $units; do rm -f -- "${XDG_RUNTIME_DIR:?}/systemd/user/${s:?}"; done
     systemctl --user daemon-reload 2>/dev/null
   fi
+  if [[ -n ${XDG_RUNTIME_DIR:-} && -d $XDG_RUNTIME_DIR/systemd/user ]]; then
+    rm -f -- "$XDG_RUNTIME_DIR/systemd/user"/k353test${$}*.slice 2>/dev/null || :
+  fi
   rm -rf -- "${work:?}"
 }
 trap cleanup EXIT
 trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
 
+if [[ ${SLICE_LIVE_ONLY:-0} != 1 ]]; then
 echo "sizes"
 check "to_mib reads systemd's sizes" "$(to_mib 4G) $(to_mib 512M) $(to_mib 2048K) $(to_mib 1073741824)" "4096 512 2 1024"
 check "to_mib refuses a size it cannot read" "$(to_mib 4g || echo no) $(to_mib '' || echo no) $(to_mib 1.5G || echo no)" "no no no"
@@ -151,10 +158,11 @@ check "run as a wrapper, it ranks the command it execs" "$(bash "$FLEET_OOM_TOOL
 # The floor's shell drops a rank it inherited back to 0 (a tmux server started from a ranked shell).
 floor_cmd="$(fleet_oom_floor)bash -c 'cat /proc/self/oom_score_adj'"
 check "the floor takes claude back to 0 from an inherited 1000" "$(bash -c "echo 1000 >/proc/self/oom_score_adj; $floor_cmd")" "0"
+fi
 
 echo "live: two scopes in a capped slice"
 live() {
-  local why
+  local r=${1:-1} why
   if [[ ${SLICE_LIVE:-1} == 0 ]]; then
     why="SLICE_LIVE=0"
   elif ! command -v systemd-run >/dev/null || ! systemctl --user show-environment >/dev/null 2>&1; then
@@ -168,10 +176,13 @@ live() {
   fi
   if [[ -n ${why:-} ]]; then
     echo "  skip the live part: $why"
-    return
+    return 2
   fi
+  # Clean files from any prior iteration.
+  rm -f -- "$work/standin"* "$work/scope"* "$work/stop" "$work/ready"*
+
   # Slice names without a dash of their own, so the pair nests only in each other.
-  local top=k353test$$.slice
+  local top=k353test${$}_${r}.slice
   local sub=${top%.slice}-workers.slice dir=$XDG_RUNTIME_DIR/systemd/user
   units="$sub $top"
   mkdir -p -- "$dir"
@@ -190,7 +201,16 @@ for i in range(0, len(held), 4096):
     held[i] = 1
 cg = open("/proc/self/cgroup").read().strip().split("::", 1)[-1]
 open(sys.argv[1], "w").write(f"ready {cg}\n")
-rc = subprocess.call(["/bin/bash", "-c", "exec python3 " + sys.argv[2]])
+if len(sys.argv) > 5:
+    open(sys.argv[4], "w").close()
+    for _ in range(600):
+        if os.path.exists(sys.argv[5]):
+            break
+        time.sleep(0.05)
+    extra = " " + sys.argv[4] + ".child " + sys.argv[5] + ".child"
+else:
+    extra = ""
+rc = subprocess.call(["/bin/bash", "-c", "exec python3 " + sys.argv[2] + extra])
 open(sys.argv[1], "a").write(f"child {rc}\n")
 # A claude outlives its tool call: stay until the test says stop (at most a minute).
 for _ in range(600):
@@ -201,7 +221,13 @@ EOF
   # The child grows by 10M up to 250M, then stops on its own: with no cap at all
   # (the slice flag removed) the test still never holds more than about 720M.
   cat >"$work/hungry.py" <<'EOF'
-import time
+import os, sys, time
+if len(sys.argv) > 2:
+    open(sys.argv[1], "w").close()
+    for _ in range(600):
+        if os.path.exists(sys.argv[2]):
+            break
+        time.sleep(0.01)
 blocks = []
 for _ in range(25):
     b = bytearray(10 << 20)
@@ -212,12 +238,15 @@ for _ in range(25):
 EOF
   # Each scope's own cap (400M) is above what one scope can hold (110M + 250M),
   # so only the slice's cap can kill: with it removed, both children finish.
+  # A barrier synchronizes the stand-ins so both reach ready before either child
+  # starts allocating (#471), keeping both alive at rank 0 while the cap kills
+  # only a rank-1000 child.
   # Started from a shell at rank 1000, as a tmux server started from a ranked shell would start them.
   # Each scope may swap a fifth of its cap, the shipped ratio (MEM_SWAP 1G to MEM_MAX 5G):
   # the slice's cap still kills before the deadline rather than swapping on.
   local i pids=() cmd
   for i in 1 2; do
-    cmd="systemd-run --user --scope --quiet --collect --unit=k353test$$-$i $(FLEET_SLICE=$top FLEET_WORKER_SLICE=$sub fleet_slice_opts worker) -p MemoryMax=400M -p MemorySwapMax=80M $(fleet_oom_floor)env $(fleet_oom_env)python3 $work/standin.py $work/standin$i.log $work/hungry.py $work/stop"
+    cmd="systemd-run --user --scope --quiet --collect --unit=k353test$$-$r-$i $(FLEET_SLICE=$top FLEET_WORKER_SLICE=$sub fleet_slice_opts worker) -p MemoryMax=400M -p MemorySwapMax=80M $(fleet_oom_floor)env $(fleet_oom_env)python3 $work/standin.py $work/standin$i.log $work/hungry.py $work/stop $work/ready$i $work/ready$(( 3 - i ))"
     bash -c "echo 1000 >/proc/self/oom_score_adj; exec $cmd" >"$work/scope$i.out" 2>&1 &
     pids+=($!)
   done
@@ -236,12 +265,12 @@ EOF
   check "both children ended before the deadline (none stalled)" "$alive" "0"
   : >"$work/stop"
   sleep 1
-  for i in 1 2; do systemctl --user stop "k353test$$-$i.scope" 2>/dev/null; done
+  for i in 1 2; do systemctl --user stop "k353test$$-$r-$i.scope" 2>/dev/null; done
   for i in 0 1; do wait "${pids[$i]}" 2>/dev/null; done
   local cg events
   cg=$(systemctl --user show -p ControlGroup --value "$sub")
   for i in 1 2; do
-    check "stand-in $i ran in the workers' slice, inside the fleet's" "$(sed -n 's/^ready //p' "$work/standin$i.log" 2>/dev/null)" "${cg:-(no cgroup for $sub)}/k353test$$-$i.scope"
+    check "stand-in $i ran in the workers' slice, inside the fleet's" "$(sed -n 's/^ready //p' "$work/standin$i.log" 2>/dev/null)" "${cg:-(no cgroup for $sub)}/k353test$$-$r-$i.scope"
   done
   # Never the root's memory.events, which an empty ControlGroup would name.
   # memory.events.local counts only the slice's own limit and OOM, not a scope's
@@ -256,8 +285,40 @@ EOF
     check "stand-in $i outlived its child, which the cap killed (SIGKILL: -9)" "$(sed 's/^ready .*/ready/' "$work/standin$i.log" 2>/dev/null | paste -sd' ')" "ready child -9"
   done
   check "WSL's MemAvailable stayed above the margin (lowest ${low} MiB)" "$(( low > live_margin ))" "1"
+
+  # Clean slice units and files for this iteration.
+  for s in "$sub" "$top"; do systemctl --user stop "$s" 2>/dev/null || :; done
+  rm -f -- "$dir/$sub" "$dir/$top"
+  systemctl --user daemon-reload 2>/dev/null || :
+  units=""
+  rm -f -- "$work/standin"* "$work/scope"* "$work/stop" "$work/ready"*
 }
-live
+
+repeat=${SLICE_LIVE_REPEAT:-1}
+if [[ ! "$repeat" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SLICE_LIVE_REPEAT must be a positive integer, got '$repeat'" >&2
+  exit 2
+fi
+live_runs=0
+live_passed_runs=0
+live_skipped=0
+for (( r = 1; r <= repeat; r++ )); do
+  (( repeat > 1 )) && echo "  run $r/$repeat:"
+  fail_before=$fail
+  if ! live "$r"; then
+    live_skipped=1
+    break
+  fi
+  live_runs=$((live_runs + 1))
+  if (( fail == fail_before )); then
+    live_passed_runs=$((live_passed_runs + 1))
+  fi
+done
+if (( live_skipped )); then
+  echo "live runs: skipped"
+elif (( repeat > 1 || ${SLICE_LIVE_ONLY:-0} == 1 )); then
+  echo "live runs: $live_passed_runs/$live_runs passed"
+fi
 
 echo
 echo "pass=$pass fail=$fail"
