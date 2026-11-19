@@ -145,7 +145,7 @@ rows() { if [[ -n $1 ]]; then wc -l <<<"$1"; else echo 0; fi; } # TEXT
 # characters and joined by " | ", then how many blank lines differ: what a refusal's log shows of a
 # screen that changed. Blank lines are counted, not quoted, so they cannot hide the line that moved.
 excerpt() { # OLD NEW
-  local LC_ALL=C.UTF-8 l out= d b
+  local LC_ALL=C.UTF-8 l out='' d b
   d=$(diff -- <(printf '%s\n' "$1") <(printf '%s\n' "$2") | grep -E '^[<>] ')
   while IFS= read -r l; do
     l=${l%"${l##*[![:space:]]}"}
