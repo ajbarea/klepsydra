@@ -266,7 +266,7 @@ test("the docked gauges read at AA on their ground: words 4.5:1, a pip's fill 3:
   assert.match(wall, /\.dock-wait \{ color: var\(--text-dim\);/);
 });
 
-test("the gauges dock in the bar after the tally; on a phone they take a line of their own", () => {
+test("the gauges dock in the bar after the tally; on the phone they open the page, under its sticky tally", () => {
   const html = read("src/wall.html");
   const lead = html.slice(html.indexOf('<div class="lead">'), html.indexOf('<button type="button" id="ci-open"'));
   assert.match(lead, /<div class="tally"[^>]*><\/div>\s*<div class="dock" hidden><div id="dock-chips" class="chips" role="group" aria-label="Usage by account"><\/div>/);
@@ -276,9 +276,10 @@ test("the gauges dock in the bar after the tally; on a phone they take a line of
   assert.match(html, /<main id="main">\s*<h1 id="wall-title"[^>]*>[^<]*<\/h1>\s*<section id="wall"/, "the sessions heading sits right before the wall it names");
   const wall = read("src/fleet/wall.js");
   assert.match(wall, /paintTally\(\);\s*paintDock\(now\);/, "drawn on every snapshot and every tick");
+  assert.match(wall, /if \(served\) document\.getElementById\("main"\)\.prepend\(dockEl\);/, "the phone's sticky bar stays one tally high");
   const css = read("src/fleet/wall.css");
   const phone = css.slice(css.indexOf("/* On a phone: one column"));
-  assert.match(phone, /\.served \.dock \{ flex: 1 1 100%; \}/);
+  assert.match(phone, /\.served main > \.dock \{ padding: var\(--space-5\) var\(--wall-pad\) 0; \}/);
   assert.match(phone, /\.served \.dock \.chips \{ display: grid; grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/, "two chips a row");
 });
 

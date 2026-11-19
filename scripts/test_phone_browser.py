@@ -11,9 +11,10 @@ service worker and manifest installing, fleet.json cut to the wall's fields, a
 write refused, a wrap-up request and the empty state shown with none of their
 buttons, /wall.html sent to the root, and a stream refused at the cap opened
 again. The character theme saved in the server's prefs.json, and a switch
-followed live. The usage gauges docked in the sticky bar (#421), from
-readings in the server's accounts folder: one chip per account in route order,
-the strip's words, on a line of their own two chips wide, a new reading over
+followed live. The usage gauges (#421), from readings in the server's
+accounts folder: one chip per account in route order, the strip's words, two
+chips a row, opening the page and scrolling away under a sticky bar that four
+leave one tally high, a new reading over
 /events, a stale one saying its age, none at all reading as waiting, and AA
 contrast with the system in light and in dark. A card's
 Full text: shown on each card that cuts text short and no other, unfolding
@@ -407,7 +408,7 @@ def main() -> int:
                 # The docked gauges: a chip per account in route order, in the strip's words.
                 wait_until(page, "document.querySelectorAll('#dock-chips > .chip').length === 3", 10)
                 g = page.evaluate(GAUGES)
-                run.check(g["shown"] and g["inBar"] and g["region"] == ["group", "Usage by account"], "the gauges dock in the sticky bar, a named group", g)
+                run.check(g["shown"] and not g["inBar"] and g["region"] == ["group", "Usage by account"], "the gauges open the page, a named group outside the sticky bar", g)
                 bar_height = g["barHeight"]
                 texts = [c["text"] for c in g["chips"]]
                 print(f"  chips {texts}")
@@ -449,8 +450,8 @@ def main() -> int:
                 page.wait_for_timeout(200)
                 bar = page.evaluate("(() => { const b = document.querySelector('.bar').getBoundingClientRect(); return [Math.round(b.top), scrollY > 0]; })()")
                 run.check(bar == [0, True], "the tally is sticky", bar)
-                kept = page.evaluate("(() => { const d = document.querySelector('.dock').getBoundingClientRect(); return d.top >= 0 && d.bottom <= document.querySelector('.bar').getBoundingClientRect().bottom; })()")
-                run.check(kept, "the gauges stay in view with the tally", kept)
+                gone = page.evaluate("(() => { const d = document.querySelector('.dock').getBoundingClientRect(); return Math.round(d.bottom) <= Math.round(document.querySelector('.bar').getBoundingClientRect().bottom); })()")
+                run.check(gone, "the gauges scroll away under the tally", gone)
                 page.evaluate("window.scrollTo(0, 0)")
 
                 # A tap on the card, off its controls, opens its Remote Control link.
@@ -644,7 +645,7 @@ def main() -> int:
                 team = next(c for c in g["chips"] if c["said"].startswith("Claude · Team"))
                 run.check(re.match(r"91% [78]m", personal["text"]) and personal["fill"] == "rgb(239, 68, 68)", "a new reading arrives over the stream, red past 85%", [personal["text"], personal["fill"]])
                 run.check(team["stale"] and re.search(r"\b3h old\b", team["text"]), "a reading hours old says how old", team["text"])
-                run.check(g["barHeight"] == bar_height, "four chips leave the sticky bar as tall as three did", [bar_height, g["barHeight"]])
+                run.check(g["barHeight"] == bar_height, "four chips leave the sticky bar one tally high, as three did", [bar_height, g["barHeight"]])
                 s = page.evaluate(LAYOUT)
                 run.check(s["hscroll"] <= 0 and s["small"] == [], "no horizontal scroll, every control 44 px, with the gauges", [s["hscroll"], s["small"]])
 

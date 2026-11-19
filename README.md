@@ -1128,8 +1128,8 @@ the session's next hook event after Remote Control connects, survives
 drops, the wall says the cards may be out of date until it reconnects, and
 keeps trying while klepsydra restarts.
 
-The usage gauges sit in the sticky bar under the tally: the strip's chips,
-one per account in route order, two to a line, with the tightest window's
+The usage gauges open the page, scrolling away under the sticky tally: the
+strip's chips, one per account in route order, two to a line, with the tightest window's
 percent and reset (`57% 8m`) and the other windows as pips. A spent week
 reads `out` and hides its session window until the week resets. They are
 drawn by the strip's own code from the same readings, read every 5 seconds,

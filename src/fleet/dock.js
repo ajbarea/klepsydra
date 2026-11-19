@@ -4,7 +4,8 @@
 // "Gauges in wall header" brings them back. The choice is prefs.json's
 // `gauges_in_header` (klepsydra_fleet::toggles), saved with set_gauge_toggle
 // and pushed by toggles_subscribe. The phone is read-only (no gear, no
-// buttons but its own), so there the gauges always show.
+// buttons but its own), so there the gauges always show, opening the page
+// under its sticky tally (wall.js).
 import { WAITING } from "../gauge.js";
 import { toChips } from "./chips.js";
 import { syncChips } from "./chipview.js";

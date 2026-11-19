@@ -114,6 +114,9 @@ const ns = {
 // The header's gauges (#421): one read_usage feeds them and + New session,
 // every DOCK_USAGE_MS while the wall shows them, else every USAGE_MS.
 const dockEl = document.querySelector(".dock");
+// The phone's bar is sticky and stays one tally high, so there the gauges open
+// the page and scroll away under it.
+if (served) document.getElementById("main").prepend(dockEl);
 const dock = wireDock({
   els: {
     dock: dockEl,

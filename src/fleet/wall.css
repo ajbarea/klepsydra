@@ -411,7 +411,7 @@ button[aria-disabled="true"] { color: var(--text-dim); background: transparent; 
 button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 
 #main { position: relative; z-index: 1; }
-.wall, .empty { position: relative; z-index: 1; }
+.wall, .empty, main > .dock { position: relative; z-index: 1; }
 .wall {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
@@ -1614,9 +1614,9 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
   .served .lead { gap: var(--space-2) var(--space-7); }
   .served .tally { gap: var(--space-1) var(--space-6); }
   .served .tally b { font-size: 22px; }
-  /* The docked gauges take a line of their own, two chips a row, so the bar stays
-     short; a long chip wraps inside its cell. The phone has no chevron (read-only). */
-  .served .dock { flex: 1 1 100%; }
+  /* The gauges open the page (wall.js moves them out of the sticky bar), two
+     chips a row; a long chip wraps inside its cell. No chevron: read-only. */
+  .served main > .dock { padding: var(--space-5) var(--wall-pad) 0; }
   .served .dock .chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 1 1 auto; }
   .served .dock .chip { padding: 4px 6px; min-width: 0; }
   .served .dock .chip .body { flex-wrap: wrap; row-gap: 0; }

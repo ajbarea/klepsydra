@@ -108,9 +108,9 @@ files belong to: the JS guards scan hooks and scripts too.
   link, a second snapshot over `/events`, the service worker and manifest,
   a wrap-up request and the empty state shown without their buttons,
   `/wall.html` sent to `/`, a stream refused at the cap opened again, and
-  the gauges docked in the sticky bar from demo readings (a chip per account
-  in route order in the strip's words, in view with the tally, four leaving
-  the bar as tall as three, a new reading over `/events`, a stale one, a
+  the gauges from demo readings (a chip per account in route order in the
+  strip's words, opening the page and scrolling away under a sticky bar four
+  leave one tally high, a new reading over `/events`, a stale one, a
   spent week, none, AA contrast in light and dark, a screenshot of each); a card's Full text shown only where
   text is cut, unfolding it in place and reaching no session, at 390 and at
   700 px with touch; and the character theme saved in the server's
