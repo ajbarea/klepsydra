@@ -83,11 +83,35 @@ test("an empty ?opacity= is the default, not 0%", () => {
 });
 
 // Round 2: every small word the ink is meant to reach (WCAG 1.4.3).
+/** Every rule in `css` as [selector, body], comments dropped. */
+const rulesOf = (css) => [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)].map(([, sel, body]) => [sel.trim().replace(/\s+/g, " "), body]);
+
 test("the speaking ring's gap is the panel's solid colour, so it shows at 0% too", () => {
   const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
-  const ring = css.match(/\.face\.speaking \{([^}]*)\}/)?.[1] ?? "";
-  assert.match(ring, /box-shadow: 0 0 0 calc\(1\.5px \* var\(--scale\)\) var\(--panel-solid\), /);
-  assert.doesNotMatch(ring, /--panel-bg/, "the see-through colour vanishes as the panel thins");
+  // Every rule that styles a speaking face, not only the first (a later one would win).
+  const rings = rulesOf(css).filter(([sel, body]) => /\.face\.speaking\b/.test(sel) && /box-shadow/.test(body));
+  assert.ok(rings.length >= 1, "the ring's rule");
+  for (const [sel, body] of rings) {
+    assert.match(body, /box-shadow: 0 0 0 calc\(1\.5px \* var\(--scale\)\) var\(--panel-solid\), /, sel);
+    assert.doesNotMatch(body, /--panel-bg/, `${sel}: the see-through colour vanishes as the panel thins`);
+  }
+  // The browser test (strip_words_keep_their_ink) reads the rendered gap.
+});
+
+test("no text colour carries alpha and no filter fades: words keep their ink by every route", () => {
+  const sheets = ["./style.css", "./fleet/badge.css"].map((f) => readFileSync(new URL(f, import.meta.url), "utf8"));
+  const alpha = /\/\s*0?\.\d|\/\s*\d{1,2}%|rgba\(|hsla\(|transparent|color-mix\(/;
+  for (const [sel, body] of sheets.flatMap(rulesOf)) {
+    for (const [, prop, value] of body.matchAll(/(?:^|[;\s])(color|-webkit-text-fill-color|filter):\s*([^;]+)/g)) {
+      if (prop === "filter") assert.doesNotMatch(value, /opacity\(/, `${sel}: filter: opacity() fades its text`);
+      else assert.doesNotMatch(value, alpha, `${sel}: ${prop} with alpha fades its text`);
+    }
+    // The ink tokens are opaque wherever they are set, so a colour taken through them is too.
+    for (const [, token, value] of body.matchAll(/(--text(?:-dim)?|--route):\s*([^;]+)/g)) {
+      assert.doesNotMatch(value, alpha, `${sel}: ${token} with alpha`);
+    }
+  }
+  // The browser test (strip_words_keep_their_ink) multiplies what the page renders.
 });
 
 test("no word fades: every opacity under 1 in the stylesheet dims a part that is not text", () => {

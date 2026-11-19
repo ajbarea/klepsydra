@@ -5689,6 +5689,92 @@ def theme_list_is_dark(wall):
     page.close()
 
 
+# Every word on the floating strip, as the browser renders it: its own and its
+# ancestors' opacity, any filter: opacity(), and its colour's alpha (rgb(... /
+# a), rgba, color-mix with transparent), multiplied. Text that is drawn reads
+# at full alpha; #zoom (opacity 0 until a scroll) is not drawn.
+STRIP_INK = """() => {
+  const alphaOf = (c) => {
+    const slash = c.match(/\\/\\s*([\\d.]+)(%?)\\s*\\)\\s*$/);
+    if (slash) return Number(slash[1]) / (slash[2] ? 100 : 1);
+    const rgba = c.match(/^rgba\\(([^)]*)\\)/);
+    if (rgba) return Number(rgba[1].split(',')[3]);
+    return c === 'transparent' ? 0 : 1;
+  };
+  const filterOf = (f) => [...f.matchAll(/opacity\\(([\\d.]+)(%?)\\)/g)].reduce((a, m) => a * Number(m[1]) / (m[2] ? 100 : 1), 1);
+  const panel = document.getElementById('panel');
+  const walk = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT);
+  const els = new Set();
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) if (n.textContent.trim()) els.add(n.parentElement);
+  const faded = [];
+  for (const e of els) {
+    if (!e.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+    let a = alphaOf(getComputedStyle(e).color);
+    for (let n = e; n; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      a *= Number(cs.opacity) * filterOf(cs.filter);
+    }
+    if (a < 0.999) faded.push(`${e.className || e.tagName} '${e.textContent.trim().slice(0, 20)}' ${a.toFixed(2)}`);
+  }
+  return { words: els.size, faded };
+}"""
+# The speaking ring's gap as rendered, and the panel's solid colour where the face is.
+SPEAKING_RING = """() => {
+  const face = document.querySelector('#strip .face.speaking');
+  if (!face) return null;
+  const probe = document.createElement('i');
+  probe.style.color = 'var(--panel-solid)';
+  face.parentElement.append(probe);
+  const solid = getComputedStyle(probe).color;
+  probe.remove();
+  return { gap: getComputedStyle(face).boxShadow.match(/^rgba?\\([^)]*\\)/)?.[0], solid };
+}"""
+
+
+def strip_words_keep_their_ink(wall):
+    """#498: no word on the floating strip is faded by any route (opacity,
+    filter, colour alpha), in either layout and scheme, at 0, 50, 85 and 100%:
+    a fresh chip, a stale one with a monogram, a spent week (the Full layout's
+    "hidden" word) and the Copilot placeholder. The speaking ring's gap is the
+    panel's solid colour as rendered, at 0% too."""
+    import time
+
+    now = int(time.time())
+    win = lambda pct, secs: {"used_percentage": pct, "resets_at": now + secs}  # noqa: E731
+    readings = [
+        {"account": "a1", "label": "Personal", "written_at": now - 60, "observed_at": now - 60,
+         "windows": {"five_hour": win(57, 530), "seven_day": win(27, 540000)}},
+        {"account": "a2", "label": "Team", "written_at": now - 4 * 3600, "observed_at": now - 4 * 3600,
+         "windows": {"five_hour": win(12, 7800)}},
+        {"account": "a3", "label": "Lab", "written_at": now - 60, "observed_at": now - 60,
+         "windows": {"five_hour": win(5, 3600), "seven_day": win(100, 86400)}},
+    ]
+    fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
+    at = fixture.pop("at")
+    fleet = shifted(fixture, now - at)
+    for layout in ("compact", "full"):
+        for scheme in ("dark", "light"):
+            for op in (0, 50, 85, 100):
+                page = wall.browser.new_page(viewport={"width": 1600, "height": 300}, color_scheme=scheme)
+                page.route("**/dev-fixture.json", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(readings)))
+                page.route("**/dev-fleet.json", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(fleet)))
+                page.goto(f"http://127.0.0.1:{wall.port}/src/index.html?still=1&layout={layout}&opacity={op}")
+                page.wait_for_selector("#chips > .chip")
+                page.wait_for_selector("#strip .face.speaking", timeout=5000)
+                page.wait_for_timeout(300)
+                ink = page.evaluate(STRIP_INK)
+                states = page.evaluate("[...document.querySelectorAll('#chips > .chip')].map((c) => Object.keys(c.dataset).filter((k) => k !== 'harness').join('+') || 'fresh')")
+                at_ = f"{layout}, {scheme}, {op}%"
+                wall.check(ink["words"] > 8 and not ink["faded"] and "stale" in states and "placeholder" in states,
+                           f"every word on the strip at full alpha ({at_})", {"states": states, **ink})
+                ring = page.evaluate(SPEAKING_RING)
+                wall.check(ring and ring["gap"] == ring["solid"], f"the speaking ring's gap is the panel's solid colour ({at_})", ring)
+                if layout == "full":
+                    hidden = page.evaluate("[...document.querySelectorAll('#chips .cell.hidden-win .t')].map((e) => e.textContent)")
+                    wall.check(hidden == ["hidden"], f"the spent week's session reads hidden ({at_})", hidden)
+                page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -5801,6 +5887,7 @@ def main() -> int:
             ci_watch,
             themes_switch_live,
             gauge_opacity_slider,
+            strip_words_keep_their_ink,
             themes_keeper_and_portrait,
             themes_fit,
             picker_costs_no_height,
