@@ -144,16 +144,16 @@ open_tab() { # target tmux-socket-args...
     # failed start shows only as its exit: the wait below reads it. Its lock fd is
     # closed so a tab never outlives the lock.
     local title="${TITLE_ARGS[1]:-$TAB_TITLE}"
-    local -a cmd
+    local -a termcmd
     term=$(find_linux_terminal) || { undo; fail "No terminal emulator found."; }
     case ${term##*/} in
-      xfce4-terminal) cmd=("$term" --disable-server -T "$title" -x) ;;
-      gnome-terminal) cmd=("$term" --tab --title="$title" --) ;;
-      konsole) cmd=("$term" --new-tab -p tabtitle="$title" -e) ;;
-      kitty) cmd=("$term" -T "$title") ;;
-      *) cmd=("$term" -T "$title" -e) ;; # alacritty, x-terminal-emulator, xterm
+      xfce4-terminal) termcmd=("$term" --disable-server -T "$title" -x) ;;
+      gnome-terminal) termcmd=("$term" --tab --title="$title" --) ;;
+      konsole) termcmd=("$term" --new-tab -p tabtitle="$title" -e) ;;
+      kitty) termcmd=("$term" -T "$title") ;;
+      *) termcmd=("$term" -T "$title" -e) ;; # alacritty, x-terminal-emulator, xterm
     esac
-    "${cmd[@]}" tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+    "${termcmd[@]}" tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
     termpid=$!
   fi
   if [[ ! -e $PENDING && ! -L $PENDING ]] || stamp_usable; then

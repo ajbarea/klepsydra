@@ -879,6 +879,7 @@ cp "$lbin/.xdg" "$lbin/xdg-open"; : >"$XDG_LOG"
 out=$(lx bash "$launch" folder "$work/repos" 2>&1); rc=$?
 check "linux folder: opens the folder with xdg-open" "$rc [$out] $(cat "$XDG_LOG")" "0 [] $work/repos"
 : >"$XDG_LOG"
+# shellcheck disable=SC2088 # the literal ~/ the overlay sends
 out=$(lx bash "$launch" folder '~/' 2>&1); rc=$?
 check "linux folder: ~/ is the home folder" "$rc $(cat "$XDG_LOG")" "0 $HOME/"
 out=$(lx bash "$launch" folder "$work/gone" 2>&1); rc=$?
@@ -898,6 +899,7 @@ check "linux folder: no xdg-open is said, not reported as success" "$rc $out" "1
 out=$(lx bash "$launch" github "https://github.com/a/b" 2>&1); rc=$?
 check "linux github: no xdg-open is said" "$rc $out" "1 xdg-open was not found, so nothing could be opened."
 # On WSL (WSL_DISTRO_NAME, or "microsoft" in the kernel release) the same verbs go to explorer.exe, unchanged.
+# shellcheck disable=SC2016 # the stub's own $* and $XDG_LOG
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$XDG_LOG"\nexit 1\n' >"$lbin/explorer.exe"; chmod +x "$lbin/explorer.exe"
 : >"$XDG_LOG"
 out=$(WSL_DISTRO_NAME=Test KLEPSYDRA_PROC="$lproc" PATH="$lbin:$lbase" bash "$launch" folder "$work/repos" 2>&1); rc=$?
