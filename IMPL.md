@@ -30,7 +30,7 @@ Do not merge: Heph reviews and merges.
 
 ## Next
 1. `make test-fleet` on commit 3 (a run was cut short by the account move; earlier run never ran).
-2. Live proof: scratchpad proof.sh (`flock -o /tmp/fleet-heavy.lock bash proof.sh fleet/close.sh 84
+2. Live proof: /tmp/claude-1001/close-menu-handoff/proof.sh (also pr.md draft, st.sh replay, captures, rev/) (`flock -o /tmp/fleet-heavy.lock bash proof.sh fleet/close.sh 84
    rest busy bg wrapup`, then `... 160 rest`). If the scratchpad is gone: private socket
    `tmux -L closefix-$$`, KLEPSYDRA_DIR + FLEET_STATE + FLEET_LOG in a scratch dir, KLEPSYDRA_AGENT
    unset, `claude --model haiku --settings '{"autoMemoryEnabled": false}'`, finished.tsv row
