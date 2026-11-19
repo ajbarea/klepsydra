@@ -101,8 +101,6 @@
     0 0 calc(3px * var(--scale)) #000;
 }
 :root[data-ink="halo"] #panel :is(.mark, .pip, .face) { filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 3px rgb(0 0 0 / 0.85)); }
-/* Any stronger ink reaches the resets too: their 0.86 fade would undo it. */
-:root[data-ink] #panel :is(.chip .when, .cell .t) { opacity: 1; }
 /* Fully clear: no frosted glass behind nothing. */
 :root[data-clear] #panel { backdrop-filter: none; }
 
@@ -241,7 +239,6 @@ html, body {
   font-size: calc(var(--size-sub) * var(--scale));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  opacity: 0.86;
 }
 .age {
   font-size: calc(var(--size-small) * var(--scale));
@@ -295,9 +292,10 @@ html, body {
 .chip[data-route] { box-shadow: inset 0 calc(-2px * var(--scale)) 0 var(--route); }
 .chip[data-placeholder] :is(.val, .when) { color: var(--text-dim); }
 .chip[data-placeholder] .mark { opacity: 0.7; }
-/* An old reading says its age, and its pips and mark dim; its words keep
-   their ink, so they hold 4.5:1 at every opacity (#486). */
-.chip[data-stale] :is(.pips, .mark) { opacity: 0.5; }
+/* An old reading says its age, and its pips and icon dim; its words and its
+   monogram (the account's name) keep their ink, so they hold 4.5:1 at every
+   opacity (#486). No word fades: the resets read in the same ink as the value. */
+.chip[data-stale] :is(.pips, .mark svg) { opacity: 0.5; }
 .chip[data-stale] .pip i, .pip.old i { background-color: var(--text-dim) !important; }
 
 /* Stacked ("Full" in the tray): a line per account, every window shown, the
@@ -329,7 +327,7 @@ html, body {
 }
 .cell .k { font-variant-caps: all-small-caps; letter-spacing: 0.05em; color: var(--text-dim); font-size: calc(var(--size-label) * var(--scale)); }
 .cell b { font-size: calc(var(--size-pct) * var(--scale)); min-width: 3.1ch; text-align: right; font-variant-numeric: tabular-nums; }
-.cell .t { font-size: calc(12.5px * var(--scale)); opacity: 0.86; min-width: 6.4ch; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cell .t { font-size: calc(12.5px * var(--scale)); min-width: 6.4ch; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cell .pip { align-self: center; height: calc(13px * var(--scale)); }
 .cell.wide { grid-column: 3 / -2; justify-content: start; color: var(--text-dim); font-size: calc(var(--size-label) * var(--scale)); }
 .cell.hidden-win .t { color: var(--text-dim); font-style: italic; }

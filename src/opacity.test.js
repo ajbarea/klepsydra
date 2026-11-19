@@ -83,13 +83,27 @@ test("an empty ?opacity= is the default, not 0%", () => {
 });
 
 // Round 2: every small word the ink is meant to reach (WCAG 1.4.3).
-test("stronger ink reaches the resets and the route word", () => {
+test("the speaking ring's gap is the panel's solid colour, so it shows at 0% too", () => {
   const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
-  assert.match(css, /:root\[data-ink\] #panel :is\(\.chip \.when, \.cell \.t\) \{ opacity: 1; \}/, "the resets' 0.86 fade is lifted under any ink");
-  // A stale chip's words keep their ink (#486); its pips and mark carry the dim.
-  assert.match(css, /\.chip\[data-stale\] :is\(\.pips, \.mark\) \{ opacity: 0\.5; \}/);
-  assert.doesNotMatch(css, /\[data-stale\][^{]*\.(val|when)\b[^{]*\{[^}]*opacity/, "no rule fades a stale chip's words");
-  assert.doesNotMatch(css, /\[data-stale\] \.cell \{[^}]*opacity/, "nor a stacked stale chip's cells");
+  const ring = css.match(/\.face\.speaking \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(ring, /box-shadow: 0 0 0 calc\(1\.5px \* var\(--scale\)\) var\(--panel-solid\), /);
+  assert.doesNotMatch(ring, /--panel-bg/, "the see-through colour vanishes as the panel thins");
+});
+
+test("no word fades: every opacity under 1 in the stylesheet dims a part that is not text", () => {
+  const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
+  // Every rule that sets an opacity below 1, by its selector, whatever form it takes.
+  const fades = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter(([, , body]) => [...body.matchAll(/(?:^|[;\s])opacity:\s*([^;]+)(?:;|$)/g)].some(([, v]) => v.trim() !== "1"))
+    .map(([, sel]) => sel.trim().replace(/\s+/g, " "));
+  assert.deepEqual(fades.sort(), [
+    "#chips[data-layout=\"linear\"] .chip + .chip::before", // the bar between accounts
+    "#chips[data-layout=\"stacked\"] .chip[data-stale] .cell .pip", // a stale window's pip
+    "#panel[data-state=\"waiting\"] > :is(#grip, #content)", // no reading at all yet
+    "#zoom", // the size readout, hidden until a scroll
+    ".chip[data-placeholder] .mark", // Copilot's icon until #323
+    ".chip[data-stale] :is(.pips, .mark svg)", // a stale chip's pips and icon; its words and monogram keep their ink (#486)
+  ].sort());
   const lightFull = css.match(/@media \(prefers-color-scheme: light\) \{\s*\/\*[^*]*\*\/\s*:root\[data-ink="full"\] #panel \{([^}]*)\}/);
   assert.ok(lightFull, "the light full-ink rule");
   for (const token of ["--text", "--text-dim", "--route"]) assert.match(lightFull[1], new RegExp(`${token}: #120c07`), token);
