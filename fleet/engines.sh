@@ -146,9 +146,8 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   # engine's whole reply: short, and what the box last answered. A long answer that
   # merely mentions a rate limit (CI triage, API research) is an answer.
   if [[ $footer == busy ]]; then echo busy; return; fi
-  if [[ $footer != idle ]]; then echo "$footer"; return; fi
   local reply
-  reply=$(eng_answer "$engine" "$screen" "${3:-}")
+  if [[ $footer == idle ]]; then reply=$(eng_answer "$engine" "$screen" "${3:-}"); else reply=$recent; fi
   if (( ${#reply} < 400 )); then
     if grep -Eqi -- "$ENG_LIMIT_RE" <<<"$reply"; then echo limit; return; fi
     if grep -Eqi -- "$ENG_AUTH_RE" <<<"$reply"; then echo auth; return; fi

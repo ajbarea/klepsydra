@@ -269,6 +269,9 @@ doc_buildparse=$(FLEET_AGY="$build_parse_bin" FLEET_HOOK_DIR="$root/hooks" bash 
 check "doctor: agy version parsed after CLI in v2.0 (CLI 1.5.12)" "$(grep -c '^ok *agy version: 1.5.12 (fixture present)' <<<"$doc_buildparse")" "1"
 check "agy: a short reply that is a quota message is a limit" "$(eng_state agy $'────\n> ask\n  You have exhausted your quota\n────\n>\n────\n? for shortcuts')" "limit"
 check "agy: a short answer about a 429 is a limit too (kept in answer.md and said to be maybe an answer)" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\n? for shortcuts')" "limit"
+check "synthetic agy login screen reads auth" "$(eng_state agy $'Sign in to Antigravity\nPlease authenticate at https://accounts.google.com/...\n')" "auth"
+check "agy quota crash reads limit" "$(eng_state agy $'Fatal: You have exhausted your quota for today\nProcess exited with status 1')" "limit"
+check "copilot limit screen with an odd footer reads limit" "$(eng_state copilot $' ❯ ask\n ● Rate limit reached, please try again later\n────\nweird custom footer')" "limit"
 longans=$(printf '  The API returns 429 when the rate limit is hit; details follow.\n'; printf '  %s\n' "$(head -c 500 /dev/zero | tr '\0' x)")
 check "agy: a long answer that mentions a rate limit is an answer (idle)" "$(eng_state agy "$(printf '────\n> ask\n%s\n────\n>\n────\n? for shortcuts' "$longans")")" "idle"
 quotedlim=$(printf '────\n> Read TASK.md in the working folder and go\n  %s\n> a quoted line\n  429 rate limit\n────\n>\n────\n? for shortcuts' "$(head -c 500 /dev/zero | tr '\0' x)")
