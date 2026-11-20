@@ -17,7 +17,7 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
 - brief-tail: evidence by commit permalink; workers delete their own transient files.
 - ✅ Reader round 1 (1 Blocking + 3 Should-fix + minors) fixed in 7bde675; Heph's CI red (doctor
   lists every warn; cut-over expects fleet-cleanup.timer) fixed there too. Pushed for relaunch.
-- ✅ test_tidy.py 77 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
+- ✅ test_tidy.py 78 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
 
 ## Next
 - ✅ Orchestrator rounds r1-r3 and 13 verify passes fixed. r3 changed the spec: HEPH.md keeps its

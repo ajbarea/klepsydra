@@ -780,7 +780,7 @@ def plan_queue(
         # techne numbers lines with str.splitlines; a break it splits on and \n does not
         # (U+2028, a form feed, a lone \r) would point its spans at the wrong lines.
         raise ValueError(
-            "queue.md holds a line break other than \\n; edit that line by hand"
+            "queue.md holds a line break other than \\n: edit that line by hand"
         )
     monday = week_start(now)
     drop: set[int] = set()
@@ -865,7 +865,9 @@ def tidy_queue(apply: bool, mod) -> int:
                 return 1
             fd, tmp = tempfile.mkstemp(dir=BRIEFING, prefix=".queue.", suffix=".tmp")
             try:
-                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                with os.fdopen(
+                    fd, "w", encoding="utf-8", errors="surrogateescape", newline=""
+                ) as f:  # as read_exact read it: a stray byte goes back as it was
                     f.write(new)
                     f.flush()
                     os.fsync(f.fileno())

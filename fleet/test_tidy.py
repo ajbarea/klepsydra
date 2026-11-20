@@ -1098,6 +1098,17 @@ class ReviewRound1(unittest.TestCase):
         self.assertNotIn("last week", out)
         self.assertNotIn("\n", out.replace("\r\n", ""))
 
+    def test_a_queue_with_a_stray_byte_applies_byte_for_byte(self):
+        q = b"# Queue\n\n## Done since 11-09\n- \xe2\x9c\x85 **Fri 11-20:** keep \xff\n- \xe2\x9c\x85 **Sun 11-15:** old\n"
+        path = self.brief / "queue.md"
+        path.write_bytes(q)
+        r = self.tidy("--apply", "queue")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        want = q.replace(b"- \xe2\x9c\x85 **Sun 11-15:** old\n", b"").replace(
+            b"since 11-09", b"since 11-16"
+        )
+        self.assertEqual(path.read_bytes(), want)  # the stray byte back as it was
+
     def test_a_queue_line_break_other_than_newline_refuses(self):
         q = "# Queue\n\n## Done since 11-09\n- ✅ **Fri 11-20:** keep\u2028- ✅ **Sun 11-15:** tail\n"
         path = self.brief / "queue.md"
