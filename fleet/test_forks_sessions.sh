@@ -20,8 +20,13 @@ check() {
 
 STRACE=${STRACE:-strace}
 if ! command -v "$STRACE" >/dev/null 2>&1; then
-  echo "FAIL: strace missing ($STRACE)"
-  exit 1
+  if [[ -n ${CI:-} ]]; then
+    echo "FAIL: strace missing ($STRACE)"
+    exit 1
+  else
+    echo "SKIP: no strace ($STRACE)"
+    exit 0
+  fi
 fi
 
 forks_of() {
@@ -40,12 +45,13 @@ mkdir -p "$work/k/fleet"
 mk() {
   local n=$1 i u
   rm -f -- "$work"/k/fleet/*
+  # Many ended files on %7: tmux reuses pane ids over time, so a pane has many ended files.
   for ((i = 1; i <= n; i++)); do
     u=$(printf '%08x-0000-4000-8000-%012x' "$i" "$i")
-    printf '{"v":1,"tmux":{"pane":"%%%d","socket":"/tmp/tmux-1/klepsydra"},"started_at":%d,"ended":null,"claude":{"pid":%d,"start":5}}\n' "$((i + 100))" "$i" "$((i + 1000))" > "$work/k/fleet/$u.json"
+    printf '{"v":1,"tmux":{"pane":"%%7","socket":"/tmp/tmux-1/klepsydra"},"started_at":%d,"ended":{"at":%d},"claude":{"pid":%d,"start":5}}\n' "$i" "$i" "$((i + 1000))" > "$work/k/fleet/$u.json"
   done
-  printf '{"v":1,"tmux":{"pane":"%%7","socket":"/tmp/tmux-1/klepsydra"},"started_at":100,"ended":null,"claude":{"pid":2007,"start":5}}\n' > "$work/k/fleet/00000007-0000-4000-8000-000000000007.json"
-  printf '{"v":1,"tmux":{"pane":"%%7","socket":"/tmp/tmux-1/klepsydra"},"started_at":50,"ended":{"at":1},"claude":{"pid":2070,"start":5}}\n' > "$work/k/fleet/00000070-0000-4000-8000-000000000070.json"
+  # Exactly one live file for %7
+  printf '{"v":1,"tmux":{"pane":"%%7","socket":"/tmp/tmux-1/klepsydra"},"started_at":1000,"ended":null,"claude":{"pid":2007,"start":5}}\n' > "$work/k/fleet/00000007-0000-4000-8000-000000000007.json"
 }
 
 base=$(forks_of env KLEPSYDRA_DIR="$work/k" bash -c ". fleet/lib.sh")
@@ -56,6 +62,8 @@ mk 60
 b=$(forks_of env KLEPSYDRA_DIR="$work/k" bash -c ". fleet/lib.sh; live_session %7")
 
 check "live_session forks do not grow with session files" "$((b - base))" "$((a - base))"
+# Cap at 4 forks: the hook's session_rows / fleet_rows block sets the floor
+# (command substitution, subshell cd, jq pipeline, process substitution).
 check "live_session forks at most 4" "$(( a - base <= 4 ))" 1
 
 rm -f -- "$work"/k/fleet/*
