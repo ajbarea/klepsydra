@@ -17,13 +17,12 @@ PR: https://github.com/ajbarea/klepsydra/pull/497
   - `resume pass`: forks 973 -> 937 (-36 forks); jq 64 -> 37 (-27 jq, target >= 20 met).
 - PR #497 description and fleet report `~/.local/state/fleet-orchestrator/briefs-free/perf-shell-forks-1-sessions-report.md` are updated with exact paired measurement numbers and reproduction steps.
 - Head pushed to `origin/perf/sessions-one-jq`.
-- CI run [44711522783](https://github.com/ajbarea/klepsydra/actions/runs/44711522783) was in flight at checkpoint.
+- CI run [44711522783](https://github.com/ajbarea/klepsydra/actions/runs/44711522783) completed with SUCCESS (all jobs green).
 
 ## What is Next
-1. Verify CI run [44711522783](https://github.com/ajbarea/klepsydra/actions/runs/44711522783) is green via `gh pr checks 497`.
-2. Once CI is all green, notify orchestrator Athena in pane `%61`:
+1. Notify orchestrator Athena in pane `%61`:
    `fleet send %61 "CI green on PR #497 (commit 2f44364), round 2 review items 1-4 clean and verified"`
-3. Await orchestrator review and merge (Athena holds merge rights; do not merge or push to main).
+2. Await orchestrator review and merge (Athena holds merge rights; do not merge or push to main).
 
 ## What a Fresh Session Must Rerun
 1. Check git status:
