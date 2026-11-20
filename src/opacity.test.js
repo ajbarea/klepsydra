@@ -85,11 +85,12 @@ test("an empty ?opacity= is the default, not 0%", () => {
 // Round 2: every small word the ink is meant to reach (WCAG 1.4.3).
 /** Every rule in `css` as [selector, body], comments dropped. */
 const rulesOf = (css) => [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)].map(([, sel, body]) => [sel.trim().replace(/\s+/g, " "), body]);
+/** Every rule of the sheets the strip's words and faces take styles from. */
+const stripRules = () => ["./style.css", "./fleet/chips.css", "./fleet/badge.css"].flatMap((f) => rulesOf(readFileSync(new URL(f, import.meta.url), "utf8")));
 
 test("the speaking ring's gap is the panel's solid colour, so it shows at 0% too", () => {
-  const css = readFileSync(new URL("./style.css", import.meta.url), "utf8");
   // Every rule that styles a speaking face, not only the first (a later one would win).
-  const rings = rulesOf(css).filter(([sel, body]) => /\.face\.speaking\b/.test(sel) && /box-shadow/.test(body));
+  const rings = stripRules().filter(([sel, body]) => /\.face\.speaking\b/.test(sel) && /box-shadow/.test(body));
   assert.ok(rings.length >= 1, "the ring's rule");
   for (const [sel, body] of rings) {
     assert.match(body, /box-shadow: 0 0 0 calc\(1\.5px \* var\(--scale\)\) var\(--panel-solid\), /, sel);
@@ -99,9 +100,8 @@ test("the speaking ring's gap is the panel's solid colour, so it shows at 0% too
 });
 
 test("no text colour carries alpha and no filter fades: words keep their ink by every route", () => {
-  const sheets = ["./style.css", "./fleet/badge.css"].map((f) => readFileSync(new URL(f, import.meta.url), "utf8"));
   const alpha = /\/\s*0?\.\d|\/\s*\d{1,2}%|rgba\(|hsla\(|transparent|color-mix\(/;
-  for (const [sel, body] of sheets.flatMap(rulesOf)) {
+  for (const [sel, body] of stripRules()) {
     for (const [, prop, value] of body.matchAll(/(?:^|[;\s])(color|-webkit-text-fill-color|filter):\s*([^;]+)/g)) {
       if (prop === "filter") assert.doesNotMatch(value, /opacity\(/, `${sel}: filter: opacity() fades its text`);
       else assert.doesNotMatch(value, alpha, `${sel}: ${prop} with alpha fades its text`);
