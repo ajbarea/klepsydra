@@ -112,6 +112,18 @@ jobs:
         run: python3 -I fleet/test_ci_watch.py
       - name: Screenshot prune tests
         run: python3 -I fleet/test_prune_shots.py
+      # fleet tidy reads techne's cleanup check (_shared/cleanup.py), pinned to a techne commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: ajbarea/techne
+          ref: e3fd401b7cf5cdbd48a0be2916edba5c3dfe0865
+          path: .techne
+          sparse-checkout: plugins/techne/_shared
+      - name: Fleet tidy tests
+        env:
+          TECHNE_CLEANUP: .techne/plugins/techne/_shared/cleanup.py
+        run: python3 -I fleet/test_tidy.py
       - name: Shell lint
         run: make shellcheck SHELLCHECK=shellcheck FLEET_HEAVY_HELD=1
       # The install dir is writable only because the NSIS mode is currentUser;

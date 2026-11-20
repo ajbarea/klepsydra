@@ -1211,6 +1211,22 @@ printf 'fleet-a-1.scope 6900 8745 gone\nfleet-b-2.scope 100 8745\n' >"$work/scop
 check "#353: a scope that ended between the listing and the read is not called astray" \
   "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
   "ok   memory cap: fleet.slice 8412 MiB, fleet-workers.slice 7601 MiB"
+# Cleanup (#511): doctor reads the fleet-cleanup timer's report and names the fleet tidy command.
+cr="$work/cleanup-report.json"
+check "#511: no cleanup report yet warns, naming fleet install" \
+  "$(FLEET_CLEANUP_REPORT="$work/no-report.json" doctor | grep -c '^warn cleanup: no cleanup report yet: fleet install adds the fleet-cleanup timer')" "1"
+printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":1000,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$cr"
+check "#511: a clean, fresh report is ok" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^ok   cleanup: nothing finished or expired is kept outside git and GitHub')" "1"
+printf '{"ts":%s,"shots_rc":3,"shots_said":"gh\\ndown","techne":null,"unowned":["review/"],"stale":["review/a.md: expired 2026-11-01 (owner heph)"],"queue_old":2,"done_files":4,"heph_bytes":300000,"briefs_stale":5,"archive_stale":1}\n' "$(( $(date +%s) - 86400 ))" >"$cr"
+got=$(FLEET_CLEANUP_REPORT="$cr" doctor | grep '^warn cleanup')
+for want in "the cleanup timer last ran 24 h ago" "fleet shots --apply failed (gh down)" "techne cleanup.py not found" \
+  "done/ holds 4 retired week files: harvest lessons, then fleet tidy --apply done" "fleet tidy --apply expired" \
+  "1 briefing paths with no owner + expires (review/)" "2 Done lines in queue.md predate this week" \
+  "HEPH.md is 292 KB, past 150 KB: the orchestrator runs fleet tidy heph" "5 stale briefs and 1 old archive entries: fleet tidy --apply briefs archive"; do
+  check "#511: a report with work left names: $want" "$(grep -cF -- "$want" <<<"$got")" "1"
+done
+printf 'not json' >"$cr"
+check "#511: a report that cannot be read warns" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^warn cleanup: could not read')" "1"
 # The orchestrator's claude (pid 4242 in the section's /proc) in its scope.
 printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-heph-9.scope\n' >"$work/dproc/4242/cgroup"
 printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
