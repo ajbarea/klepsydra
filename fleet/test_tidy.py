@@ -4,7 +4,9 @@ Run: python3 -I fleet/test_tidy.py
 The queue, expired and report cases need techne's cleanup.py: TECHNE_CLEANUP, else
 ~/ajsoftworks/techne. Without it they fail, unless KLEPSYDRA_NO_TECHNE=1 declares its absence."""
 
+import contextlib
 import datetime as dt
+import io
 import json
 import os
 import subprocess
@@ -222,6 +224,7 @@ class Tidy(unittest.TestCase):
             "fresh-live-20261101-0900.src": old,
             "task-paused.src": old,  # paused.tsv names it
             "task-paused2.src": old,  # named only inside the paused row
+            "fresh-paused2-20261101-0900.src": old,  # same agent; the row lists only task-
             "task-recent-finish.src": old,  # finished 2 days ago
             "task-old-finish.src": old,  # finished 9 days ago: goes
             "fresh-gone-20261101-0900-recover.src": old,  # goes
@@ -526,8 +529,29 @@ class ReviewRound1(unittest.TestCase):
         mod = load_tidy(self.state, self.brief)
         (self.brief / "done").mkdir()
         (self.brief / "done" / "W1.md").write_text("x")
-        self.assertEqual(mod.git_remove(["done/W1.md"], "m"), 1)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(mod.git_remove(["done/W1.md"], "m"), 1)
         self.assertTrue((self.brief / "done" / "W1.md").exists())
+        self.assertIn(
+            "refused: changed or untracked since the scan: done/W1.md", out.getvalue()
+        )
+
+    def test_a_path_changed_since_the_scan_is_refused_before_git_rm(self):
+        (self.brief / "done").mkdir()
+        f = self.brief / "done" / "W1.md"
+        f.write_text("orig")
+        git(self.brief, "add", "-A")
+        git(self.brief, "commit", "-qm", "d")
+        f.write_text("edited after the scan")
+        mod = load_tidy(self.state, self.brief)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(mod.git_remove(["done/W1.md"], "m"), 1)
+        self.assertEqual(f.read_text(), "edited after the scan")
+        self.assertIn(
+            "refused: changed or untracked since the scan: done/W1.md", out.getvalue()
+        )
 
     def test_a_failed_git_rm_keeps_an_edit_saved_meanwhile(self):
         (self.brief / "done").mkdir()
