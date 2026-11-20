@@ -24,7 +24,9 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
   last FLEET_HEPH_KEEP lines (600) by position, no clock; the first-seen record is gone
   (f687f3f). Verify round 14 (cut from line 0, undated sections by heading text alone, refusal
   names times + touch) fixed after it. --apply drops only what the saved dry-run list shows.
-1. 📋 Fresh verify pass on the r5 fixes, then Heph's review r6.
+1. 📋 PARKED 11-20 17:10. Ready for Heph's review r6 at caf85c1 (r5 fixes verified clean,
+   plus the verify's two minors). The live HEPH.md copy refused at keep 600 by ~3 lines (the
+   dated 11-11 START HERE block reaches the margin); it clears as Heph appends.
 2. 📋 After techne#394 merges: repin ci.yml's techne ref to its merge SHA, then #514.
 3. 📋 Skill fix (own techne PR): bug-classes.md learned class "test child reaches a live
    default" (env restored after import; a subprocess falls back to the live path).
