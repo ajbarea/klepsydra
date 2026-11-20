@@ -117,7 +117,7 @@ jobs:
         with:
           persist-credentials: false
           repository: ajbarea/techne
-          ref: e3fd401b7cf5cdbd48a0be2916edba5c3dfe0865
+          ref: 1b13c622cf59a22ba652251c0fae5b0d766aa15c
           path: .techne
           sparse-checkout: plugins/techne/_shared
       - name: Fleet tidy tests
