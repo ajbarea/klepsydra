@@ -22,7 +22,8 @@ for ev in PostToolUse UserPromptSubmit Stop; do
     cwd: $cwd, permission_mode: "default", hook_event_name: $ev, tool_name: "Bash", tool_input: {command: "ls"},
     tool_response: {stdout: "x", stderr: "", interrupted: false}, tool_use_id: "toolu_01X", duration_ms: 20,
     prompt: "hi", last_assistant_message: "done", stop_hook_active: false}' >"$out/ev-$ev.json"
-  STDIN=$out/ev-$ev.json KLEPSYDRA_DIR=$out/kdir XDG_RUNTIME_DIR=$out bash "$here/count.sh" "hook-$ev" bash "$repo/hooks/klepsydra-fleet.sh"
+  # The read-only tmux shim too: the hook colours its window.
+  STDIN=$out/ev-$ev.json KLEPSYDRA_DIR=$out/kdir XDG_RUNTIME_DIR=$out PATH=$out/shim:$PATH SHIM_LOG=$out/shim.log bash "$here/count.sh" "hook-$ev" bash "$repo/hooks/klepsydra-fleet.sh"
 done
 bash "$here/count.sh" resume-pass bash "$sb" "$out" resume-at-reset.sh --once
 WATCH_TICK=1 IDLE_S=99999 bash "$here/count.sh" watch-30s timeout 30 bash "$sb" "$out" watch-panes.sh "$@"

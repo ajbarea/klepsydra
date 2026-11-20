@@ -178,7 +178,8 @@ $RULE")
 # shellcheck source=fleet/lib.sh
 . "$root/fleet/lib.sh"
 # shellcheck source=/dev/null
-. <(sed -n '/^# ARMED: the time BELOW/,/^}/p' "$root/fleet/resume-at-reset.sh")
+. <(sed -n '/^armed_at() {/,/^}/p' "$root/fleet/resume-at-reset.sh")
+declare -F armed_at >/dev/null || { echo "FAIL: armed_at not found in fleet/resume-at-reset.sh"; exit 1; }
 
 # Each screen straight after the one before it: the cache must notice even
 # a change at the very end (no unset between screens). Pass 2 runs backwards.
@@ -205,7 +206,7 @@ differential() { # AWK-NAME [reverse]
     check "$1 #$i limit_line" "$(limit_line "$s"; echo "rc=$?")" "$(old_limit_line "$s"; echo "rc=$?")"
     limit_menu "$s"; got=$?; old_limit_menu "$s"; want=$?
     check "$1 #$i limit_menu" "$got" "$want"
-    screen_parse "$s"; armed_at
+    armed_at "$s"
     check "$1 #$i armed" "$ARMED" "$(old_armed "$s")"
     # Each with another screen cached first, so a helper that reads the cache
     # before parsing its own screen is caught.
@@ -214,6 +215,9 @@ differential() { # AWK-NAME [reverse]
       "$n" "$s"; got=$?; "old_$n" "$s"; want=$?
       check "$1 #$i $n" "$got" "$want"
     done
+    screen_parse "${corpus[(k + 1) % ${#corpus[@]}]}"
+    armed_at "$s"
+    check "$1 #$i armed_at" "$ARMED" "$(old_armed "$s")"
   done
 }
 
@@ -280,14 +284,14 @@ if command -v "$STRACE" >/dev/null; then
     grep -cE ' (clone|clone3|fork|vfork)\(' "$work/trace"
   }
   printf '%s' "${corpus[2]}" >"$work/screen"
-  armed_src=$(sed -n '/^# ARMED: the time BELOW/,/^}/p' "$root/fleet/resume-at-reset.sh")
+  armed_src=$(sed -n '/^armed_at() {/,/^}/p' "$root/fleet/resume-at-reset.sh")
   # shellcheck disable=SC2016  # the child bash expands $1, $2 and $3, its positional args.
   load=$(forks_of env -u FLEET_RUN_ID bash -c '. "$1/fleet/lib.sh"; eval "$3"; s=$(<"$2")' _ "$root" "$work/screen" "$armed_src")
   # shellcheck disable=SC2016  # the child bash expands $1, $2, $3 and $s.
   all=$(forks_of env -u FLEET_RUN_ID bash -c '. "$1/fleet/lib.sh"; eval "$3"; s=$(<"$2")
     busy "$s"; has_input_box "$s"; idle_empty "$s"; limit_line "$s" >/dev/null; limit_menu "$s"
     split_screen "$s"; near 6 >/dev/null; holds_input "$s"; box_empty "$s"; rc_settled "$s"
-    screen_parse "$s"; armed_at; : "$(input_text "$s")"' _ "$root" "$work/screen" "$armed_src")
+    armed_at "$s"; : "$(input_text "$s")"' _ "$root" "$work/screen" "$armed_src")
   # input_text prints, so its $(...) is one fork of the caller's: two in all.
   check "every screen helper on one capture: one parse" "$((all - load))" 2
   # The watch loop, one tick at a time, against a stub tmux (no server): one

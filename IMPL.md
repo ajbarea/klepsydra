@@ -22,19 +22,14 @@ verifies each PR against before.md. perf-k codes a slice only when it is too sub
 - Reported to Athena 16:42 (fleet send).
 
 ## Next
-1. Report to Athena NOT yet delivered: her pane %61 sat at a permission prompt from 23:30 to past 00:05 (fleet send:
-   not-pasted). The report is written: ~/.local/state/fleet-orchestrator/reports/perf-k-1120.md. Resend one line
-   pointing at it (`fleet send PANE -`) once her prompt is empty.
-2. #500: round-1 fixes in ed62ff8, Sources added to the body, CI green on 5067ed8 (this IMPL push reruns it).
-   Waiting on round 2 (fresh reviewer). Do not merge.
-3. #510 (perf/readers, Closes #501): CI green on 46bed16, waiting on independent review. Do not merge.
-4. #497 (agy slice 1) verified 11-19 23:10: doctor 1748 -> 1111, resume pass 972 -> 964, hook unchanged;
-   doctor --json equal on the seeded live copy. Should-fix posted (PR comment; reports/perf-497-verify.md).
-   #497 and #500 conflict (test-forks target, CI step, lib.sh): second to merge rebases.
-   Re-verify after agy's fix: detached worktree .claude/worktrees/perf-s1-after (copy scripts/perf into the new head).
-5. Slices 2, 3, 5 (specs in briefs-free) start after #497 merges; agy implements (free capacity first) unless Athena
-   hands them to perf-k.
-6. Class c (frontend P1-P3, P12, A1) after the gauge header PR (feat/gauge-header-421, not open at 00:05) merges.
+1. #500: round 2 (fresh Opus) CLEAN; its nits (armed_at takes its own screen, harness hook rows run with the read-only
+   tmux shim) committed with this IMPL. test_forks_screen.sh 26069 passed (strace 6.8). Report to Athena; do not merge.
+2. #510 (perf/readers, Closes #501): verify pass CLEAN; should-fix (ctime part of the change marker untested) fixed
+   on that branch. Do not merge.
+3. #497 (agy slice 1): re-verified 11-20 01:50 on 96777d2, both should-fix fixed (PR comment). #497 and #500 conflict
+   (test-forks target, CI step, lib.sh): second to merge rebases.
+4. Slices 2, 3, 5 (specs in briefs-free) start after #497 merges; agy implements unless Athena hands them to perf-k.
+5. Class c (frontend P1-P3, P12, A1) after the gauge header PR (feat/gauge-header-421) merges.
 - Checked and left: statusLine 6 processes / 2 jq per 30 s refresh per session (fixture run, strace).
 - Lesson: while a PR's CI runs, commit IMPL locally and push it with the next code change (a lone IMPL push cancels the run).
 

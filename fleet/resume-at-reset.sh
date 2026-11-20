@@ -120,11 +120,12 @@ resume_typed() { # PANE
   submit "$1"
 }
 
-# ARMED: the time BELOW's last "Continuing automatically at TIME" names
-# (after screen_parse), trailing spaces cut; empty when none. Matches as grep -o
+# ARMED: the time SCREEN's last "Continuing automatically at TIME" below the
+# input box names, trailing spaces cut; empty when none. Matches as grep -o
 # would: each match runs to the next "·".
-armed_at() {
+armed_at() { # SCREEN
   local l rest m="" below=() re='Continuing automatically at ([^·]*)'
+  screen_parse "$1"
   mapfile -t below <<<"$BELOW"
   for l in "${below[@]}"; do
     rest=$l
@@ -587,7 +588,7 @@ one() { # PANE
   # Claude Code's own auto-continue resumes the whole transcript; on a
   # registered pane with over FRESH_AFTER_S to wait, cancel it ("esc to
   # cancel") so the pane gets a fresh session at the reset. Never over typed text.
-  armed_at
+  armed_at "$s"
   armed=$ARMED
   if (( !orch )) && [[ -n $armed && -z $typed ]] && registered "$p"; then
     at=$(date -d "${armed//,/}" +%s 2>/dev/null) || at=0
