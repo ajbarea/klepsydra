@@ -183,6 +183,7 @@ session_of() {
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
 # One read of every session file for the whole run: the checks below ask it per pane.
+# shellcheck disable=SC2034 # read by fleet_sessions_tsv
 SESSION_ROWS=$(fleet_sessions_tsv)
 
 # Limits as the fleet hook's StopFailure record dates them (#311), else as the
@@ -606,7 +607,7 @@ heavy_lock_check
 # last changed). One idle past FLEET_BROWSER_IDLE_MIN minutes (30) warns, as
 # does one whose MCP server is gone (the resume service closes it).
 browser_check() {
-  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0
+  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0 cpid
   [[ $min =~ ^[0-9]+$ ]] || min=30
   idle_max=$((min * 60))
   while IFS=$'\t' read -r pid server claude idle dir; do
@@ -614,8 +615,8 @@ browser_check() {
     who="claude $claude"
     if [[ $claude == - ]]; then who="no session"
     else
-      while IFS=$'\t' read -r f _ _ ended _ pid _; do
-        [[ $pid == "$claude" && $ended == 0 ]] && { who="session ${f:0:8}"; break; }
+      while IFS=$'\t' read -r f _ _ ended _ cpid _; do
+        [[ $cpid == "$claude" && $ended == 0 ]] && { who="session ${f:0:8}"; break; }
       done < <(fleet_sessions_tsv)
     fi
     list+="pid $pid ($who, idle $( [[ $idle == - ]] && echo '?' || echo "$((idle / 60)) min")"

@@ -580,7 +580,6 @@ pane_folder() { # PANE
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
-UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 # --- session rows: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
 # One tab-separated row per named session file whose first line is a v1
 # object: its name, then what the jq array `fields` picks from the object
@@ -594,7 +593,10 @@ session_rows() { # fields file...
   (( $# )) || return 0
   for f in "$@"; do
     line=""
-    { IFS= read -r line <"$f"; } 2>/dev/null
+    { line=$(<"$f"); } 2>/dev/null || line=""
+    [[ -n $line ]] || continue
+    line=${line//$'\r'/}
+    line=${line//$'\n'/ }
     printf '%s\t%s\n' "$f" "$line"
   done | jq -Rr '
     def last_active: [.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
@@ -604,7 +606,7 @@ session_rows() { # fields file...
     # was her key before 11-02), else Hephaestus.
     def orch_face: if (.orchestrator_face | IN("bf_emma", "bf_alice")) then "bf_emma" else "am_michael" end;
     (index("\t")) as $i | .[:$i] as $f
-    | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
+    | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and (.v == null or .v == 1))
     | try ([$f] + ('"$fields"')) catch empty
     | @tsv' 2>/dev/null
 }
@@ -615,7 +617,7 @@ fleet_rows() { # folder fields
   ( cd -- "$1" 2>/dev/null || exit 0
     local f names=()
     for f in *.json; do
-      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+      [[ -f $f && ! -L $f ]] && names+=("$f")
     done
     session_rows "$2" "${names[@]}" )
 }

@@ -93,7 +93,7 @@ env KLEPSYDRA_DIR="$work/k" bash -c ". fleet/lib.sh; live_session %8" >/dev/null
 check "live_session %8 fails (none live)" "$(( rc8 != 0 ))" 1
 
 valid_count=$(env KLEPSYDRA_DIR="$work/k" bash -c ". fleet/lib.sh; fleet_sessions_tsv" 2>/dev/null | wc -l || true)
-check "fleet_sessions_tsv rows equal valid parseable v1 files" "$(( valid_count ))" 6
+check "fleet_sessions_tsv rows equal valid parseable files" "$(( valid_count ))" 7
 
 fake_out=$(env KLEPSYDRA_DIR="$work/k" SESSION_ROWS="fake_file.json	%99	-	0	0	-	-" bash -c ". fleet/lib.sh; fleet_sessions_tsv" 2>/dev/null || true)
 check "fleet_sessions_tsv honours SESSION_ROWS" "$fake_out" "fake_file.json	%99	-	0	0	-	-"
