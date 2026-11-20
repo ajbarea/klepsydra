@@ -87,7 +87,13 @@ fn main() {
     let ci_dir = dir.clone();
     let mut ci = klepsydra_fleet::ci::Follower::default();
     let usage: Option<Usage> = dir.map(|dir| {
-        let read: Usage = Arc::new(move || klepsydra_fleet::usage::read([&dir]));
+        let reader = std::sync::Mutex::new(klepsydra_fleet::usage::Reader::default());
+        let read: Usage = Arc::new(move || {
+            let mut r = reader
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            r.read([&dir])
+        });
         read
     });
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
