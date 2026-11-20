@@ -544,6 +544,8 @@ elif ! cl=$(jq -r --argjson now "$now" --argjson hk "$heph_max_kb" '
     def n(k): (.[k] // 0);
     [ (if ($now - (.ts // 0)) > 50400 then "the cleanup timer last ran \((($now - (.ts // 0)) / 3600) | floor) h ago: systemctl --user start fleet-cleanup.service, or fleet install" else empty end),
       (if n("shots_rc") != 0 then "fleet shots --apply failed (\(.shots_said // "see log/shots.log" | gsub("\\s+"; " ") | .[0:120])): run it and read log/shots.log" else empty end),
+      (if .error then "the cleanup report run failed (\(.error | gsub("\\s+"; " ") | .[0:120])): read log/tidy.log, then fleet tidy --report again" else empty end),
+      (if has("briefing") and .briefing == null then "the briefing folder was not there, so it was not checked: is C: mounted?" else empty end),
       (if .techne == null then "techne cleanup.py not found, so the briefing expiry and queue checks did not run: set TECHNE_CLEANUP or install techne" else empty end),
       (if n("done_files") > 0 then "done/ holds \(n("done_files")) retired week files: harvest lessons, then fleet tidy --apply done" else empty end),
       (if ((.stale // []) | length) > 0 then "\(.stale | length) briefing owners past their date or missing a field (\(.stale[0] | gsub("\\s+"; " ") | .[0:80])): harvest an expired one into its repo, then fleet tidy --apply expired; fix the frontmatter of the rest" else empty end),

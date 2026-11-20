@@ -136,8 +136,9 @@ class Tidy(unittest.TestCase):
             "14:00 still",
         ):
             self.assertIn(line, kept)
-        for line in ("## Role", "old work", "06:10 two days", "## 10-28"):
+        for line in ("old work", "06:10 two days", "## 10-28"):
             self.assertNotIn(line, kept)
+        self.assertIn("## Role", kept)  # an undated section is kept whole
         self.assertEqual(
             p.stat().st_mtime_ns, before, "fleet recover reads HEPH.md's time"
         )
@@ -163,7 +164,7 @@ class Tidy(unittest.TestCase):
     def test_heph_refuses_an_undated_log(self):
         self.refused(
             "# H\n## START HERE\n- x\n## Notes\n- y\n",
-            "no line in HEPH.md carries a date",
+            "no line after START HERE carries a date",
         )
 
     def test_heph_refuses_a_date_after_today(self):
@@ -227,6 +228,8 @@ class Tidy(unittest.TestCase):
             "fresh-gone.src": old,  # goes
             "task-new.src": 2 * DAY,  # written lately: stays
             "task-mentioned.src": old,  # its path is a panes.tsv field
+            "task-unpaused.src": old,  # unpaused.tsv names it
+            "task-oddtime.src": old,  # finished, with a time that cannot be read
             "notes.md": old,  # not a brief
         }
         for n, a in names.items():
@@ -243,7 +246,9 @@ class Tidy(unittest.TestCase):
         older = dt.datetime.fromtimestamp(NOW - 9 * DAY).isoformat()
         (s / "finished.tsv").write_text(
             f"%3\trecent-finish\tb\ts\tw\tc\t{recent}\n%4\told-finish\tb\ts\tw\tc\t{older}\n"
+            "%5\toddtime\tb\ts\tw\tc\tyesterday-ish\n"
         )
+        (s / "unpaused.tsv").write_text("unpaused\tsid\t2026-11-01T00:00:00\n")
         r = self.tidy("--apply", "briefs")
         self.assertEqual(r.returncode, 0, r.stdout)
         left = {p.name for p in s.iterdir()}
@@ -412,6 +417,194 @@ class Tidy(unittest.TestCase):
         r = self.tidy("everything")
         self.assertEqual(r.returncode, 2)
         self.assertIn("unknown part", r.stderr)
+
+
+def load_tidy(state: Path, brief: Path, now: float = NOW):
+    """tidy.py imported in this process, reading STATE, BRIEFING and NOW from the environment."""
+    import importlib.util
+
+    old = {k: os.environ.get(k) for k in ("FLEET_STATE", "BRIEFING_DIR", "FLEET_NOW")}
+    os.environ |= {
+        "FLEET_STATE": str(state),
+        "BRIEFING_DIR": str(brief),
+        "FLEET_NOW": str(now),
+    }
+    try:
+        spec = importlib.util.spec_from_file_location("tidy_t", HERE / "tidy.py")
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    return mod
+
+
+class ReviewRound1(unittest.TestCase):
+    """The shapes and guards the first review found untested (Tidy's fixtures, not its tests)."""
+
+    setUp = Tidy.setUp
+    tidy = Tidy.tidy
+    heph = Tidy.heph
+
+    def plan(self, text: str):
+        mod = load_tidy(self.state, self.brief)
+        return mod.plan_heph(text, dt.datetime.fromtimestamp(NOW))
+
+    HEAD = "# H\n## START HERE\n- now\n## 2026-11-15 RECOVERY\n- 09:00 old\n"
+
+    def test_shapes_that_must_never_lose_recent_lines(self):
+        cases = {
+            "undated newest section": "## Heph takeover (after shutdown)\n- 16:30 newest work\n",
+            "a heading with only a time": "## 16:2x Heph takeover\n- 16:30 newest work\n",
+            "a number range in a heading": "## Slices 1-3 plan\n- 11:00 newest work\n",
+            "a future date named in a line": "## 2026-11-20 RECOVERY\n- 11-25 13:00 RIT resets\n- 09:00 newest work\n",
+            "a long gap with no new date": "## 2026-11-19 day\n- 20:00 late\n- 16:00 newest work\n",
+        }
+        for name, tail in cases.items():
+            with self.subTest(name):
+                kept, _ = self.plan(self.HEAD + tail)
+                self.assertIn("newest work", "".join(kept))
+
+    def test_dates_that_go_backwards_refuse(self):
+        text = self.HEAD + "## 2026-11-19 day\n- 10:00 x\n## 10-12 slices\n- 11:00 y\n"
+        with self.assertRaisesRegex(ValueError, "before 2026-11-19 above it"):
+            self.plan(text)
+
+    def test_heph_keeps_what_it_drops_for_a_week(self):
+        p = self.heph()
+        r = self.tidy("--apply", "heph")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        copies = list((self.state / "archive").glob("HEPH-dropped-*.md"))
+        self.assertEqual(len(copies), 1)
+        self.assertIn("00:41 old work", copies[0].read_text())
+        self.assertIn("loses 1 older", r.stdout)
+        self.assertNotIn("00:41 old work", p.read_text())
+
+    def test_heph_changed_mid_tidy_is_refused(self):
+        p = self.heph()
+        mod = load_tidy(self.state, self.brief)
+        real = mod.open_elsewhere
+
+        def touch(path):
+            p.write_text(HEPH + "- 11:59 a new line\n")
+            return real(path)
+
+        mod.open_elsewhere = touch
+        self.assertEqual(mod.tidy_heph(True), 1)
+        self.assertIn("a new line", p.read_text())
+
+    def test_remove_refuses_a_path_outside_its_folder(self):
+        mod = load_tidy(self.state, self.brief)
+        outside = self.tmp / "keep.src"
+        outside.write_text("x")
+        self.assertEqual(mod.remove([outside], self.state), 1)
+        self.assertTrue(outside.exists())
+
+    def test_a_folder_named_like_a_brief_is_left_alone(self):
+        d = self.state / "task-folder.src"
+        d.mkdir()
+        (d / "x").write_text("x")
+        os.utime(d, (NOW - 30 * DAY,) * 2)
+        self.tidy("--apply", "briefs")
+        self.assertTrue((d / "x").exists())
+
+    def test_archive_briefs_age_one_by_one(self):
+        b = self.state / "archive" / "briefs"
+        b.mkdir(parents=True)
+        (b / "old.src").write_text("x")
+        (b / "new.src").write_text("x")
+        age(b / "old.src", 30 * DAY)
+        r = self.tidy("--apply", "archive")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(sorted(p.name for p in b.iterdir()), ["new.src"])
+
+    def test_an_untracked_path_is_never_removed(self):
+        mod = load_tidy(self.state, self.brief)
+        (self.brief / "done").mkdir()
+        (self.brief / "done" / "W1.md").write_text("x")
+        self.assertEqual(mod.git_remove(["done/W1.md"], "m"), 1)
+        self.assertTrue((self.brief / "done" / "W1.md").exists())
+
+    def test_a_failed_git_rm_keeps_an_edit_saved_meanwhile(self):
+        (self.brief / "done").mkdir()
+        f = self.brief / "done" / "W1.md"
+        f.write_text("orig")
+        git(self.brief, "add", "-A")
+        git(self.brief, "commit", "-qm", "d")
+        mod = load_tidy(self.state, self.brief)
+        real = mod.git
+
+        def racing(*args):
+            if "rm" in args:
+                f.write_text("edited meanwhile")
+            return real(*args)
+
+        mod.git = racing
+        self.assertEqual(mod.git_remove(["done/W1.md"], "m"), 1)
+        self.assertEqual(f.read_text(), "edited meanwhile")
+
+    @NEEDS_TECHNE
+    def test_queue_changed_mid_tidy_is_refused(self):
+        q = "# Queue\n\n## Done since 11-09\n- ✅ **Sun 11-15:** last week\n"
+        path = self.brief / "queue.md"
+        path.write_text(q)
+        mod = load_tidy(self.state, self.brief)
+        real = mod.BriefingLock.__enter__
+
+        def enter(lock):
+            got = real(lock)
+            path.write_text(q + "- a line added meanwhile\n")
+            return got
+
+        mod.BriefingLock.__enter__ = enter
+        self.assertEqual(mod.tidy_queue(True, mod.techne_cleanup()), 1)
+        self.assertIn("added meanwhile", path.read_text())
+
+    @NEEDS_TECHNE
+    def test_expired_never_removes_what_is_only_stale(self):
+        fm = "---\nowner: heph\nreviewed: 2020-01-01\n---\n"
+        (self.brief / "review").mkdir()
+        (self.brief / "review" / "README.md").write_text(fm)
+        (self.brief / "review" / "a.png").write_text("x")
+        git(self.brief, "add", "-A")
+        git(self.brief, "commit", "-qm", "r")
+        r = self.tidy("--apply", "expired")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertTrue((self.brief / "review" / "a.png").exists())
+
+    def test_report_survives_a_prune_that_hangs_and_a_missing_briefing(self):
+        mod = load_tidy(self.state, self.tmp / "no-briefing")
+        real = mod.subprocess.run
+
+        def hang(cmd, *a, **k):
+            if "--apply" in cmd:
+                raise mod.subprocess.TimeoutExpired(cmd, 540)
+            return real(cmd, *a, **k)
+
+        mod.subprocess.run = hang
+        out = self.tmp / "r.json"
+        try:
+            self.assertEqual(mod.report(out), 0)
+        finally:
+            mod.subprocess.run = real
+        data = json.loads(out.read_text())
+        self.assertEqual((data["shots_rc"], data["briefing"]), (124, None))
+        self.assertIn("timed out", data["shots_said"])
+
+    def test_report_names_a_crash(self):
+        mod = load_tidy(self.state, self.brief)
+
+        def boom():
+            raise RuntimeError("roster broke")
+
+        mod.stale_briefs = boom
+        out = self.tmp / "r.json"
+        self.assertEqual(mod.report(out), 0)
+        self.assertIn("roster broke", json.loads(out.read_text())["error"])
 
 
 if __name__ == "__main__":

@@ -1136,7 +1136,9 @@ echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 # the wrappers write the shipped path, $KLEPSYDRA_DIR/prefs.json, and remove it
 # after, so later sections see no file. DOC_PREFS=none: no file.
 doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
-doctor() { local rc; doc_prefs; FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
+# Every case but the #511 ones sees a fresh, clean cleanup report, so its line is ok.
+printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":1,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$work/clean-cleanup.json"
+doctor() { local rc; doc_prefs; FLEET_CLEANUP_REPORT="${FLEET_CLEANUP_REPORT:-$work/clean-cleanup.json}" FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" FLEET_UNITS="$work/dunits" bash "$here/doctor.sh" 2>/dev/null; rc=$?
   rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
 phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
@@ -1700,6 +1702,7 @@ ok   fleet-sync-briefing.timer: enabled and active
 ok   fleet-ci-watch.service: enabled and active
 ok   fleet-doctor.timer: enabled and active
 ok   fleet-tmux-watch.timer: enabled and active
+ok   fleet-cleanup.timer: enabled and active
 ok   the resume service logged its start
 rc=0"
 check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"
