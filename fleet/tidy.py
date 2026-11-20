@@ -62,7 +62,7 @@ WRITE_QUIET_S = 120
 
 
 def wait_seconds(raw: str | None) -> float:
-    """FLEET_REGISTRY_WAIT as lib.sh's with_registry reads it: empty or unreadable is 60."""
+    """FLEET_REGISTRY_WAIT in seconds; empty, unreadable or out of range falls back to 60."""
     try:
         v = float(raw or "60")
     except ValueError:
