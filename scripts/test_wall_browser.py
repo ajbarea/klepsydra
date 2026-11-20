@@ -5749,8 +5749,8 @@ def settings_view(wall):
             on = page.evaluate("""() => { const t = document.querySelector('#row-compact .tog');
               return { checked: t.getAttribute('aria-checked'), knob: getComputedStyle(t.querySelector('i')).backgroundColor, fill: getComputedStyle(t).backgroundColor }; }""")
             wall.check(
-                on["checked"] == "true" and TRANSPARENT not in (on["knob"], on["fill"]) and on["fill"] != st["fillOff"],
-                f"{tag}: an on toggle reads as on (filled track, knob drawn)",
+                on["checked"] == "true" and TRANSPARENT not in (on["knob"], on["fill"]) and on["fill"] == st["text"],
+                f"{tag}: an on toggle reads as on under the pointer (track in the text colour, knob drawn)",
                 on,
             )
             wall.check(not st["wide"] and st["tabs"] == [], f"{tag}: no sideways scroll; the Ledger and Queue tabs wait behind the page", [st["wide"], st["tabs"]])
