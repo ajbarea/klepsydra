@@ -19,10 +19,9 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
 - ✅ test_tidy.py 33 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
 
 ## Next
-1. CI on the pushed head (full fleet suite: test_fleet.sh doctor + cut-over cases).
-2. Hand mutation of every guard: `TECHNE_CLEANUP=... flock -o /tmp/fleet-heavy.lock timeout 1800
-   python3 ~/.local/state/fleet-orchestrator/reports/cleanup-ratchet/tidy-hand-mutation.py fleet
-   <scratch dir>` (round-1 run before the fixes: 17/21 killed; the 4 survivors now have tests).
-3. Fresh Opus reader round 2, then verify; pin ci.yml's techne ref to #394's merge SHA once merged.
+1. ✅ Hand mutation: 31 guards, all killed after 6bbdb50 (m20 refusal message, m23 paused row's
+   other brief). 📋 CI on 6bbdb50 (full fleet suite).
+2. 📋 Fresh Opus reader round 2 (running), then a verify pass; pin ci.yml's techne ref to #394's
+   merge SHA once merged.
 - Live dry run 11-20: HEPH.md 1476 → 429 lines; 175 stale briefs; archive entries; 2 queue lines.
 - Never `--apply heph` on the live file yourself; the orchestrator runs it after the dry run.
