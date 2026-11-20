@@ -6,6 +6,7 @@ The queue, expired and report cases need techne's cleanup.py: TECHNE_CLEANUP, el
 
 import contextlib
 import datetime as dt
+import fcntl
 import io
 import json
 import os
@@ -458,6 +459,74 @@ class ReviewRound1(unittest.TestCase):
         return mod.plan_heph(text, dt.datetime.fromtimestamp(NOW))
 
     HEAD = "# H\n## START HERE\n- now\n## 2026-11-15 RECOVERY\n- 09:00 old\n"
+
+    def test_an_unreadable_registry_protects_by_refusing(self):
+        old = 30 * DAY
+        (self.state / "task-parked.src").write_text("x")
+        age(self.state / "task-parked.src", old)
+        (self.state / "paused.tsv").write_text("parked\tPAUSED: why\n")
+        os.chmod(self.state / "paused.tsv", 0)
+        try:
+            r = self.tidy("--apply", "briefs")
+        finally:
+            os.chmod(self.state / "paused.tsv", 0o600)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("briefs: refused: paused.tsv:", r.stdout)
+        self.assertTrue((self.state / "task-parked.src").exists())
+        (self.state / "paused.tsv").unlink()
+        (
+            self.state / "paused.tsv"
+        ).mkdir()  # a folder by that name is no registry either
+        r = self.tidy("--apply", "briefs")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertTrue((self.state / "task-parked.src").exists())
+
+    def test_a_held_registry_lock_refuses_the_briefs(self):
+        (self.state / "task-gone.src").write_text("x")
+        age(self.state / "task-gone.src", 30 * DAY)
+        with open(self.state / ".registry.lock", "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            r = self.tidy("--apply", "briefs", FLEET_REGISTRY_WAIT="0.3")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("the registry lock was held", r.stdout)
+        self.assertTrue((self.state / "task-gone.src").exists())
+        r = self.tidy("--apply", "briefs", FLEET_REGISTRY_WAIT="0.3")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertFalse((self.state / "task-gone.src").exists())
+
+    def test_a_later_start_here_newer_than_the_first_is_refused(self):
+        def doc(top: str, later: str) -> str:
+            return (
+                f"# H\n## START HERE{top}\n- top\n## 11-12 09:00 log\n- 09:30 x\n"
+                f"## START HERE{later}\n- later\n## 11-20 09:00\n- 09:30 y\n"
+            )
+
+        for top, later in (
+            (" (11-10 08:00)", " (11-17 08:00, rotation)"),
+            (" (11-10 08:00)", ""),
+            ("", " (11-17 08:00)"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "START HERE block newer than the first"
+            ):
+                self.plan(doc(top, later))
+        kept, _ = self.plan(doc(" (11-19 08:00)", " (11-12 10:00)"))
+        self.assertIn("- top\n", kept)
+        self.assertNotIn("- later\n", kept)
+
+    def test_standing_rules_in_old_sections_stay(self):
+        text = (
+            "# H\n## START HERE\n- now\n## 2026-11-10 day\n- 09:00 old work\n"
+            "- 10:00 AJ (STANDING): free capacity first\n- 11:00 a PERMANENT rule\n"
+            "- 12:00 binding from 10-28\n- 13:00 a standingdesk note\n## 2026-11-20 day\n- 09:00 x\n"
+        )
+        kept, s = self.plan(text)
+        for line in ("STANDING", "PERMANENT", "binding from"):
+            self.assertTrue(any(line in k for k in kept), line)
+        self.assertIn("## 2026-11-10 day\n", kept)
+        self.assertNotIn("- 09:00 old work\n", kept)
+        self.assertNotIn("- 13:00 a standingdesk note\n", kept)
+        self.assertEqual(s["standing"], 3)
 
     def test_shapes_that_must_never_lose_recent_lines(self):
         cases = {

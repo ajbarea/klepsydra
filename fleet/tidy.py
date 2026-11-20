@@ -59,6 +59,9 @@ HERE = Path(__file__).resolve().parent
 HEPH_HOURS = 48
 KEEP_DAYS = 7
 WRITE_QUIET_S = 120
+REGISTRY_WAIT_S = float(
+    os.environ.get("FLEET_REGISTRY_WAIT", "60")
+)  # as lib.sh with_registry
 PARTS = ("heph", "briefs", "archive", "queue", "done", "expired")
 # The briefing's permanent files, and what other tools own: everything else is transient.
 BRIEFING_KEEP = [
@@ -238,6 +241,9 @@ def stamp_lines(
     return out, marks
 
 
+STANDING = re.compile(r"\b(?:STANDING|PERMANENT|binding)\b")
+
+
 def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
     """The lines HEPH.md keeps, and a summary of what goes. Raises ValueError when the log
     cannot be dated, has no START HERE block, or names dates out of order after it, so a
@@ -264,8 +270,18 @@ def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
         raise ValueError(
             f"line {log_marks[-1][0] + 1} dates after today: the dates misread"
         )
+    for s in starts[1:]:
+        a, b = stamps[s0], stamps[s]
+        if not (
+            isinstance(a, dt.datetime) and isinstance(b, dt.datetime) and b <= a < KEEP
+        ):
+            raise ValueError(
+                f"line {s + 1} is a START HERE block newer than the first, or undated: "
+                "merge it into the top one first"
+            )
     cutoff = now - dt.timedelta(hours=HEPH_HOURS)
     keep = set(range(heads[0])) | set(range(s0, s1))
+    standing = 0
     losses: list[tuple[str, int]] = []
     for n, h in enumerate(heads):
         if s0 <= h < s1:
@@ -273,6 +289,9 @@ def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
         end = heads[n + 1] if n + 1 < len(heads) else len(lines)
         body = range(h + 1, end)
         recent = [i for i in body if stamps[i] is not None and stamps[i] >= cutoff]
+        marked = [i for i in body if i not in recent and STANDING.search(lines[i])]
+        standing += len(marked)
+        recent += marked  # a standing rule stays until someone moves it to its home
         if (stamps[h] is not None and stamps[h] >= cutoff) or recent:
             keep.add(h)
             keep.update(recent)
@@ -290,6 +309,7 @@ def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
         "losses": losses,
         "dropped_lines": dropped_lines,
         "since": cutoff.strftime("%m-%d %H:%M"),
+        "standing": standing,
     }
 
 
@@ -343,6 +363,11 @@ def tidy_heph(apply: bool) -> int:
         print(f"  {h[:110]}")
     for h, lost in s["losses"]:
         print(f"  {h[:90]}: keeps its recent lines, loses {lost} older")
+    if s["standing"]:
+        print(
+            f"  keeps {s['standing']} older lines marked STANDING, PERMANENT or binding: move "
+            "each to memory, START HERE or its repo, then tidy again"
+        )
     if not apply or not gone:
         return 0
     if NOW - st.st_mtime < WRITE_QUIET_S:
@@ -398,15 +423,20 @@ def tidy_heph(apply: bool) -> int:
 # --- briefs and archive --------------------------------------------------------------------
 
 
+class RegistryUnreadable(Exception):
+    pass
+
+
 def rows(path: Path) -> list[list[str]]:
+    """PATH's tab-separated rows; a missing file has none. Any other read error is raised, so
+    an unreadable registry never protects nothing."""
     try:
-        return [
-            ln.split("\t")
-            for ln in path.read_text(errors="replace").splitlines()
-            if ln.strip()
-        ]
-    except OSError:
+        text = path.read_text(errors="replace")
+    except FileNotFoundError:
         return []
+    except OSError as exc:
+        raise RegistryUnreadable(f"{path.name}: {exc.strerror or exc}") from None
+    return [ln.split("\t") for ln in text.splitlines() if ln.strip()]
 
 
 def protected() -> tuple[set[str], set[str]]:
@@ -511,8 +541,48 @@ def remove(paths: list[Path], under: Path) -> int:
     return failed
 
 
+class FileLock:
+    """An exclusive flock on PATH, waited for up to WAIT seconds; False from __enter__ when
+    another holder kept it that long."""
+
+    def __init__(self, path: Path, wait: float) -> None:
+        self.path, self.wait = path, wait
+
+    def __enter__(self) -> bool:
+        self.f = open(self.path, "a")
+        end = time.monotonic() + self.wait
+        while True:
+            try:
+                fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except BlockingIOError:
+                if time.monotonic() >= end:
+                    return False
+                time.sleep(0.2)
+
+    def __exit__(self, *exc: object) -> None:
+        self.f.close()
+
+
 def tidy_files(part: str, apply: bool) -> int:
-    found = stale_briefs() if part == "briefs" else stale_archive()
+    if part != "briefs":
+        return tidy_found(part, stale_archive(), apply)
+    # Under the registry lock, as launch, done and pause write panes.tsv and the briefs.
+    with FileLock(STATE / ".registry.lock", REGISTRY_WAIT_S) as held:
+        if not held:
+            print(
+                f"briefs: refused: the registry lock was held for {REGISTRY_WAIT_S} s"
+            )
+            return 1
+        try:
+            found = stale_briefs()
+        except RegistryUnreadable as exc:
+            print(f"briefs: refused: {exc} → make it readable; nothing removed")
+            return 1
+        return tidy_found(part, found, apply)
+
+
+def tidy_found(part: str, found: list[Path], apply: bool) -> int:
     under = STATE if part == "briefs" else STATE / "archive"
     what = (
         "briefs of agents gone over 7 days"
