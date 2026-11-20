@@ -860,7 +860,10 @@ pass() {
   # `keryx off` between changes is left alone.
   [[ ${FLEET_VOICES:-1} == 0 ]] || bash "$here/voices.sh" --if-changed >/dev/null 2>&1 </dev/null
   reap
-  local p panes seen
+  local p panes seen SESSION_ROWS
+  # One read of every session file for the whole pass: one() asks it per pane.
+  # shellcheck disable=SC2034 # read by fleet_sessions_tsv
+  SESSION_ROWS=$(fleet_sessions_tsv)
   PASS_LIMITED=()
   panes=$(fleet_panes)
   for p in $panes; do one "$p"; done
