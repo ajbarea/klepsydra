@@ -115,9 +115,11 @@ eng_classify() { # RC STDOUT STDERR: a failure is read with its stderr; an exit 
 
 # An interactive pane's state from its screen. agy: the input box sits between
 # two rules and the footer under it reads "esc to cancel" while a turn runs and
-# "? for shortcuts" when idle. Copilot: the footer reads "Working ctrl+c
-# interrupt" while a turn runs and "open sidebar ... Manual Approval" when idle,
-# and a folder not yet trusted shows a dialog (state trust; eng_trust_key answers).
+# "? for shortcuts" when idle (1.5.12 draws a status line with "· ctx " instead,
+# and a spinner or activity phrase above the box while busy). Copilot: the footer
+# reads "Working ctrl+c interrupt" while a turn runs and "open sidebar ... Manual
+# Approval" when idle, and a folder not yet trusted shows a dialog (state trust;
+# eng_trust_key answers).
 eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   local engine=$1 screen=$2 foot recent
   recent=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -12)
@@ -127,6 +129,13 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   local footer=unknown
   if [[ $engine == agy && $foot == *"esc to cancel"* ]]; then footer=busy
   elif [[ $engine == agy && $foot == *"? for shortcuts"* ]]; then footer=idle
+  elif [[ $engine == agy && $foot == *"· ctx "* ]]; then
+    # agy 1.5.12 status line footer (#488). Busy shows spinner/activity above the box.
+    if grep -Eq '([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⡿⣽⣻⣾⣷⣯⣟]|(Generating|Thinking|Running command|Planning)\.\.\.)' <<<"$(head -n -1 <<<"$recent")"; then
+      footer=busy
+    else
+      footer=idle
+    fi
   elif [[ $engine == copilot && $foot == *"ctrl+c interrupt"* ]]; then footer=busy
   elif [[ $engine == copilot && ( $foot == *"open sidebar"* || $foot == *"Manual Approval"* ) ]]; then footer=idle; fi
   # A running turn is busy whatever the screen says. A quota or login message is the

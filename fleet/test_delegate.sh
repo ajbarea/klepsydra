@@ -194,6 +194,25 @@ check "an unrecognised failure is an error (no fallback)" "$(eng_classify 2 '' '
 idle=$'  stub\n──────────\n>\n──────────\n? for shortcuts'
 check "agy's footer: idle" "$(eng_state agy "$idle")" "idle"
 check "agy's footer: busy" "$(eng_state agy "${idle/\? for shortcuts/esc to cancel}")" "busy"
+idle12=$(cat "$here/fixtures/agy-1.5.12-idle.txt")
+busy12=$(cat "$here/fixtures/agy-1.5.12-busy.txt")
+check "agy 1.5.12 real fixture: idle" "$(eng_state agy "$idle12")" "idle"
+check "agy 1.5.12 real fixture: busy" "$(eng_state agy "$busy12")" "busy"
+check "agy 1.5.12: a short reply that is a quota message is a limit" "$(eng_state agy $'────\n> ask\n  You have exhausted your quota\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%')" "limit"
+check "agy 1.5.12: a short answer about a 429 is a limit too" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\nGemini 3.8 Flash (Low) · ctx 0% · 5h 21% · 7d 39%')" "limit"
+
+# Doctor class guard: agy --version fixture check (#488)
+fake_bin="$work/fake_agy_ver"
+printf '#!/usr/bin/env bash\necho 99.99.99\n' >"$fake_bin"
+chmod +x "$fake_bin"
+doc_warn=$(FLEET_AGY="$fake_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: installed agy version without fixture warns" "$(grep -c '^warn *agy version: 99.99.99: no captured fixture in the repo' <<<"$doc_warn")" "1"
+
+real_bin="$work/real_agy_ver"
+printf '#!/usr/bin/env bash\necho 1.5.12\n' >"$real_bin"
+chmod +x "$real_bin"
+doc_ok=$(FLEET_AGY="$real_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: installed agy version with fixture passes ok" "$(grep -c '^ok *agy version: 1.5.12 (fixture present)' <<<"$doc_ok")" "1"
 check "agy: a short reply that is a quota message is a limit" "$(eng_state agy $'────\n> ask\n  You have exhausted your quota\n────\n>\n────\n? for shortcuts')" "limit"
 check "agy: a short answer about a 429 is a limit too (kept in answer.md and said to be maybe an answer)" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\n? for shortcuts')" "limit"
 longans=$(printf '  The API returns 429 when the rate limit is hit; details follow.\n'; printf '  %s\n' "$(head -c 500 /dev/zero | tr '\0' x)")

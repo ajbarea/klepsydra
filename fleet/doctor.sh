@@ -823,6 +823,21 @@ for e in "${ENGINES[@]}"; do
   else
     report ok "engine $e" "$login; lanes: ${lanes% }, locked"
   fi
+  if [[ $e == agy ]]; then
+    bin=$(eng_bin agy)
+    ver=$("$bin" --version 2>/dev/null | grep -Eo '[0-9]+(\.[0-9]+)+' | head -1)
+    if [[ -n $ver ]]; then
+      fix_found=0
+      for candidate in "$here/fixtures/agy-$ver-idle.txt" "$here/fixtures/agy-idle-$ver.txt" "$here/../hooks/fixtures/agy-$ver-idle.txt" "$here/../hooks/fixtures/pane-idle-agy-$ver.txt"; do
+        if [[ -f $candidate ]]; then fix_found=1; break; fi
+      done
+      if (( fix_found )); then
+        report ok "agy version" "$ver (fixture present)"
+      else
+        report warn "agy version" "$ver: no captured fixture in the repo"
+      fi
+    fi
+  fi
 done
 if [[ -n $json ]]; then
   tmp=$json.tmp.$$
