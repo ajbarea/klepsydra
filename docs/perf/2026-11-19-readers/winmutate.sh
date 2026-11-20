@@ -18,6 +18,7 @@ muts=(
   "handle change time is the write time|changed: time(basic.ChangeTime),|changed: time(basic.LastWriteTime),"
   "listing file id dropped|id: e.FileId as u64,|id: 0,"
   "listing length dropped|len: e.EndOfFile as u64,|len: 0,"
+  "junction read as the folder it names|tag & 0x2000_0000 != 0|tag & 0 != 0"
 )
 orig=$(cat "$memo")
 # Put the file back however the script ends (a timeout included).

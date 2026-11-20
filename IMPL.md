@@ -16,7 +16,7 @@ Push only: `git push -u origin perf/readers:perf/readers`. Never push to main. D
 
 ## Next
 1. winmutate.sh result (running); then `flock -o /tmp/fleet-heavy.lock timeout 3000 python3 docs/perf/2026-11-19-readers/mutate.py` (15 expected killed); Linux clippy.
-2. SF2: build release exes: `KLEPSYDRA_STAGE=klepsydra-build-perf-before` from worktree perf-readers-before
+2. SF2: build release exes: `KLEPSYDRA_STAGE=klepsydra-build-perf_before` (no hyphen after build-) from worktree perf-readers-before
    and `klepsydra-build-perf_readers` from here (`scripts/build-windows.sh`, under the lock); then
    `powershell.exe -File appab.ps1 -Before <exe> -After <exe> -Data C:\Users\ajbar\klepsydra-perf\data-1119`.
    Static copy: no writes during the run, so it measures the idle steady state; say so.

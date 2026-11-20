@@ -44,8 +44,10 @@ thread_local! {
 /// index keeps them. Windows: NTFS `ChangeTime` and the 64-bit file id.
 /// NTFS copies a file's length and times into its directory entry only when
 /// the file's last handle closes, so a file written in place through a handle
-/// still open lists its old stamp until then; every klepsydra writer writes a
-/// temp file and renames it, which lists the new stamp at once.
+/// still open lists its old stamp until then. Every klepsydra writer of
+/// file contents writes a temp file and renames it, which lists the new stamp
+/// at once; the one in-place change, the fleet hook's `touch -c` of a session file,
+/// moves only the time and closes at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stamp {
     pub len: u64,
@@ -262,8 +264,12 @@ mod win {
                 if e.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
                     return Ok(out);
                 }
-                // A file system without the query (FAT, some shares): std's
-                // listing, unstamped, so every pass reads.
+                // A file system that refuses the query (some network shares;
+                // Go's os.ReadDir met the same, golang/go#61907): std's
+                // listing, unstamped, so every pass reads. One that answers
+                // with file id 0 (MS-FSCC: no 64-bit ids, as on FAT) never
+                // matches its handle's id, so nothing is kept: slower, never
+                // stale.
                 if class == FileIdBothDirectoryRestartInfo
                     && e.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32)
                 {
@@ -273,14 +279,29 @@ mod win {
             }
             class = FileIdBothDirectoryInfo;
             let base = buf.as_ptr().cast::<u8>();
+            let head = std::mem::size_of::<FILE_ID_BOTH_DIR_INFO>();
+            let name_at = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+            let bad =
+                || std::io::Error::new(std::io::ErrorKind::InvalidData, "bad directory entry");
             let mut at = 0usize;
             loop {
-                // SAFETY: the call filled `buf` with a chain of entries, each
-                // starting at an 8-byte-aligned offset inside it.
-                let e = unsafe { &*base.add(at).cast::<FILE_ID_BOTH_DIR_INFO>() };
+                // A file system driver could return a broken chain: every
+                // entry and name must lie inside the buffer.
+                if at + head > bytes as usize {
+                    return Err(bad());
+                }
+                // SAFETY: `at + head` is inside `buf`, and `at` is 8-byte
+                // aligned (the call aligns each entry; checked below).
+                let e = unsafe { base.add(at).cast::<FILE_ID_BOTH_DIR_INFO>().read() };
                 let units = e.FileNameLength as usize / 2;
-                // SAFETY: FileName runs FileNameLength bytes from its field.
-                let name = unsafe { std::slice::from_raw_parts(e.FileName.as_ptr(), units) };
+                if at + name_at + units * 2 > bytes as usize {
+                    return Err(bad());
+                }
+                // SAFETY: the name's bytes lie inside `buf` (checked above)
+                // and are u16-aligned, as `at` and `name_at` are even.
+                let name = unsafe {
+                    std::slice::from_raw_parts(base.add(at + name_at).cast::<u16>(), units)
+                };
                 if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
                     // EaSize holds the reparse tag for a reparse point.
                     let kind = if is_link(e.FileAttributes, e.EaSize) {
@@ -303,10 +324,14 @@ mod win {
                         stamp,
                     });
                 }
-                if e.NextEntryOffset == 0 {
+                let next = e.NextEntryOffset as usize;
+                if next == 0 {
                     break;
                 }
-                at += e.NextEntryOffset as usize;
+                if !next.is_multiple_of(8) {
+                    return Err(bad());
+                }
+                at += next;
             }
         }
     }
@@ -609,6 +634,32 @@ mod tests {
         assert_eq!(held, f.stamp);
         #[cfg(unix)]
         assert_eq!(Stamp::of_file(&std::fs::File::open(&dir.0).unwrap()), None);
+    }
+
+    /// A junction is a link to Windows' listing, as a symlink is on Unix:
+    /// `mklink /J` needs no administrator.
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_listed_as_other_with_no_stamp() {
+        let dir = crate::scan::tests::Scratch::new("memo-junction");
+        std::fs::create_dir(dir.0.join("d")).unwrap();
+        let ok = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(dir.0.join("j"))
+            .arg(dir.0.join("d"))
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "mklink /J failed");
+        let j = list(&dir.0)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.name == "j")
+            .unwrap();
+        assert_eq!((j.kind, j.stamp, j.modified), (Kind::Other, None, None));
     }
 
     #[test]

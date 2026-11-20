@@ -60,9 +60,10 @@ M = [
         "            changed,\n            id: meta.ino(),",
         "            changed: SystemTime::UNIX_EPOCH,\n            id: meta.ino(),",
     ),
-    # Equivalent on Linux: every replace (rename, recreate, `ln -f`) moves
-    # the inode's ctime, which the stamp already holds, so no test can tell
-    # it apart. winmutate.sh's "listing file id dropped" is killed on NTFS.
+    # Equivalent where a replace moves the ctime the stamp already holds:
+    # measured for rename, recreate and `ln -f` on ext4, tmpfs and drvfs
+    # (POSIX leaves rename's ctime unspecified, so the id stays). winmutate.sh's
+    # "listing file id dropped" is killed on NTFS.
     (
         "file id not stamped",
         "src/memo.rs",
