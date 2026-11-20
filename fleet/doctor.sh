@@ -537,10 +537,9 @@ fi
 # Cleanup (#511): the fleet-cleanup timer prunes the shots and writes what is still left;
 # doctor reads that report rather than walking the briefing over 9P every 5 minutes.
 cleanup_report=${FLEET_CLEANUP_REPORT:-$FLEET_STATE/cleanup-report.json}
-heph_max_kb=${FLEET_HEPH_MAX_KB:-150}
 if [[ ! -f $cleanup_report ]]; then
   report warn "cleanup" "no cleanup report yet: fleet install adds the fleet-cleanup timer (or run fleet tidy --report $(tilde "$cleanup_report"))"
-elif ! cl=$(jq -r --argjson now "$now" --argjson hk "$heph_max_kb" '
+elif ! cl=$(jq -r --argjson now "$now" '
     def n(k): (.[k] // 0);
     [ (if ($now - (.ts // 0)) > 50400 then "the cleanup timer last ran \((($now - (.ts // 0)) / 3600) | floor) h ago: systemctl --user start fleet-cleanup.service, or fleet install" else empty end),
       (if n("shots_rc") != 0 then "fleet shots --apply failed (\(.shots_said // "see log/shots.log" | gsub("\\s+"; " ") | .[0:120])): run it and read log/shots.log" else empty end),
@@ -551,7 +550,8 @@ elif ! cl=$(jq -r --argjson now "$now" --argjson hk "$heph_max_kb" '
       (if ((.stale // []) | length) > 0 then "\(.stale | length) briefing owners past their date or missing a field (\(.stale[0] | gsub("\\s+"; " ") | .[0:80])): harvest an expired one into its repo, then fleet tidy expired lists them and --apply removes them; fix the frontmatter of the rest" else empty end),
       (if ((.unowned // []) | length) > 0 then "\(.unowned | length) briefing paths with no owner + expires (\(.unowned[0:3] | join(", "))): add the frontmatter, or harvest and delete them" else empty end),
       (if n("queue_old") > 0 then "\(n("queue_old")) Done lines in queue.md predate this week: harvest lessons from fleet tidy queue (it lists them), then --apply" else empty end),
-      (if n("heph_bytes") > $hk * 1024 then "HEPH.md is \(n("heph_bytes") / 1024 | floor) KB, past \($hk) KB: the orchestrator runs fleet tidy heph (dry run first)" else empty end),
+      (if n("heph_drop") > 0 then "HEPH.md has \(n("heph_drop")) lines a tidy would drop: the orchestrator runs fleet tidy heph (it lists them), then --apply" else empty end),
+      (if .heph_refused then "HEPH.md cannot be tidied: \(.heph_refused | .[0:120])" else empty end),
       (if (n("briefs_stale") + n("archive_stale")) > 0 then "\(n("briefs_stale")) stale briefs and \(n("archive_stale")) old archive entries: fleet tidy briefs archive lists them all, then --apply" else empty end)
     ] | join("; ")' "$cleanup_report" 2>/dev/null); then
   report warn "cleanup" "could not read $(tilde "$cleanup_report"): fleet tidy --report rewrites it"

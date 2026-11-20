@@ -14,7 +14,7 @@ Finished work is recorded once, in merged PRs, closed issues and git history, so
   heph     HEPH.md keeps its head, its START HERE block, undated sections, standing rules and
            its last HEPH_KEEP lines (FLEET_HEPH_KEEP, 600 by default): position alone decides,
            so a line goes only once that many newer lines sit below it, whatever any clock
-           says. A newer START HERE further down refuses the tidy. What goes is copied
+           says. A later START HERE within START_MARGIN lines above the cut refuses the tidy. What goes is copied
            to archive/ for KEEP_DAYS first (HEPH.md is in no repo). Refused while another
            process has it open or wrote it in the last WRITE_QUIET_S seconds. Its time is kept,
            since `fleet recover` reads AJ's messages since HEPH.md was last written. Writers
@@ -29,7 +29,7 @@ Finished work is recorded once, in merged PRs, closed issues and git history, so
   queue    the briefing's Done lines dated before this week's Monday (the Monday sweep);
            a line with no date stays. Harvest lessons from the dry run's list first.
   done     the briefing's retired done/ week files (git rm, one commit).
-  expired  briefing files past the `expires` (or `reviewed`) date their frontmatter carries,
+  expired  briefing files past the `expires` date their frontmatter carries,
            or a README.md above them carries (git rm, one commit). Harvest them first.
 Briefing deletions are committed under the lock the briefing sync holds; git keeps them.
 """
@@ -170,10 +170,7 @@ def ago(seconds: float) -> str:
 H2 = re.compile(r"^## ")
 FULL_DATE = re.compile(r"\b(20\d\d)-(\d\d)-(\d\d)\b")
 SHORT_DATE = re.compile(r"(?<![\d-])(\d\d)-(\d\d)(?![\d-])")
-LINE_DATE = re.compile(r"^- (?:\*\*)?(?:(20\d\d)-)?(\d\d)-(\d\d)\b")
 LINE_TIME = re.compile(r"^- (?:\*\*)?(?:(?:20\d\d-)?\d\d-\d\d )?(\d{1,2}):(\d)(\d|x)\b")
-HEAD_TIME = re.compile(r"\b(\d{1,2}):(\d)(\d|x)\b")
-KEEP = dt.datetime.max  # the stamp of a line under an undated section: always kept
 WINDOW_DAYS = 330  # a MM-DD further back than this is a future event named, not a date
 
 
@@ -189,76 +186,24 @@ def month_day(month: int, day: int, now: dt.datetime) -> dt.date | None:
     return d if (now.date() - d).days <= WINDOW_DAYS else None
 
 
-def minutes_of(m: re.Match[str]) -> int:
-    return int(m[1]) * 60 + int(m[2]) * 10 + (0 if m[3] == "x" else int(m[3]))
-
-
-def stamp_lines(
-    lines: list[str], now: dt.datetime
-) -> tuple[list[dt.datetime | None], list[tuple[int, dt.date]]]:
-    """A time for each line, and the explicit dates in file order as (line, date). The date
-    comes from the nearest heading or dated line above, the time of day from the line's own
-    `- HH:MM` (or the line above). A line under a `## ` heading that carries no date is
-    stamped KEEP; None only before the first heading. These stamps date START HERE blocks and
-    mark undated sections; whether a log line goes is its position, never a date."""
-    out: list[dt.datetime | None] = []
-    marks: list[tuple[int, dt.date]] = []
-    day: dt.date | None = None
-    minutes: int | None = None
-    undated = False
-    for n, line in enumerate(lines):
-        if line.startswith("#"):
-            new_day = None
-            m = FULL_DATE.search(line)
-            if m:
-                try:
-                    new_day = dt.date(int(m[1]), int(m[2]), int(m[3]))
-                except ValueError:
-                    new_day = None
-            else:
-                m = SHORT_DATE.search(line)
-                new_day = month_day(int(m[1]), int(m[2]), now) if m else None
-            if line.startswith("## "):
-                # Undated: the heading holds no date-shaped text (a regex, never a clock).
-                # Only a ## heading opens or ends such a section, never a ### inside it.
-                undated = not (FULL_DATE.search(line) or SHORT_DATE.search(line))
-            if new_day is not None:
-                day = new_day
-                t = HEAD_TIME.search(line)
-                minutes = minutes_of(t) if t else None
-                marks.append((n, new_day))
-        else:
-            m = LINE_DATE.match(line)
-            got = None
-            if m and 1 <= int(m[2]) <= 12:
-                try:
-                    got = (
-                        dt.date(int(m[1]), int(m[2]), int(m[3]))
-                        if m[1]
-                        else month_day(int(m[2]), int(m[3]), now)
-                    )
-                except ValueError:
-                    got = None
-            if got is not None and not undated:
-                day, minutes = got, None
-                marks.append((n, got))
-            t = LINE_TIME.match(line)
-            if t and day and int(t[1]) < 24 and not undated:
-                minutes = minutes_of(t)
-        if undated:
-            out.append(KEEP)
-        elif day is None:
-            out.append(None)
-        else:
-            out.append(
-                dt.datetime.combine(day, dt.time()) + dt.timedelta(minutes=minutes or 0)
-            )
-    return out, marks
+def split_lines(text: str) -> list[str]:
+    """TEXT's lines with their endings, split at \n alone: a form feed, U+2028 or a lone \r is
+    part of a line, never a break, and \r\n stays as it was."""
+    parts = text.split("\n")
+    out = [p + "\n" for p in parts[:-1]]
+    if parts[-1]:
+        out.append(parts[-1])
+    return out
 
 
 STANDING = re.compile(
     r"\b(?:standing|permanent|binding)\b", re.I
 )  # a rule AJ set to last
+
+
+def undated(heading: str) -> bool:
+    """Whether a ## heading names no date-shaped text (a regex, never a clock)."""
+    return not (FULL_DATE.search(heading) or SHORT_DATE.search(heading))
 
 
 def keep_lines(raw: str | None) -> int:
@@ -271,42 +216,18 @@ def keep_lines(raw: str | None) -> int:
 
 
 HEPH_KEEP = keep_lines(os.environ.get("FLEET_HEPH_KEEP"))
+START_MARGIN = 100  # a later START HERE this close above the cut refuses the tidy
 
 
-def heading_time(line: str, now: dt.datetime) -> tuple[dt.datetime, dt.datetime] | None:
-    """The earliest and latest moment a heading itself names, or None when it names no real
-    date. A date with no time spans its whole day, `05:2x` spans 05:20 to 05:29, and a time
-    that is no clock time (`52:0x`) counts as none: nothing the heading did not give is
-    guessed."""
-    m = FULL_DATE.search(line)
-    if m:
-        try:
-            day = dt.date(int(m[1]), int(m[2]), int(m[3]))
-        except ValueError:
-            day = None  # date-shaped, but no real date
-    else:
-        s = SHORT_DATE.search(line)
-        day = month_day(int(s[1]), int(s[2]), now) if s else None
-    if day is None:
-        return None
-    start = dt.datetime.combine(day, dt.time())
-    t = HEAD_TIME.search(line)
-    if not t or int(t[1]) > 23 or int(t[2]) > 5:
-        return start, start + dt.timedelta(days=1, minutes=-1)
-    low = start + dt.timedelta(minutes=minutes_of(t))
-    return low, low + dt.timedelta(minutes=9 if t[3] == "x" else 0)
-
-
-def plan_heph(
-    text: str, now: dt.datetime, keep_last: int = 0
-) -> tuple[list[str], dict]:
+def plan_heph(text: str, keep_last: int = 0) -> tuple[list[str], dict]:
     """The lines HEPH.md keeps, and a summary of what goes. Position alone decides, never a
-    clock: the last KEEP_LAST lines (HEPH_KEEP) stay, so a line goes only once that many newer
-    lines sit below it; above that cut the head, START HERE, undated sections and standing
-    rules stay too. Raises ValueError when there is no START HERE block, or a newer one
-    further down. NOW only reads the MM-DD dates of START HERE headings."""
+    clock or a date: the last KEEP_LAST lines (HEPH_KEEP) stay, so a line goes only once that
+    many newer lines sit below it; above that cut the head, the first START HERE block,
+    undated sections and standing rules stay too. Raises ValueError when there is no START
+    HERE block, or another one sits within START_MARGIN lines above the cut, where it may be
+    a recent handoff written lower down."""
     keep_last = keep_last or HEPH_KEEP
-    lines = text.splitlines(keepends=True)
+    lines = split_lines(text)
     heads = [i for i, ln in enumerate(lines) if H2.match(ln)]
     if not heads:
         raise ValueError("HEPH.md has no ## sections")
@@ -315,18 +236,19 @@ def plan_heph(
         raise ValueError("HEPH.md has no ## START HERE block")
     s0 = starts[0]
     s1 = next((i for i in heads if i > s0), len(lines))
-    stamps, _ = stamp_lines(lines, now)
-    a = heading_time(lines[s0], now)
-    for s in starts[1:]:
-        # Its own heading's date, never one borrowed above; older only if its latest
-        # possible moment is before the first block's earliest (a tie cannot be told).
-        b = heading_time(lines[s], now)
-        if a is None or b is None or b[1] >= a[0]:
-            raise ValueError(
-                f"line {s + 1} is a START HERE block newer than the first, or undated: "
-                "merge it into the top one first"
-            )
     cut = max(0, len(lines) - keep_last)  # every line from here down stays
+    for s in starts[1:]:
+        if cut - START_MARGIN <= s < cut:
+            raise ValueError(
+                f"line {s + 1} is a START HERE block just above the kept lines: merge it into "
+                "the top one, or keep more lines (FLEET_HEPH_KEEP)"
+            )
+    kept_whole: set[int] = set()  # lines of undated sections
+    for n, h in enumerate(heads):
+        if undated(lines[h]):
+            kept_whole.update(
+                range(h, heads[n + 1] if n + 1 < len(heads) else len(lines))
+            )
     keep = set(range(heads[0])) | set(range(s0, s1)) | set(range(cut, len(lines)))
     standing = 0
     losses: list[tuple[str, int]] = []
@@ -336,14 +258,12 @@ def plan_heph(
         end = heads[n + 1] if n + 1 < len(heads) else len(lines)
         body = range(h + 1, end)
         # A blank line keeps nothing alive; it stays with the section around it.
-        recent = [
-            i for i in body if lines[i].strip() and (stamps[i] == KEEP or i >= cut)
-        ]
+        recent = [i for i in body if lines[i].strip() and (i in kept_whole or i >= cut)]
         new = set(recent)
         marked = [i for i in body if i not in new and STANDING.search(lines[i])]
         standing += len(marked)
         recent += marked  # a standing rule stays until someone moves it to its home
-        if stamps[h] == KEEP or recent:  # a heading below the cut is kept with it
+        if h in kept_whole or recent:  # a heading below the cut is kept with it
             keep.add(h)
             keep.update(recent)
             keep.update(i for i in body if not lines[i].strip())
@@ -396,10 +316,11 @@ def tidy_heph(apply: bool) -> int:
     if not stat.S_ISREG(st.st_mode):
         print("heph: refused: HEPH.md is not a regular file")
         return 1
-    text = path.read_text(encoding="utf-8", errors="surrogateescape")
+    with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+        text = f.read()  # newline="": every line ending kept byte for byte
     now = dt.datetime.fromtimestamp(NOW)
     try:
-        kept, s = plan_heph(text, now)
+        kept, s = plan_heph(text)
     except ValueError as exc:
         print(f"heph: refused: {exc}; nothing dropped")
         return 1
@@ -466,6 +387,7 @@ def tidy_heph(apply: bool) -> int:
         now_st = path.lstat()
         if (now_st.st_mtime_ns, now_st.st_size) != (st.st_mtime_ns, st.st_size):
             os.unlink(tmp)
+            copy.unlink(missing_ok=True)  # nothing was dropped after all
             print("heph: refused: HEPH.md changed during the tidy; nothing written")
             return 1
         os.replace(tmp, path)
@@ -834,6 +756,9 @@ def tidy_found(part: str, found: list[Path], apply: bool) -> int:
 # --- the briefing --------------------------------------------------------------------------
 
 DAY = re.compile(r"(?<![\d-])(\d{1,2})-(\d{2})(?![\d-])")
+HOUSE_DAY = re.compile(
+    r"\*\*[A-Z][a-z]{2} (\d{1,2})-(\d{2})\b"
+)  # the queue's own "**Fri 11-20"
 
 
 def week_start(now: dt.datetime) -> dt.date:
@@ -845,10 +770,16 @@ def plan_queue(
 ) -> tuple[str, list[str], int]:
     """(new text, every dropped line, undated items kept) for queue.md: each Done section's
     list items dated before this week's Monday go, with their continuation lines."""
-    lines = text.splitlines(keepends=True)
+    lines = split_lines(text)
+    if len(lines) != len(text.splitlines()):
+        # techne numbers lines with str.splitlines; a break it splits on and \n does not
+        # (U+2028, a form feed, a lone \r) would point its spans at the wrong lines.
+        raise ValueError(
+            "queue.md holds a line break other than \\n; edit that line by hand"
+        )
     monday = week_start(now)
     drop: set[int] = set()
-    undated = 0
+    undated_items = 0
     heads = []
     for a, b, title in done_sections(text):
         heads.append(a - 1)
@@ -861,14 +792,14 @@ def plan_queue(
             j = i + 1
             while j < b and lines[j].strip() and not lines[j].startswith(("- ", "#")):
                 j += 1
-            m = DAY.search(ln)
+            m = HOUSE_DAY.search(ln) or DAY.search(ln)  # **Fri 11-20 first
             day = (
                 month_day(int(m[1]), int(m[2]), now)
                 if m and 1 <= int(m[1]) <= 12
                 else None
             )
             if day is None:
-                undated += 1
+                undated_items += 1
             elif day < monday:
                 drop.update(range(i, j))
             i = j
@@ -879,7 +810,13 @@ def plan_queue(
                 r"(Done since )\d{1,2}-\d{2}", rf"\g<1>{monday:%m-%d}", lines[h]
             )
     new = "".join(ln for i, ln in enumerate(lines) if i not in drop)
-    return new, dropped, undated
+    return new, dropped, undated_items
+
+
+def read_exact(path: Path) -> str:
+    """PATH's text with every line ending as written (no \r\n turned into \n)."""
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
 
 
 def done_items(dropped: list[str]) -> int:
@@ -892,12 +829,16 @@ def tidy_queue(apply: bool, mod) -> int:
         print("queue: skipped: techne's cleanup.py not found (set TECHNE_CLEANUP)")
         return 1
     try:
-        text = path.read_text(encoding="utf-8")
+        text = read_exact(path)
     except OSError as exc:
         print(f"queue: no queue.md ({exc.strerror or exc})")
         return 1
     now = dt.datetime.fromtimestamp(NOW)
-    new, dropped, undated = plan_queue(text, now, mod.done_sections)
+    try:
+        new, dropped, undated = plan_queue(text, now, mod.done_sections)
+    except ValueError as exc:
+        print(f"queue: refused: {exc}; nothing dropped")
+        return 1
     print(
         f"queue: {'drops' if apply else 'would drop'} {done_items(dropped)} Done items "
         f"({len(dropped)} lines) dated before "
@@ -912,7 +853,7 @@ def tidy_queue(apply: bool, mod) -> int:
         return 0
     try:
         with BriefingLock():
-            if path.read_text(encoding="utf-8") != text:
+            if read_exact(path) != text:
                 print(
                     "queue: refused: queue.md changed during the tidy; nothing written"
                 )
@@ -921,6 +862,8 @@ def tidy_queue(apply: bool, mod) -> int:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
                     f.write(new)
+                    f.flush()
+                    os.fsync(f.fileno())
                 os.replace(tmp, path)
             except BaseException:
                 if os.path.exists(tmp):
@@ -1106,13 +1049,13 @@ def report(out: Path) -> int:
             )
             data["stale"] = sorted(f"{g}: {why}" for g, why in status.stale.items())
             try:
-                text = (BRIEFING / "queue.md").read_text(encoding="utf-8")
+                text = read_exact(BRIEFING / "queue.md")
                 data["queue_old"] = done_items(
                     plan_queue(text, dt.datetime.fromtimestamp(NOW), mod.done_sections)[
                         1
                     ]
                 )
-            except OSError:
+            except (OSError, ValueError):
                 data["queue_old"] = 0
         data["done_files"] = len(done_files()) if data["briefing"] else 0
         try:
@@ -1120,6 +1063,13 @@ def report(out: Path) -> int:
         except OSError:
             data["heph_bytes"] = 0
         if is_state_folder(STATE):
+            heph = STATE / "HEPH.md"
+            if heph.is_file() and not heph.is_symlink():
+                try:
+                    _, s = plan_heph(read_exact(heph))
+                    data["heph_drop"] = s["lines"] - s["kept"]
+                except ValueError as exc:  # doctor names why a tidy would refuse
+                    data["heph_refused"] = str(exc)[:200]
             data["briefs_stale"] = len(stale_briefs())
             data["archive_stale"] = len(stale_archive())
     except Exception as exc:  # the report is written whatever failed, naming it
