@@ -1,5 +1,6 @@
 # IMPL: klepsydra#423, the heavy lock as a pool sized from the machine it runs on
 
+HOLD (Heph 11-20): do not start until the Personal weekly reset, Mon 11-23 1 PM.
 Branch perf/heavylock (worktree .claude/worktrees/perf-heavylock, from origin/main). No PR yet.
 Push only: `git push -u origin perf/heavylock:perf/heavylock`. Never push to main. Athena reviews and merges.
 Spec: the issue body plus AJ's 11-20 comment (size from the enclosing cgroup's memory.max/cpu.max, the
