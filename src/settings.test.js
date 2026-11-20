@@ -178,7 +178,9 @@ test("every command main.rs registers is a #[tauri::command] fn that exists", ()
     const name = parts.pop();
     const file = parts.length ? `src-tauri/src/${parts.join("/")}.rs` : "src-tauri/src/main.rs";
     const src = read(file);
-    assert.match(src, new RegExp(`#\\[tauri::command\\]\\s*(?:#\\[[^\\]]*\\]\\s*)*(?:pub(?:\\([^)]*\\))? )?(?:async )?fn ${name}\\b`), `${h}: no #[tauri::command] fn ${name} in ${file}`);
+    // A command fn under #[cfg(...)] would exist on one system only.
+    assert.doesNotMatch(src, new RegExp(`#\\[cfg[^\\]]*\\]\\s*#\\[tauri::command\\][^{]*?fn ${name}\\b`), `${h}: fn ${name} is cfg-gated`);
+    assert.match(src, new RegExp(`#\\[tauri::command\\]\\s*(?:#\\[(?!cfg)[^\\]]*\\]\\s*)*(?:pub(?:\\([^)]*\\))? )?(?:async )?fn ${name}\\b`), `${h}: no #[tauri::command] fn ${name} in ${file}`);
   }
 });
 

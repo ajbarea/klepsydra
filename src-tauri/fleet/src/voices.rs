@@ -210,9 +210,12 @@ impl Reader {
             .name("voices-read".into())
             .spawn(move || {
                 // Frees the reader even if `read` panics, so opens read again.
-                let _free = Free(busy);
+                let free = Free(busy);
+                let shown = read();
+                // Free before answering, so an open right after never finds it busy.
+                drop(free);
                 // A page that stopped waiting has dropped the receiver.
-                let _ = tx.send(read());
+                let _ = tx.send(shown);
             });
         if spawned.is_err() {
             self.busy.store(false, Ordering::Release);
@@ -354,7 +357,7 @@ mod tests {
     fn a_mode_saved_by_the_cli_shows_on_the_next_open() {
         let d = setup("cli-mode");
         let r = Reader::default();
-        // The tray saved Everyone; `fleet voices heph` then ran in a terminal.
+        // Settings saved Everyone; `fleet voices heph` then ran in a terminal.
         d.write("config.json", r#"{"enabled": true, "speak_only": []}"#);
         assert_eq!(open(&r, &d, "everyone").tick, Some("everyone"));
         d.write(
@@ -369,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn keryx_off_done_outside_the_tray_shows_off_and_no_stale_tick_survives() {
+    fn keryx_off_done_outside_settings_shows_off_and_no_stale_tick_survives() {
         let d = setup("keryx-off");
         let r = Reader::default();
         d.write(

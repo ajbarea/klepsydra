@@ -16,7 +16,7 @@ fn wav(cue: Cue) -> &'static [u8] {
     }
 }
 
-/// Whether Ping is on, as the tray last set it.
+/// Whether Ping is on, as Settings last set it.
 static ON: AtomicBool = AtomicBool::new(false);
 
 fn on() -> bool {

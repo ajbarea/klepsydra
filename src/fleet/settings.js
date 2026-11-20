@@ -127,6 +127,7 @@ export function mountSettings({ container, invoke, bindings = {}, onBack }) {
   function show(id, view) {
     const e = rows.get(id);
     if (!e || !view) return;
+    e.shown = { ...e.shown, ...view }; // what the row shows now, to go back to after a refusal
     if (view.label) {
       e.label.textContent = view.label;
       labels.set(id, view.label);
@@ -153,7 +154,7 @@ export function mountSettings({ container, invoke, bindings = {}, onBack }) {
           (view) => show(r.id, view),
           (err) => {
             // The app refuses what this system lacks (Ping, Split off Windows): no row for it.
-            log.info(`settings: ${r.id} hidden: ${why(err)}`);
+            log.debug(`settings: ${r.id} hidden: ${why(err)}`);
             show(r.id, { available: false });
           },
         ),
@@ -268,13 +269,15 @@ export function mountSettings({ container, invoke, bindings = {}, onBack }) {
     const once = async (value) => {
       try {
         const { view, raw } = await applied(row, invoke, value, bindings);
-        show(row.id, view);
+        // A newer choice waits: show its answer, not this older one in between.
+        if (!next) show(row.id, view);
         if (row.shares) for (const r of ROWS) if (r !== row && r.shares === row.shares) show(r.id, viewOf(r, raw));
         return view;
       } catch (err) {
         log.warn(`settings: ${row.id} was not changed`, err);
-        // A bound control may have changed the wall before its save failed: show it as it is.
-        if (row.bind) show(row.id, bindings[row.bind].view());
+        // Back to what the app last said (a radio checked as chosen goes back too); a bound
+        // control may have changed the wall before its save failed, so show it as it is.
+        show(row.id, row.bind ? bindings[row.bind].view() : (e.shown ?? {}));
         e.note.textContent = `${row.bind ? "Not saved" : "Not changed"}: ${why(err)}`;
         return null;
       }

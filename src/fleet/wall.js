@@ -1173,7 +1173,10 @@ function take(message) {
     if (!frameId) drawSpeaking();
     if (pending) focusCard(pending, true);
   }
-  if (typeof message?.focus === "string") focusCard(message.focus);
+  if (typeof message?.focus === "string") {
+    leaveSettings(); // a card asked for (a click on the gauge) shows on the wall, not behind the page
+    focusCard(message.focus);
+  }
 }
 
 wall.addEventListener("click", (e) => {
@@ -1956,11 +1959,15 @@ settingsController = mountSettings({
     },
     newSession: { view: nsView, write: (id) => setDefault(id || null) },
   },
-  onBack: () => {
-    history.replaceState(null, "", location.pathname + location.search);
-    showView();
-  },
+  onBack: leaveSettings,
 });
+
+/** Back to the cards now: clears #settings without waiting for a hashchange. */
+function leaveSettings() {
+  if (location.hash !== "#settings") return;
+  history.replaceState(null, "", location.pathname + location.search);
+  showView();
+}
 
 /** Show the page the hash names: the settings page for #settings, else the wall. */
 function showView() {
@@ -1975,7 +1982,11 @@ function showView() {
   document.documentElement.classList.toggle("settings-open", settings);
   if (settings) {
     settingsController.refresh();
-    settingsEl.querySelector("#settings-search-input").focus();
+    // A wall loaded at #settings: the browser's own move to the fragment, after this
+    // script, takes the focus to the page's start, so the search takes it after load.
+    const search = () => settingsEl.querySelector("#settings-search-input").focus();
+    if (document.readyState === "complete") search();
+    else addEventListener("load", () => setTimeout(search), { once: true });
   } else {
     gear.querySelector("summary").focus();
     edge.release();

@@ -136,12 +136,24 @@ pub fn voices_args() -> Vec<String> {
         .to_vec()
 }
 
+/// One `fleet voices` at a time: it reads the mode saved when it runs, so
+/// changes made while one runs (a held arrow key on Settings' Voices row)
+/// fold into one more run.
+static VOICES_RUN: klepsydra_fleet::coalesce::Coalesce = klepsydra_fleet::coalesce::Coalesce::new();
+
 /// Make keryx follow the saved Voices mode now, off the caller's thread, logged
 /// like every call. The resume service applies a changed mode as well.
 pub fn apply_voices() {
+    if !VOICES_RUN.ask() {
+        return;
+    }
     let args = voices_args();
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || loop {
+        VOICES_RUN.starting();
         let _ = logged("voices", None, || run(&args, VOICES_TIMEOUT, timed_out));
+        if !VOICES_RUN.finished() {
+            break;
+        }
     });
 }
 

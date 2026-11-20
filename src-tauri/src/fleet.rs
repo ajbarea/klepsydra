@@ -484,15 +484,19 @@ pub async fn open_settings(app: AppHandle) -> Result<(), String> {
 }
 
 fn show_wall(app: &AppHandle, focus: &str, settings: bool) -> Result<(), String> {
-    app.state::<Fleet>().focus(WALL, focus);
-    if let Some(wall) = app.get_webview_window(WALL) {
-        // The hash is the wall's one switch between its page and the cards.
+    let open = app.get_webview_window(WALL);
+    if let Some(wall) = &open {
+        // The hash is the wall's one switch between its page and the cards; a
+        // card asked for leaves the page too (wall.js), whatever runs first.
         let to = if settings {
             "location.hash = '#settings'"
         } else {
             "if (location.hash === '#settings') location.hash = ''"
         };
         wall.eval(to).map_err(|e| e.to_string())?;
+    }
+    app.state::<Fleet>().focus(WALL, focus);
+    if let Some(wall) = open {
         wall.show().map_err(|e| e.to_string())?;
         let _ = wall.unminimize();
         let _ = wall.set_focus();
