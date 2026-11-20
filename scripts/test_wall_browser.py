@@ -5995,6 +5995,8 @@ def settings_by_hash(wall):
     page.wait_for_timeout(100)
     got = page.evaluate("() => [document.querySelector('dialog[open]')?.id ?? null, window.__calls.filter(([c]) => c === 'set_ping').length]")
     wall.check(modal == "queue" and got == [None, 1], "a modal Queue shuts under the page, Ctrl+Alt+B opens none, and the page takes clicks", [modal, got])
+    kept = page.evaluate("localStorage.getItem('klepsydra.queue.view')")
+    wall.check(kept == "docked", "the Queue shut under the page is still saved open, for a restart meanwhile", kept)
     page.click("#settings-back")
     page.wait_for_timeout(SETTLE_MS)
     back = page.evaluate("document.getElementById('queue').open")
