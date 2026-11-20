@@ -137,7 +137,11 @@ for name, f, old, new, *expect in M:
         ]
         verdict = "KILLED" if r.returncode != 0 else "SURVIVED"
         if expect:
-            verdict = "EQUIVALENT, survived as expected" if r.returncode == 0 else "KILLED (expected equivalent)"
+            verdict = (
+                "EQUIVALENT, survived as expected"
+                if r.returncode == 0
+                else "KILLED (expected equivalent)"
+            )
         print(f"{verdict}: {name} :: {', '.join(sorted(set(fails)))[:300]}", flush=True)
     finally:
         open(p, "w").write(orig)
