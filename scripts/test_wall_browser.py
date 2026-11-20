@@ -5743,7 +5743,9 @@ def settings_view(wall):
             wall.check(TRANSPARENT not in (st["knobOff"], st["fillOff"]), f"{tag}: an off toggle's knob and track are drawn", [st["knobOff"], st["fillOff"]])
             # Measured with the pointer still over it: wall.css's button:hover must not hide the new state.
             page.click("#row-compact .tog")
-            page.wait_for_timeout(300)
+            # Its transitions finish first: a loaded machine runs them slower than the clock.
+            page.wait_for_function("document.querySelector('#row-compact .tog').getAttribute('aria-checked') === 'true'")
+            page.evaluate("() => { getComputedStyle(document.querySelector('#row-compact .tog i')).transform; return Promise.all(document.getAnimations().map((a) => a.finished)); }")
             on = page.evaluate("""() => { const t = document.querySelector('#row-compact .tog');
               return { checked: t.getAttribute('aria-checked'), knob: getComputedStyle(t.querySelector('i')).backgroundColor, fill: getComputedStyle(t).backgroundColor }; }""")
             wall.check(
