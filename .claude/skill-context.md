@@ -170,7 +170,7 @@ files belong to: the JS guards scan hooks and scripts too.
 - `Hooks, lints and the other suites` runs on `ubuntu-latest` with Node 24: unit
   tests, both hooks' tests, the release memory check's tests, shellcheck,
   Biome and ruff (the logging lints, as annotations), and the
-  install-directory guard. `Fleet engine tests` runs `make test-fleet` beside it
+  install-directory guard. `Fleet engine tests` runs the fleet engine suite beside it
   (the longest suite). `Gauge logic + statusLine hook` needs both and passes
   only when both passed; it is the name branch protection requires.
 - `Rust (fmt + clippy, <os>)` is a matrix over `windows-latest` and
