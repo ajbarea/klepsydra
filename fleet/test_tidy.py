@@ -96,22 +96,9 @@ Heph runs the fleet (undated, from 10-27).
 """
 
 
-# The fixture's lines a tidy first saw 30 days ago; every other line it saw a minute ago.
-HEPH_OLD = {
-    "## 10-28 00:40",
-    "- 00:41 old work",
-    "- 09:00 more old work",
-    "## 2026-11-14 06:00 RECOVERY",
-    "- 06:10 six days ago, with a later date below it: dropped",
-    "- 22:00 still the 14th: dropped",
-}
-
-
-def seen_times(text: str, old) -> list[float]:
-    return [
-        NOW - 30 * DAY if ln.rstrip("\r\n") in old else NOW - 60
-        for ln in text.splitlines(True)
-    ]
+# The fixture's cut: its last lines from "## 2026-11-15 day" down stay; above that, only the
+# head, START HERE and the undated Role section do.
+HEPH_KEEP = len(HEPH.splitlines()) - HEPH.splitlines().index("## 2026-11-15 day")
 
 
 class Tidy(unittest.TestCase):
@@ -145,6 +132,7 @@ class Tidy(unittest.TestCase):
             if not k.startswith(("GIT_", "FLEET_", "BRIEFING_", "TECHNE_"))
         }
         e |= SAFE_ENV | {
+            "FLEET_HEPH_KEEP": str(HEPH_KEEP),
             "FLEET_STATE": str(self.state),
             "BRIEFING_DIR": str(self.brief),
             "FLEET_NOW": str(now),
@@ -168,18 +156,11 @@ class Tidy(unittest.TestCase):
 
     # --- HEPH.md ------------------------------------------------------------------------
 
-    def heph(self, text: str = HEPH, written: float = 3600, old=HEPH_OLD) -> Path:
+    def heph(self, text: str = HEPH, written: float = 3600) -> Path:
         p = self.state / "HEPH.md"
         p.write_text(text)
         age(p, written)
-        self.seed(text, old)
         return p
-
-    def seed(self, text: str, old) -> None:
-        """The first-seen record a tidy would have kept: OLD lines 30 days ago, the rest now."""
-        mod = load_tidy(self.state, self.brief)
-        keys = mod.line_keys(text.splitlines(True))
-        mod.save_seen(keys, seen_times(text, old))
 
     def test_heph_keeps_the_head_start_here_and_the_last_48_hours(self):
         p = self.heph()
@@ -294,6 +275,7 @@ class Tidy(unittest.TestCase):
             "task-unpaused.src": old,  # unpaused.tsv names it
             "fresh-unpaused-20261101-0900.src": old,  # and its fresh brief
             "task-oddtime.src": old,  # finished, with a time that cannot be read
+            "fresh-oddtime-20261101-0900.src": old,  # and its fresh brief: kept as recent
             "notes.md": old,  # not a brief
         }
         for n, a in names.items():
@@ -495,11 +477,13 @@ def load_tidy(state: Path, brief: Path, now: float = NOW):
     """tidy.py imported in this process, reading STATE, BRIEFING and NOW from the environment."""
     import importlib.util
 
-    old = {k: os.environ.get(k) for k in ("FLEET_STATE", "BRIEFING_DIR", "FLEET_NOW")}
+    keys = ("FLEET_STATE", "BRIEFING_DIR", "FLEET_NOW", "FLEET_HEPH_KEEP")
+    old = {k: os.environ.get(k) for k in keys}
     os.environ |= {
         "FLEET_STATE": str(state),
         "BRIEFING_DIR": str(brief),
         "FLEET_NOW": str(now),
+        "FLEET_HEPH_KEEP": str(HEPH_KEEP),
     }
     try:
         spec = importlib.util.spec_from_file_location("tidy_t", HERE / "tidy.py")
@@ -521,13 +505,10 @@ class ReviewRound1(unittest.TestCase):
     setUp = Tidy.setUp
     tidy = Tidy.tidy
     heph = Tidy.heph
-    seed = Tidy.seed
 
-    def plan(self, text: str, old=()):
+    def plan(self, text: str, keep_last: int = 2):
         mod = load_tidy(self.state, self.brief)
-        return mod.plan_heph(
-            text, dt.datetime.fromtimestamp(NOW), seen_times(text, old)
-        )
+        return mod.plan_heph(text, dt.datetime.fromtimestamp(NOW), keep_last)
 
     HEAD = "# H\n## START HERE\n- now\n## 2026-11-15 RECOVERY\n- 09:00 old\n"
 
@@ -581,10 +562,7 @@ class ReviewRound1(unittest.TestCase):
                 ValueError, "START HERE block newer than the first"
             ):
                 self.plan(doc(top, later))
-        kept, _ = self.plan(
-            doc(" (11-19 08:00)", " (11-12 10:00)"),
-            old={"## START HERE (11-12 10:00)", "- later"},
-        )
+        kept, _ = self.plan(doc(" (11-19 08:00)", " (11-12 10:00)"))
         self.assertIn("- top\n", kept)
         self.assertNotIn("- later\n", kept)
 
@@ -609,7 +587,7 @@ class ReviewRound1(unittest.TestCase):
             + "".join(f"{ln}\n" for ln in noise[:1] + rules + noise[1:])
             + "## 2026-11-20 day\n- 09:00 x\n"
         )
-        kept, s = self.plan(text, old={"## 2026-11-10 day", *rules, *noise})
+        kept, s = self.plan(text)
         for ln in rules:
             self.assertIn(ln + "\n", kept)
         for ln in noise:
@@ -631,312 +609,47 @@ class ReviewRound1(unittest.TestCase):
         ):
             self.assertEqual(mod.wait_seconds(raw), want, raw)
 
-    def test_a_line_seen_lately_stays_whatever_date_it_names(self):
-        """Heph's review B1 and its verify pass: any date in the log may name another day (a
-        gap, a recap, a reference), so only when a tidy first saw a line decides its age."""
-        old = {"## 2026-11-17 RECOVERY", "- 09:00 old"}
-        for shape in (
-            "- 10:00 NEWEST",
-            "- Fri 11-20 10:00 NEWEST",
-            "- **Fri 11-20:** NEWEST",
-            "- Heph 11-20 10:00: NEWEST",
-            "10:00 NEWEST as a paragraph",
-            "### Fri 11-20\n- 10:00 NEWEST",
-            "- 10:30 NEWEST\n- 11-16 decision recap",
-            "- 10:30 NEWEST\n- 11-17 recap",
-            "- 10:30 NEWEST\n### 11-16 lessons",
-            "- 10:30 NEWEST\n- **11-16:** recap",
-            "- 10:30 NEWEST\n## 11-16 lessons\n- x",
-            "- 10:30 NEWEST\n## 2026-10-28 retro\n- x",
-        ):
-            text = (
-                "# H\n## START HERE\n- now\n## 2026-11-17 RECOVERY\n- 09:00 old\n"
-                + shape
-                + "\n"
+    def test_heph_keeps_exactly_its_last_lines(self):
+        mod = load_tidy(self.state, self.brief)
+        head = "# H\n## START HERE\n- now\n## 2026-11-01 log\n"
+        body = [f"- line {k}\n" for k in range(10)]
+        for keep in (1, 4, 10, 50):
+            kept, _ = mod.plan_heph(
+                head + "".join(body), dt.datetime.fromtimestamp(NOW), keep
             )
-            kept, _ = self.plan(text, old)
-            self.assertIn("NEWEST", "".join(kept), shape)
-            self.assertNotIn("- 09:00 old\n", kept, shape)
+            got = [ln for ln in body if ln in kept]
+            self.assertEqual(
+                got, body[max(0, len(body) + 4 - keep - 4) :][-keep:], keep
+            )
+        self.assertEqual(mod.keep_lines(None), 600)
+        for raw, want in (("", 600), ("x", 600), ("0", 600), ("-3", 600), ("25", 25)):
+            self.assertEqual(mod.keep_lines(raw), want, raw)
 
-    def test_a_heading_just_opened_stays_before_its_first_line(self):
-        text = "# H\n## START HERE\n- now\n## 2026-11-17 old\n- 09:00 x\n## 2026-11-20 just opened\n"
-        kept, _ = self.plan(text, {"## 2026-11-17 old", "- 09:00 x"})
-        self.assertIn("## 2026-11-20 just opened\n", kept)
-        self.assertNotIn("- 09:00 x\n", kept)
+    def test_a_section_cut_in_two_keeps_its_heading(self):
+        text = "# H\n## START HERE\n- now\n## 2026-11-01 log\n- a\n- b\n- c\n"
+        kept, _ = self.plan(text, keep_last=2)
+        self.assertEqual(
+            "".join(kept), "# H\n## START HERE\n- now\n## 2026-11-01 log\n- b\n- c\n"
+        )
 
-    def test_an_old_line_goes_even_when_it_names_today(self):
-        text = "# H\n## START HERE\n- now\n## Fri 11-20 log\n- 09:00 11-20 noted\n## 11-20 b\n- y\n"
-        kept, _ = self.plan(text, old={"## Fri 11-20 log", "- 09:00 11-20 noted"})
-        self.assertNotIn("- 09:00 11-20 noted\n", kept)
-
-    def test_a_stop_order_written_after_a_gap_survives_apply(self):
+    def test_no_clock_can_drop_the_newest_line(self):
+        """Heph's review r3: position alone decides. Whatever FLEET_NOW reads, the last lines
+        stay and only lines with that many newer ones below them go."""
         text = (
             "# H\n## START HERE (11-19 06:00)\n- now\n## 2026-11-17 06:50\n- 06:55 a\n"
             "- 07:30 Heph: written Thu 11-19 07:30\n- 07:45 AJ: STOP merging #601 until Ben replies\n"
         )
-        p = self.heph(text, written=14 * 60, old={"## 2026-11-17 06:50", "- 06:55 a"})
-        r = self.tidy("--apply", "heph")
-        self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertIn("STOP merging #601", p.read_text())
-        self.assertNotIn("06:55 a", p.read_text())
-
-    def test_with_no_record_nothing_goes_and_the_record_starts(self):
-        for record in (None, "garbage\nnot\ta number\n", b"\xff\xfe"):
-            with self.subTest(record=record):
-                p = self.state / "HEPH.md"
-                p.write_text(HEPH)
-                age(p, 3600)
-                rec = self.state / ".heph-seen.tsv"
-                rec.unlink(missing_ok=True)
-                if isinstance(record, str):
-                    rec.write_text(record)
-                elif record is not None:
-                    rec.write_bytes(record)
-                r = self.tidy("--apply", "heph")
-                self.assertEqual(r.returncode, 0, r.stdout)
-                self.assertEqual(p.read_text(), HEPH)
-                self.assertEqual(
-                    rec.read_text().splitlines()[-1], f"#end\t{len(HEPH.splitlines())}"
-                )
-
-    def test_the_age_boundary_is_heph_hours(self):
-        mod = load_tidy(self.state, self.brief)
-        text = (
-            "# H\n## START HERE\n- now\n## 2026-11-01 a\n- x\n"  # dated: not kept whole
-        )
-        cut = NOW - mod.HEPH_HOURS * 3600
-        for seen, kept in ((cut - 1, False), (cut, True)):
-            times = [NOW] * 3 + [seen, seen]
-            got, _ = mod.plan_heph(text, dt.datetime.fromtimestamp(NOW), times)
-            self.assertEqual("- x\n" in got, kept, seen)
-
-    def test_apply_rewrites_the_record_for_the_kept_lines(self):
-        text = "# H\n## START HERE\n- now\n## 2026-11-01 a\n- ok\n- new\n- ok\n"
-        p = self.heph(text, old={"## 2026-11-01 a"})
-        mod = load_tidy(self.state, self.brief)
-        rec = self.state / ".heph-seen.tsv"
-        keys = mod.line_keys(text.splitlines(True))
-        lines = text.splitlines(True)
-        rows = [NOW - 60] * len(lines)
-        rows[4] = NOW - 30 * DAY  # the first "- ok" is old, the second new
-        mod.save_seen(keys, rows)
-        r = self.tidy("--apply", "heph")
-        self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertEqual(
-            p.read_text(), "# H\n## START HERE\n- now\n## 2026-11-01 a\n- new\n- ok\n"
-        )
-        got = dict(row.split("\t") for row in rec.read_text().splitlines()[:-1])
-        kept_keys = mod.line_keys(p.read_text().splitlines(True))
-        self.assertEqual(set(got), set(kept_keys))
-        self.assertEqual(
-            float(got[kept_keys[5]]),
-            round(NOW - 60),
-            "the kept copy keeps its own time",
-        )
-
-    def test_a_record_loads_only_whole_and_sane(self):
-        mod = load_tidy(self.state, self.brief)
-        rec = self.state / ".heph-seen.tsv"
-        good = f"k\t{NOW - 60:.0f}\nj\t{NOW - DAY:.0f}\nk\t{NOW - 2 * DAY:.0f}\n"
-        rec.write_text(good + "#end\t3\n")
-        self.assertEqual(
-            mod.load_seen(), {"k": [NOW - 60, NOW - 2 * DAY], "j": [NOW - DAY]}
-        )
-        for bad in (
-            good,  # cut off before its end row
-            good + "#end\t2\n",  # an end row naming another count
-            good[:-4] + "\n#end\t3\n",  # a time cut short reads as 1970
-            good + "#end\t3\nx\t1\n",  # rows after the end
-            good.replace("j\t", "j\tsoon", 1) + "#end\t3\n",  # one bad row among good
-            "k\tnan\n#end\t1\n",
-            "k\tinf\n#end\t1\n",
-            "k\t0\n#end\t1\n",
-            "k\t-5\n#end\t1\n",
-            f"k\t{NOW + 3651 * DAY:.0f}\n#end\t1\n",  # no clock reads that
-            "k\n#end\t1\n",
-            f"\t{NOW:.0f}\n#end\t1\n",
-            "",
-        ):
-            with self.subTest(bad=bad[-30:]):
-                rec.write_text(bad)
-                self.assertEqual(mod.load_seen(), {})
-        rec.write_text(f"k\t{NOW + 1800:.0f}\n#end\t1\n")  # within the clock's slack
-        self.assertEqual(mod.load_seen(), {"k": [NOW + 1800]})
-        rec.write_text(f"k\t{NOW + 31 * DAY:.0f}\n#end\t1\n")
-        with self.assertRaises(mod.ClockBehind):
-            mod.load_seen()
-
-    def test_a_clock_stepped_back_never_ages_a_line(self):
-        """Heph's review r2, S1, and its verify pass: a stored time is never moved earlier.
-        Within the clock's slack a new line takes the latest stored time; past it the tidy
-        refuses and the report records nothing, so a step back of any size loses nothing."""
-        mod = load_tidy(self.state, self.brief)
-        a = ["# H\n", "## START HERE\n", "- now\n", "## 2026-11-01 log\n", "- a\n"]
-        mod.NOW = NOW - 600
-        mod.first_seen(a)
-        mod.NOW = NOW - 1200  # back ten minutes: within the slack
-        self.assertEqual(mod.first_seen(a + ["- b\n"])[4:], [NOW - 600, NOW - 600])
-        mod.NOW = NOW
-        text = "".join(a) + "- b\n"
-        p = self.heph(text, old=set())
-        rec = self.state / ".heph-seen.tsv"
-        for step in (3 * DAY, 31 * DAY, 60 * DAY):
-            with self.subTest(step=step):
-                before = rec.read_bytes()
-                r = self.tidy("heph", now=NOW - step)
-                self.assertIn("later than the clock", r.stdout)
-                self.assertIn(
-                    f"{self.state / '.heph-seen.tsv'} holds 2026-11-20", r.stdout
-                )
-                self.assertIn("delete it and every line counts as new", r.stdout)
-                r = self.tidy("--report", str(self.tmp / "r.json"), now=NOW - step)
-                self.assertEqual(
-                    rec.read_bytes(), before, "nothing recorded while early"
-                )
-                got = json.loads((self.tmp / "r.json").read_text())
-                self.assertTrue(got.get("heph_clock_behind"), got)
-                self.assertIsNone(got.get("error"), got)
-                r = self.tidy("--apply", "heph", now=NOW + 3600)  # the clock set right
-                self.assertEqual(r.returncode, 0, r.stdout)
-                self.assertEqual(p.read_text(), text)
-
-    def test_a_truncated_record_drops_nothing(self):
-        """Heph's review r2, S2: a record cut off mid-write is no record."""
-        p = self.heph()
-        rec = self.state / ".heph-seen.tsv"
-        rec.write_bytes(rec.read_bytes()[:-12])
-        r = self.tidy("--apply", "heph")
-        self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertEqual(p.read_text(), HEPH)
-
-    def test_an_edited_or_deleted_copy_never_passes_its_age_on(self):
-        """A text written twice, days apart: when the older copy is edited or deleted, the
-        copy left keeps the newer time."""
-        mod = load_tidy(self.state, self.brief)
-        head = "# H\n## START HERE\n- now\n## 2026-11-01 log\n"
-        mod.NOW = NOW - 3 * DAY
-        mod.first_seen((head + "- watch CI\n").splitlines(True))
-        mod.NOW = NOW - 3600
-        mod.first_seen((head + "- watch CI\n- other\n- watch CI\n").splitlines(True))
-        mod.NOW = NOW
-        for later in (
-            head + "- watch CI ✅\n- other\n- watch CI\n",
-            head + "- other\n- watch CI\n",
-        ):
-            with self.subTest(later=later):
-                seen = mod.first_seen(later.splitlines(True))
-                kept, _ = mod.plan_heph(later, dt.datetime.fromtimestamp(NOW), seen)
-                self.assertIn("- watch CI\n", kept)
-                mod.save_seen(  # back to the state before this edit
-                    mod.line_keys(
-                        (head + "- watch CI\n- other\n- watch CI\n").splitlines(True)
-                    ),
-                    [NOW - 3600] * 4 + [NOW - 3 * DAY, NOW - 3600, NOW - 3600],
-                )
-
-    def test_first_seen_takes_a_key_s_newest_time(self):
-        mod = load_tidy(self.state, self.brief)
-        lines = ["# H\n", "- x\n"]
-        k = mod.line_keys(lines)[1]
-        mod.save_seen([k, k], [NOW - 9 * DAY, NOW - DAY])
-        self.assertEqual(mod.first_seen(lines)[1], NOW - DAY)
-
-    def test_a_blank_line_above_does_not_reset_a_line_s_age(self):
-        mod = load_tidy(self.state, self.brief)
-        mod.NOW = NOW - 9 * DAY
-        mod.first_seen(["# H\n", "- a\n", "\n", "- b\n"])
-        mod.NOW = NOW
-        self.assertEqual(mod.first_seen(["# H\n", "- a\n", "- b\n"])[2], NOW - 9 * DAY)
-
-    def test_a_text_moved_after_another_line_is_new(self):
-        mod = load_tidy(self.state, self.brief)
-        mod.NOW = NOW - 9 * DAY
-        mod.first_seen(["# H\n", "- a\n", "- ok\n", "- b\n"])
-        mod.NOW = NOW
-        self.assertEqual(mod.first_seen(["# H\n", "- a\n", "- b\n", "- ok\n"])[3], NOW)
-
-    def test_no_line_under_48_hours_ever_goes(self):
-        """Random appends (some texts repeated), edits and deletes, seen every 6 hours, with an
-        applied tidy now and then: a line whose text was written only once is kept while it is
-        under HEPH_HOURS old, and a text found twice after the same line is never dropped. (The
-        same text written again after the same line is the same note: no new text is lost.)"""
-        import random
-
-        mod = load_tidy(self.state, self.brief)
-        rng = random.Random(514)
-        head = ["# H\n", "## START HERE\n", "- now\n", "## 2026-11-01 log\n"]
-        checked = 0
-        for trial in range(40):
-            (self.state / ".heph-seen.tsv").unlink(missing_ok=True)
-            body: list[
-                tuple[str, float, bool]
-            ] = []  # line, when written, written only once
-            written: set[str] = set()
-
-            def put(ln: str, when: float) -> tuple[str, float, bool]:
-                once = ln not in written
-                written.add(ln)
-                return ln, when, once
-
-            t0 = NOW - 20 * DAY
-            for step in range(60):
-                now = t0 + step * 6 * 3600
-                for i in range(rng.randint(0, 3)):
-                    op = rng.random()
-                    if op < 0.6 or not body:
-                        text = rng.choice(["- ok", "", f"- note {trial}.{step}.{i}"])
-                        body.append(put(text + "\n", now))
-                    elif op < 0.8:
-                        k = rng.randrange(len(body))
-                        body[k] = put(body[k][0].rstrip("\n") + f" ✅{step}\n", now)
-                    else:
-                        del body[rng.randrange(len(body))]
-                mod.NOW = now
-                lines = head + [ln for ln, _, _ in body]
-                seen = mod.first_seen(lines)
-                if step % 5 != 4:
+        for now in (NOW, NOW + 400 * DAY, NOW - 400 * DAY):
+            with self.subTest(now=now):
+                p = self.heph(text)
+                r = self.tidy("--apply", "heph", now=now, FLEET_HEPH_KEEP="2")
+                self.assertIn("STOP merging #601", p.read_text())
+                if now < NOW:  # the clock behind the file's time: refused, nothing lost
+                    self.assertIn("HEPH.md's time is later than the clock", r.stdout)
                     continue
-                text = "".join(lines)
-                kept, s = mod.plan_heph(text, dt.datetime.fromtimestamp(now), seen)
-                keep = set(s["kept_index"])
-                cut = now - mod.HEPH_HOURS * 3600
-                keys = mod.line_keys(lines)
-                for n, (ln, w, once) in enumerate(body, start=len(head)):
-                    if not ln.strip():
-                        continue
-                    if keys.count(keys[n]) > 1 or (w >= cut and once):
-                        checked += 1
-                        self.assertIn(n, keep, (trial, step, ln))
-                body = [b for n, b in enumerate(body, start=len(head)) if n in keep]
-                mod.save_seen(mod.line_keys(kept), [seen[i] for i in s["kept_index"]])
-        mod.NOW = NOW
-        self.assertGreater(checked, 500)
-
-    def test_the_report_skips_the_record_while_a_tidy_runs(self):
-        (self.state / "HEPH.md").write_text(HEPH)
-        mod = load_tidy(self.state, self.brief)
-        stub = mock.patch.dict(os.environ, {"FLEET_PRUNE_SHOTS": str(self.shots)})
-        with stub, open(self.state / ".tidy.lock", "a") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            with contextlib.redirect_stdout(io.StringIO()):
-                mod.report(self.tmp / "report.json")
-            self.assertFalse((self.state / ".heph-seen.tsv").exists())
-        with stub, contextlib.redirect_stdout(io.StringIO()):
-            mod.report(self.tmp / "report.json")
-        self.assertTrue((self.state / ".heph-seen.tsv").exists())
-
-    def test_a_record_that_cannot_be_saved_is_logged(self):
-        mod = load_tidy(self.state, self.brief)
-        got = []
-        with mock.patch.object(mod, "event", lambda level, msg, **kw: got.append(msg)):
-            with mock.patch.object(
-                mod.os, "replace", mock.Mock(side_effect=OSError("full"))
-            ):
-                mod.save_seen(["k"], [NOW])
-        self.assertEqual(
-            got, ["first-seen record not saved; lines it lacks count as new"]
-        )
-        self.assertEqual(list(self.state.glob(".heph-seen.*")), [])
+                self.assertEqual(r.returncode, 0, r.stdout)
+                self.assertIn("07:30 Heph", p.read_text())
+                self.assertNotIn("06:55 a", p.read_text())
 
     def test_the_report_prunes_the_shots_of_its_own_briefing(self):
         mod = load_tidy(self.state, self.brief)
@@ -983,13 +696,6 @@ class ReviewRound1(unittest.TestCase):
         self.assertEqual(
             json.loads(out.read_text())["shots_said"], "CalledProcessError: gh failed"
         )
-
-    def test_the_report_records_first_sight(self):
-        (self.state / "HEPH.md").write_text(HEPH)
-        r = self.tidy("--report", str(self.tmp / "report.json"))
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        rec = (self.state / ".heph-seen.tsv").read_text().splitlines()
-        self.assertEqual(rec[-1], f"#end\t{len(HEPH.splitlines())}")
 
     def test_a_queued_task_brief_stays_and_a_finished_one_is_shelved(self):
         s = self.state
@@ -1164,6 +870,62 @@ class ReviewRound1(unittest.TestCase):
         r = self.tidy("--apply", "heph", dry_first=False)
         self.assertEqual(r.returncode, 0, r.stdout)
 
+    def test_apply_without_a_listed_dry_run_refuses_every_part(self):
+        """Heph's review r3, S2: each part's --apply refuses without a saved list."""
+        p = self.heph()
+        (self.brief / "queue.md").write_text(
+            "# Queue\n\n## Done since 11-09\n- ✅ **Sun 11-15:** x\n"
+        )
+        (self.brief / "done").mkdir()
+        (self.brief / "done" / "W1.md").write_text("x")
+        (self.brief / "review").mkdir()
+        (self.brief / "review" / "old.md").write_text(
+            "---\nowner: heph\nexpires: 2026-01-01\n---\n"
+        )
+        git(self.brief, "add", "-A")
+        git(self.brief, "commit", "-qm", "parts")
+        head = git(self.brief, "rev-parse", "HEAD")
+        queue = (self.brief / "queue.md").read_text()
+        for part in ("heph", "queue", "done", "expired"):
+            with self.subTest(part=part):
+                r = self.tidy("--apply", part, dry_first=False)
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(f"{part}: refused: ", r.stdout)
+                self.assertIn("not in the dry run's list", r.stdout)
+        self.assertEqual(p.read_text(), HEPH)
+        self.assertEqual((self.brief / "queue.md").read_text(), queue)
+        self.assertEqual(git(self.brief, "rev-parse", "HEAD"), head)
+        self.assertTrue((self.brief / "done" / "W1.md").exists())
+        self.assertTrue((self.brief / "review" / "old.md").exists())
+
+    def test_the_list_counts_copies_of_one_text(self):
+        text = HEPH.replace("- 00:41 old work\n", "- none\n").replace(
+            "- 09:00 more old work\n", "- none\n"
+        )
+        p = self.heph(text)
+        self.tidy("heph")
+        listed = (self.state / "tidy-preview.md").read_text()
+        self.assertEqual(listed.splitlines().count("- none"), 2)
+        mod = load_tidy(self.state, self.brief)
+        got = mod.read_preview()
+        got["heph"].remove("- none")  # the list shows one copy; the tidy would drop two
+        mod.save_preview(got)
+        r = self.tidy("--apply", "heph", dry_first=False)
+        self.assertIn("heph: refused: 1 of", r.stdout)
+        self.assertEqual(p.read_text(), text)
+
+    def test_a_list_without_its_header_is_no_list(self):
+        mod = load_tidy(self.state, self.brief)
+        (self.state / "tidy-preview.md").write_text("x\ny\n## heph (1)\n- z\n")
+        self.assertEqual(mod.read_preview(), {})
+
+    def test_a_briefing_only_run_takes_the_tidy_lock(self):
+        with open(self.state / ".tidy.lock", "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            r = self.tidy("done")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("refused: another fleet tidy is running", r.stdout)
+
     def test_a_second_tidy_is_refused(self):
         self.heph()
         with open(self.state / ".tidy.lock", "a") as f:
@@ -1239,9 +1001,7 @@ class ReviewRound1(unittest.TestCase):
         }
         for name, tail in cases.items():
             with self.subTest(name):
-                kept, _ = self.plan(
-                    self.HEAD + tail, {"## 2026-11-15 RECOVERY", "- 09:00 old"}
-                )
+                kept, _ = self.plan(self.HEAD + tail, keep_last=len(tail.splitlines()))
                 self.assertIn("newest work", "".join(kept))
 
     def test_heph_keeps_what_it_drops_for_a_week(self):

@@ -1221,13 +1221,12 @@ check "#511: no cleanup report yet warns, naming fleet install" \
   "$(FLEET_CLEANUP_REPORT="$work/no-report.json" doctor | grep -c '^warn cleanup: no cleanup report yet: fleet install adds the fleet-cleanup timer')" "1"
 printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":1000,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$cr"
 check "#511: a clean, fresh report is ok" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^ok   cleanup: nothing finished or expired is kept outside git and GitHub')" "1"
-printf '{"ts":%s,"shots_rc":3,"shots_said":"gh\\ndown","techne":null,"unowned":["review/"],"stale":["review/a.md: expired 2026-11-01 (owner heph)"],"queue_old":2,"done_files":4,"heph_bytes":300000,"briefs_stale":5,"archive_stale":1,"heph_clock_behind":true}\n' "$(( $(date +%s) - 86400 ))" >"$cr"
+printf '{"ts":%s,"shots_rc":3,"shots_said":"gh\\ndown","techne":null,"unowned":["review/"],"stale":["review/a.md: expired 2026-11-01 (owner heph)"],"queue_old":2,"done_files":4,"heph_bytes":300000,"briefs_stale":5,"archive_stale":1}\n' "$(( $(date +%s) - 86400 ))" >"$cr"
 got=$(FLEET_CLEANUP_REPORT="$cr" doctor | grep '^warn cleanup')
 for want in "the cleanup timer last ran 24 h ago" "fleet shots --apply failed (gh down)" "techne cleanup.py not found" \
   "done/ holds 4 retired week files: harvest lessons from fleet tidy done (it lists them), then --apply" "fleet tidy expired lists them and --apply removes them" \
   "1 briefing paths with no owner + expires (review/)" "2 Done lines in queue.md predate this week" \
-  "HEPH.md is 292 KB, past 150 KB: the orchestrator runs fleet tidy heph" "5 stale briefs and 1 old archive entries: fleet tidy briefs archive lists them all, then --apply" \
-  "first-seen record holds a time later than the clock"; do
+  "HEPH.md is 292 KB, past 150 KB: the orchestrator runs fleet tidy heph" "5 stale briefs and 1 old archive entries: fleet tidy briefs archive lists them all, then --apply"; do
   check "#511: a report with work left names: $want" "$(grep -cF -- "$want" <<<"$got")" "1"
 done
 printf 'not json' >"$cr"
