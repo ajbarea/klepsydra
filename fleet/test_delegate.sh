@@ -210,6 +210,8 @@ check "agy 1.5.13 real fixture: busy" "$(eng_state agy "$busy13")" "busy"
 check "agy 1.5.13 real fixture: limit" "$(eng_state agy "$limit13")" "limit"
 bg_task=$(cat "$here/fixtures/agy-1.5.13-bg-running.txt")
 check "agy 1.5.13 real background task fixture reads busy" "$(eng_state agy "$bg_task")" "busy"
+nginx_ans=$'────\n> ask\n  The service is active:\n  ● nginx.service running\n────\n>\n────\nGemini 3.8 Flash (Low) · ctx 0% · 5h 0% · 7d 0%'
+check "answer ending with ● running reads idle (task row must be below box)" "$(eng_state agy "$nginx_ans")" "idle"
 loading_screen=$'────\n> ask\n  reply\n⢿  Loading...\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%'
 check "agy: ⢿ Loading... screen reads busy" "$(eng_state agy "$loading_screen")" "busy"
 spinner_only=$(cat "$here/fixtures/agy-busy-spinner-only.txt")

@@ -133,9 +133,24 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   elif [[ $engine == agy && $foot == *"· ctx "* ]]; then
     # agy 1.5.12+ status line footer (#488). Busy shows spinner/activity above the box,
     # or a background task row under the box whose text ends in "running".
-    local above_foot
+    local above_foot below_box
     above_foot=$(head -n -1 <<<"$recent")
-    if grep -Eq '●.*running[[:space:]]*$' <<<"$recent" || LC_ALL=C /usr/bin/grep -aqP '\xe2[\xa0-\xa3][\x80-\xbf]|(Generating|Thinking|Running command|Planning|Loading)\.\.\.' <<<"$above_foot"; then
+    below_box=$(awk '
+      BEGIN { seen_prompt = 0 }
+      { line = $0; sub(/^[[:space:]]+/, "", line) }
+      index(line, ">") == 1 { seen_prompt = NR }
+      { lines[NR] = $0 }
+      END {
+        if (seen_prompt > 0) {
+          found_bottom = 0
+          for (i = seen_prompt + 1; i < NR; i++) {
+            if (!found_bottom && index(lines[i], "──") > 0) { found_bottom = 1; continue }
+            if (found_bottom) print lines[i]
+          }
+        }
+      }
+    ' <<<"$recent")
+    if grep -Eq '●.*running[[:space:]]*$' <<<"$below_box" || LC_ALL=C /usr/bin/grep -aqP '\xe2[\xa0-\xa3][\x80-\xbf]|(Generating|Thinking|Running command|Planning|Loading)\.\.\.' <<<"$above_foot"; then
       footer=busy
     else
       footer=idle
