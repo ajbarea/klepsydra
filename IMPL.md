@@ -19,9 +19,12 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
 - ✅ test_tidy.py 33 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
 
 ## Next
-1. ✅ Hand mutation: 31 guards, all killed after 6bbdb50 (m20 refusal message, m23 paused row's
-   other brief). 📋 CI on 6bbdb50 (full fleet suite).
-2. 📋 Fresh Opus reader round 2 (running), then a verify pass; pin ci.yml's techne ref to #394's
-   merge SHA once merged.
+- ✅ Hand mutation: 31 guards killed (6bbdb50). ✅ Reader round 2: 4 Should-fix fixed in 158d43e
+  (brief --refresh keeps the file time; unreadable or locked registry refuses; a newer later
+  START HERE refuses; STANDING/PERMANENT/binding lines stay); 6 new guards hand-mutated, all red.
+  Minors left for the PR body: no registry lock in done.sh race (now locked), queue date takes
+  the first MM-DD, done/expired dry run prints counts, BriefingLock duplicates prune_shots's.
+1. 📋 CI on 158d43e; then a verify pass (fresh Opus) on 7bde675..158d43e.
+2. 📋 Pin ci.yml's techne ref to #394's merge SHA once merged.
 - Live dry run 11-20: HEPH.md 1476 → 429 lines; 175 stale briefs; archive entries; 2 queue lines.
 - Never `--apply heph` on the live file yourself; the orchestrator runs it after the dry run.
