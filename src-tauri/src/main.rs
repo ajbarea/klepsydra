@@ -276,7 +276,7 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Autostart {
         let mgr = app.autolaunch();
         let done = if enabled { mgr.enable() } else { mgr.disable() };
         if let Err(e) = done {
-            log::error!(enabled; "autostart: the login entry did not change: {e}");
+            log::error!(enabled = enabled; "autostart: the login entry did not change: {e}");
         }
     }
     autostart_now(&app)
@@ -1111,7 +1111,7 @@ fn main() {
                             fleet::open_wall(app, String::new()).await
                         };
                         if let Err(e) = opened {
-                            log::error!(settings; "tray: the wall did not open: {e}");
+                            log::error!(settings = settings; "tray: the wall did not open: {e}");
                         }
                     });
                 })
