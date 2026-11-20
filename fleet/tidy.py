@@ -8,13 +8,16 @@ Usage:
 
 Finished work is recorded once, in merged PRs, closed issues and git history, so:
   heph     HEPH.md keeps its head, its START HERE block and the log lines of the last
-           HEPH_HOURS hours; older lines go (outcomes live in GitHub and queue.md). HEPH.md is
-           in no repo, so the summary of what goes is printed first. Refused while another
+           HEPH_HOURS hours; older lines go (outcomes live in GitHub and queue.md). Every date
+           guess errs toward keeping: an undated section stays whole, an earlier time means
+           midnight passed, and dates that go backwards refuse the tidy. What goes is copied
+           to archive/ for KEEP_DAYS first (HEPH.md is in no repo). Refused while another
            process has it open or wrote it in the last WRITE_QUIET_S seconds. Its time is kept,
            since `fleet recover` reads AJ's messages since HEPH.md was last written.
   briefs   task-*.src and fresh-*.src of agents in no row of panes.tsv or paused.tsv and not
            finished in the last KEEP_DAYS days, and older than KEEP_DAYS themselves.
-  archive  entries of the state folder's archive/ untouched for KEEP_DAYS days.
+  archive  entries of the state folder's archive/ untouched for KEEP_DAYS days, and each
+           file of archive/briefs/ (brief.sh adds one per rewrite).
   queue    the briefing's Done lines dated before this week's Monday (the Monday sweep);
            a line with no date stays. Harvest lessons from the dry run's list first.
   done     the briefing's retired done/ week files (git rm, one commit).
