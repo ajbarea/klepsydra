@@ -1,46 +1,34 @@
-# IMPL: klepsydra#421 + #438: gauge strip, variant A with docked faces
+# IMPL: klepsydra#492: perf: session files one-jq consolidation (Slice 1)
 
-Branch feat/gauge-strip-a-421-v2 (worktree .claude/worktrees/gauge-421-v2), cut with `--no-track` from 797336e.
-It replaces feat/gauge-strip-a-421, whose two commits reached main by accident and were reverted (#480).
-Push only with an explicit refspec: `git push -u origin HEAD:refs/heads/feat/gauge-strip-a-421-v2`. Never push to main.
-Decision: PR #459 last comment (AJ 11-18). Mockups: branch design/mockups-1118, docs/mockups/2026-11-18.
-Untracked helpers in `.live/` (excluded): live_strip.py (browser shots from real readings + live fleet at
-127.0.0.1:8318), live_app.sh (test copy of a branch klepsydra.exe beside AJ's, own KLEPSYDRA_DIR, backs up and
-restores the shared %APPDATA% .window-state.json, stops only its own PID), readings.json + fleet.json (frozen
-real data for perf). Fix SP= in live_app.sh to the session's scratchpad before running.
+Branch `perf/sessions-one-jq` (worktree `.claude/worktrees/perf-sessions`), PR #497.
+Push refspec: `git push -u origin perf/sessions-one-jq:perf/sessions-one-jq`. Never push to main.
+Issue: https://github.com/ajbarea/klepsydra/issues/492
+PR: https://github.com/ajbarea/klepsydra/pull/497
 
-## Plan: one PR per step
-1. **PR 1 (this branch): floating strip as variant A.** Code + review fixes committed; PR not yet open.
-2. **PR 2: #438 opacity** 0-100 step 5 in prefs.json, live. Copy the theme pattern (`set_theme` + Hub publish +
-   `theme_subscribe`, src-tauri/src/theme.rs) as `set_gauge_opacity` / `gauge_subscribe`; slider in the wall's gear.
-   Halo below 60% (dark) / 50% (light), full ink below 70% (mockup mock.css `.panel.halo/.thin`).
-3. **PR 3: docked gauges in the wall header** + floating strip hidden while the wall has focus + Settings › Gauges
-   rows (+ #479 double). Phone: usage ids are anonymised (a1..) by usage.rs but sessions keep real account ids,
-   so dockKey needs a mapping there. Also the tap/keyboard detail card (see Open).
-4. **PR 4: System chip** (off by default), only after 1-3.
+## Status / Stopped State (PC Restart Handoff)
+- Working tree is clean at commit `2f44364` (and will be committed with this IMPL.md).
+- Round 2 review items (brief `~/.local/state/fleet-orchestrator/briefs-free/perf-shell-forks-1-r2.md`) 1-4 fully resolved, tested, and committed:
+  1. `e8ff56e` (SHOULD-FIX 1): `fleet/test_forks_sessions.sh` updated to create 20 ended session files per pane so main's grep prefilter fails fork scaling (`a-base=12`, `b-base=62`) while branch passes (`a-base=4`, `b-base=4`). Updated strace check to SKIP locally if missing and FAIL in CI. Added comment explaining the 4-fork cap floor. Removed false line from PR body.
+  2. `cc29f24` (SHOULD-FIX 2): `fleet/test_forks_sessions.sh` checks strace exit code (`rc == 0`) and asserts `base > 0` in `forks_of`, preventing false passes on disabled or blocked ptrace.
+  3. `abf802a` (SHOULD-FIX 3): `fleet/resume-at-reset.sh` caches `SESSION_ROWS=$(fleet_sessions_tsv)` once per `pass()`, eliminating redundant whole-folder jq invocations per pane.
+  4. `2f44364` (SHOULD-FIX 4): `fleet/lib.sh` adds count check in `fleet_sessions_tsv` (files named vs rows parsed), logging `flog WARN` and appending to `$FLEET_STATE/bad-sessions` if counts mismatch. `fleet/doctor.sh` checks session files and reports `warn session files: corrupt or truncated: <file>` or `ok session files: every session file parsed`. Added regression test in `fleet/test_fleet.sh`.
+- Paired measurements on frozen seed data (`SANDBOX_SEED=/tmp/perf-seed`, 130 session files, live panes `%84 %85 %86`):
+  - `fleet doctor`: forks 1694 -> 1027 (-667 forks, target >= 370 met); jq 454 -> 79 (-375 jq, target >= 370 met).
+  - `resume pass`: forks 973 -> 937 (-36 forks); jq 64 -> 37 (-27 jq, target >= 20 met).
+- PR #497 description and fleet report `~/.local/state/fleet-orchestrator/briefs-free/perf-shell-forks-1-sessions-report.md` are updated with exact paired measurement numbers and reproduction steps.
+- Head pushed to `origin/perf/sessions-one-jq`.
+- CI run [44711522783](https://github.com/ajbarea/klepsydra/actions/runs/44711522783) was in flight at checkpoint.
 
-## Done (PR 1)
-- Chips model/view, dock, icons, README (845969e). Opus review round 1: 1 blocking, 3 should-fix, nits; all
-  fixed in 21d2dc8 (per-window age, stacked tray colour, waiting fade, 30-min age text, stacked columns,
-  Intl formatters, boundary guards, phone/wall spent-week rule). 15 mutations on the new guards: all killed.
-- Unit tests and lint clean (see Verify). Live in Chromium on real readings + live fleet: no errors, faces docked.
-- CPU (headless Chromium, 3 x 120 s, median): 797336e 0.086 % vs 845969e 0.097 %; after 21d2dc8,
-  797336e 0.081 % vs 0.075 %. Live exe (stage klepsydra-build-gauge421): chips on the taskbar beside AJ's
-  main build, faces docked, native title hover shows in the unfocused window.
-- Round 2 (fresh Opus): 1-11 fixed; new N1 (waiting fade un-hid #zoom), N2 (Intl throws past Date range),
-  N3 (phone spent-week only source-tested), N4-N5 wording; all fixed (af75c1d).
-- Round 3 (fresh Opus): N1-N5 confirmed; new: #grip's own transition cancelled its fade, "resets null" for a
-  live window past Date's range, clockAt(null) read as 1970, no committed guard for the fade; all fixed + guarded.
-- PR #482 open. Browser suites vs main (ab00893): phone 88 pass / the same 5 reds as main (#266; "Play again"
-  intermittent); wall: 4 Ledger reds on the branch, main's run hit the same 2 then timed out before the other 2.
+## What is Next
+1. Verify CI run [44711522783](https://github.com/ajbarea/klepsydra/actions/runs/44711522783) is green via `gh pr checks 497`.
+2. Once CI is all green, notify orchestrator Athena in pane `%61`:
+   `fleet send %61 "CI green on PR #497 (commit 2f44364), round 2 review items 1-4 clean and verified"`
+3. Await orchestrator review and merge (Athena holds merge rights; do not merge or push to main).
 
-## Open
-- Hover detail is the native `title` tooltip: shown live in the unfocused window, but no tap or keyboard.
-  A toggletip card needs the window to grow from its docked edge: #481, planned with PR 3.
-
-## Next
-1. Round 4 (fresh Opus) CLEAN on 8016ef6. Heph review of 0221a28: chips now read windows by routeGroup (ACCOUNT_WINDOWS, LANE_HARNESS, spent() gone; isCapped reused); fixed with failing-first tests.
-2. CI green, then report to Heph (`fleet send`), queue line; do not merge. Then PR 2 (#438) on a new branch.
-
-## Verify
-- `node --test src/*.test.js`; `npm run lint`.
+## What a Fresh Session Must Rerun
+1. Check git status:
+   `git -C /home/ajbar/ajsoftworks/klepsydra/.claude/worktrees/perf-sessions status`
+2. Check CI status:
+   `gh pr checks 497`
+3. If local verification of fork tests is needed:
+   `STRACE=/tmp/claude-1001/rev500/strace/root/usr/bin/strace bash fleet/test_forks_sessions.sh`
