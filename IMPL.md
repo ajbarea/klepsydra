@@ -7,8 +7,8 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
 ## Slice
 - `fleet/tidy.py` (`fleet tidy [--apply] [PART...]`, dry run by default, --apply only what its
   saved list shows): heph (head + START HERE + undated sections + standing lines + the last
-  FLEET_HEPH_KEEP lines, by position; refuses no START HERE, a newer later START HERE, a file
-  time past the clock, a write in the last 2 min, another holder; dropped lines copied to
+  FLEET_HEPH_KEEP lines, by position; refuses no START HERE, a dated later START HERE just above
+  the cut, a file time past the clock, a write in the last 2 min, another holder; dropped lines copied to
   archive/ for 7 days; keeps the file time for recover.sh), briefs, archive (archive/briefs/ per file), queue (Done lines before this
   Monday, under the briefing lock), done, expired (git rm under .git/fleet-sync.lock, restores
   only what it removed). `--report FILE`: prune_shots --apply then a report (error and
@@ -17,7 +17,7 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
 - brief-tail: evidence by commit permalink; workers delete their own transient files.
 - ✅ Reader round 1 (1 Blocking + 3 Should-fix + minors) fixed in 7bde675; Heph's CI red (doctor
   lists every warn; cut-over expects fleet-cleanup.timer) fixed there too. Pushed for relaunch.
-- ✅ test_tidy.py 64 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
+- ✅ test_tidy.py 73 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
 
 ## Next
 - ✅ Orchestrator rounds r1-r3 and 13 verify passes fixed. r3 changed the spec: HEPH.md keeps its

@@ -576,6 +576,10 @@ class ReviewRound1(unittest.TestCase):
         kept, _ = mod.plan_heph(doc(20), 40)  # among the kept lines: it stays
         self.assertIn("- later\n", kept)
         kept, _ = mod.plan_heph(doc(20), 28)  # it is the first kept line: no refusal
+        undated_later = doc(20).replace(
+            "## START HERE (12-30 handoff)", "## START HERE"
+        )
+        mod.plan_heph(undated_later, 5)  # undated: kept whole, so no refusal
         self.assertIn("- later\n", kept)
 
     def test_standing_rules_in_old_sections_stay(self):
@@ -690,9 +694,31 @@ class ReviewRound1(unittest.TestCase):
         _, s = load_tidy(self.state, self.brief).plan_heph(HEPH)
         self.assertEqual(got["heph_drop"], s["lines"] - s["kept"])
         self.assertGreater(got["heph_drop"], 0)
+        self.assertTrue(got["heph_due"])  # the fixture drops more than half its keep
         self.tidy("--apply", "heph")
         self.tidy("--report", str(self.tmp / "r.json"))
         self.assertEqual(json.loads((self.tmp / "r.json").read_text())["heph_drop"], 0)
+
+    def test_a_tidy_is_due_only_for_a_batch(self):
+        """Heph's review r4 verify: a file that only grows would warn again after one line."""
+        head = "# H\n## START HERE\n- now\n## 2026-11-01 log\n"
+        for extra, due in ((1, False), (4, False), (5, True)):
+            with self.subTest(extra=extra):
+                self.heph(head + "".join(f"- l{k}\n" for k in range(10 + extra)))
+                r = self.tidy(
+                    "--report", str(self.tmp / "r.json"), FLEET_HEPH_KEEP="10"
+                )
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                got = json.loads((self.tmp / "r.json").read_text())
+                # The section's heading stays with its kept lines.
+                self.assertEqual(got["heph_drop"], extra, got)
+                self.assertIs(got["heph_due"], due, got)
+
+    def test_the_report_names_why_a_tidy_would_refuse(self):
+        self.heph("# H\n## Notes\n- x\n")
+        self.tidy("--report", str(self.tmp / "r.json"))
+        got = json.loads((self.tmp / "r.json").read_text())
+        self.assertEqual(got.get("heph_refused"), "HEPH.md has no ## START HERE block")
 
     def test_an_empty_heading_just_below_the_cut_stays(self):
         text = "# H\n## START HERE\n- now\n## 2026-11-17 old\n- 09:00 x\n## 2026-11-20 just opened\n"

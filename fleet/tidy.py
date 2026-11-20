@@ -170,7 +170,6 @@ def ago(seconds: float) -> str:
 H2 = re.compile(r"^## ")
 FULL_DATE = re.compile(r"\b(20\d\d)-(\d\d)-(\d\d)\b")
 SHORT_DATE = re.compile(r"(?<![\d-])(\d\d)-(\d\d)(?![\d-])")
-LINE_TIME = re.compile(r"^- (?:\*\*)?(?:(?:20\d\d-)?\d\d-\d\d )?(\d{1,2}):(\d)(\d|x)\b")
 WINDOW_DAYS = 330  # a MM-DD further back than this is a future event named, not a date
 
 
@@ -238,7 +237,8 @@ def plan_heph(text: str, keep_last: int = 0) -> tuple[list[str], dict]:
     s1 = next((i for i in heads if i > s0), len(lines))
     cut = max(0, len(lines) - keep_last)  # every line from here down stays
     for s in starts[1:]:
-        if cut - START_MARGIN <= s < cut:
+        # An undated START HERE is kept whole anyway, so only a dated one can be lost.
+        if cut - START_MARGIN <= s < cut and not undated(lines[s]):
             raise ValueError(
                 f"line {s + 1} is a START HERE block just above the kept lines: merge it into "
                 "the top one, or keep more lines (FLEET_HEPH_KEEP)"
@@ -1068,6 +1068,9 @@ def report(out: Path) -> int:
                 try:
                     _, s = plan_heph(read_exact(heph))
                     data["heph_drop"] = s["lines"] - s["kept"]
+                    # A tidy is due once a batch of half the kept lines would go, so the
+                    # warning does not come back with every line appended after a tidy.
+                    data["heph_due"] = data["heph_drop"] >= max(1, HEPH_KEEP // 2)
                 except ValueError as exc:  # doctor names why a tidy would refuse
                     data["heph_refused"] = str(exc)[:200]
             data["briefs_stale"] = len(stale_briefs())
