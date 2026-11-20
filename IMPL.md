@@ -1,29 +1,32 @@
-# IMPL: klepsydra#384 PR 1 (#493): settings page, design A, round 2
+# IMPL: klepsydra#384 PR 1 (#493): settings page, design A
 
 Branch `feat/settings-page-384`, worktree `.claude/worktrees/settings-r2`.
 Push only with `git push origin feat/settings-page-384:feat/settings-page-384`. Never to main.
-Round-1 review: `~/.local/state/fleet-orchestrator/reports/settings-493-r1.md` (NOT CLEAN; agy built PR 1).
+Notes from earlier sessions (reviews r1-r3, browser and Windows logs, shots, PR-body draft):
+`~/.local/state/fleet-orchestrator/reports/settings-493-r1.md` and `.../reports/settings-493-r2/`.
 
 ## Slice
-Make PR 1 merge-ready: every round-1 Blocking, Should-fix and Nit fixed, with guards
-so the classes cannot return. Opus worker (settings-r2) took it over from agy.
+Make PR 1 merge-ready: every review Blocking, Should-fix and Nit fixed, with guards so the
+classes cannot return. Opus worker took it over from agy. Do not merge; Athena reviews and
+does the live check in the Windows app.
 
-## Done
-- Tray Settings... opens `wall.html#settings` on a new wall, sets the hash on an open one (fleet.rs `show_wall`); the hash is the only switch (wall.js `showView`), Back clears it.
-- Rows show what the command returned (settings.js `apply`/`viewOf`, registry `view`): autostart {on, held, label}, ping and phone read back, Voices reads keryx live (voices.rs `get_voices_mode`, bounded Reader), pickers return both paths (async, `blocking_pick_file` in spawn_blocking).
-- Split, density, Characters and New session's default are bound rows: the page calls the wall's own function (`split.set`, `pickDensity`, `chooseTheme`, `setDefault`) and each control syncs the page.
-- New session lists the + New session entries by real id; an unknown saved id still shows.
-- Ping and Split rows hide where the app refuses them (off Windows); autostart label comes from the app.
-- Tray code deleted (choice.rs, theme/voices menus, all `#[allow(dead_code)]` keep-alives); theme published at start (the deleted `theme::menu` used to do it).
-- settings.css on wall.css tokens; focus ring scoped; reduced motion; Ledger/Queue tabs hidden behind the page; APG radio groups.
-- Guards: `src/css-tokens.test.js` (every var() defined per page), `src/settings.test.js` (answers not asks, commands registered, one code path per bound row, Voices labels = Rust table, tray hash). 12/12 mutants caught (node).
-- README Settings section; tray references updated in README and docs/fleet.md.
+## Stopped here (11-19 night, paused at AJ's word to save Personal capacity)
+- Pushed through 943d5c8. Round 1 and 2 fixed; round 3's three Should-fix fixed in 3032584
+  (hold without saving, one `fleet voices` at a time, card focus, refused reads hide rows).
+  Whether every r3 Nit landed is unchecked: verify in round 4 (`settings-493-r2/review-r3.md`).
+- Browser `settings_view` passes 24/24 on 943d5c8's test with the real CSS (both schemes
+  emulated, 1920 + 390; `settings-493-r2/logs/br5.log`).
+- Was mid mutation check: mutant `.settings-view .tog[aria-checked="true"]` ->
+  `.tog[aria-checked="true"]` (loses to wall.css `button:hover:not(...)`, 0,2,1). The run was
+  killed by the limit before it finished; the mutant has been reverted in the tree.
+- Windows check last passed at 20:48, before the r3 fixes: rerun.
 
 ## Next
-- Browser cases (`settings_view settings_rows_show_answers settings_bound_controls settings_by_hash`, both schemes, 1920 + 390) and `scripts/build-windows.sh --check` (KLEPSYDRA_STAGE=klepsydra-build-settings): queued on the heavy lock.
-- Mutation-check a browser case (page shows the ask) once it passes.
-- Independent Opus review round 2: report at the session scratchpad `review-r2.md`; fix, re-review until clean.
-- Shots to fleet-briefing/shots/2026-11-19, PR body (short top), push, CI green, `fleet send` Athena, `fleet done`.
+1. Mutation check: `flock -o /tmp/fleet-heavy.lock timeout 1200 python3 ~/.local/state/fleet-orchestrator/reports/settings-493-r2/mutate_heavy.py "$PWD"` (must print `caught`).
+2. Full settings browser cases, both schemes, 1920 + 390, and `build-windows.sh --check` on HEAD.
+3. Independent Opus review round 4 (fresh reviewer: diff + open r3 Nits); fix until clean.
+4. Shots to fleet-briefing/shots/2026-11-19 (+ README line); PR body from `settings-493-r2/pr-body.md`
+   (short top, live vs tested); CI green; `fleet send` Athena; `fleet done`.
 
 ## Verify
 `node --test src/*.test.js` · `npm run -s lint` · `uvx ruff check scripts/test_wall_browser.py` ·
