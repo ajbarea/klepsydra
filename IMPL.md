@@ -10,21 +10,19 @@ Make PR 1 merge-ready: every review Blocking, Should-fix and Nit fixed, with gua
 classes cannot return. Opus worker took it over from agy. Do not merge; Athena reviews and
 does the live check in the Windows app.
 
-## State (11-20, 2nd Opus replacement)
-- Round-4 fixes were uncommitted in the worktree when the last worker stopped, along with the
-  hover mutant its killed mutation run had left in settings.css (reverted, not committed).
-  The fixes landed in acc37c8: the tray's empty focus keeps the page; leaveSettings keys on the
-  page shown; showing the page cancels a portrait, End dialog, session menu or popover;
-  Coalesce::serve survives a panicking run; the handler guard catches doc lines and gated mods.
-- On acc37c8: node 603/603, browser settings cases 59/59 (both schemes, 1920 + 390), cargo fleet
-  448 + clippy clean, biome, ruff check, cargo fmt clean; hover mutant caught.
-- Round-4 mutants (scratchpad `mutate_r4.py`, runs on a scratch copy, baseline first), the Windows
-  check and the fresh Opus round 5 were running when this was written.
+## State (11-20, 2nd Opus replacement): handed to Athena
+- Round-4 fixes landed in acc37c8 (found uncommitted beside a leftover mutant, reverted). Round 5
+  (fresh Opus) CLEAN with 2 Nits: guard gaps fixed in fa313c6, PR body rewritten. Verify pass
+  CLEAN with 3 Nits, fixed in ceda252 (gated file/block, br/cr raw strings, escaped quote char).
+- On ceda252: node 603/603, browser settings cases 59/59 (both schemes, 1920 + 390), cargo fleet
+  448 + clippy clean, Windows check clean (115 + 429 + 7), biome, ruff, fmt clean; 15 mutants
+  this session all caught (hover; 6 for r4; 8 for the handler guard).
+- Shots: fleet-briefing/shots/2026-11-20/klepsydra-384-settings-*. PR body updated.
 
 ## Next
-1. Round 5 findings (`reports/settings-493-r2/review-r5.md`): fix until a round is clean.
-2. Shots (fleet-briefing/shots/2026-11-20) + PR body from `settings-493-r2/pr-body.md`; CI green;
-   `fleet send` Athena; `fleet done`.
+1. CI green on the head, then Athena: fresh review + live check in the installed Windows app
+   (tray Settings..., file picker, login entry, phone wall port). Do not merge from here.
+2. Later PRs of #384: the Gauges row for the background slider is #421 step 3.
 
 ## Verify
 `node --test src/*.test.js` · `npm run -s lint` · `uvx ruff check scripts/test_wall_browser.py` ·
