@@ -1226,7 +1226,7 @@ got=$(FLEET_CLEANUP_REPORT="$cr" doctor | grep '^warn cleanup')
 for want in "the cleanup timer last ran 24 h ago" "fleet shots --apply failed (gh down)" "techne cleanup.py not found" \
   "done/ holds 4 retired week files: harvest lessons, then fleet tidy --apply done" "fleet tidy --apply expired" \
   "1 briefing paths with no owner + expires (review/)" "2 Done lines in queue.md predate this week" \
-  "HEPH.md is 292 KB, past 150 KB: the orchestrator runs fleet tidy heph" "5 stale briefs and 1 old archive entries: fleet tidy --apply briefs archive"; do
+  "HEPH.md is 292 KB, past 150 KB: the orchestrator runs fleet tidy heph" "5 stale briefs and 1 old archive entries: fleet tidy briefs archive lists them all, then --apply"; do
   check "#511: a report with work left names: $want" "$(grep -cF -- "$want" <<<"$got")" "1"
 done
 printf 'not json' >"$cr"

@@ -57,8 +57,15 @@ Heph runs the fleet (undated, from 10-27).
 - 00:41 old work
 - 09:00 more old work
 
+## 2026-11-14 06:00 RECOVERY
+- 06:10 six days ago, with a later date below it: dropped
+- 22:00 still the 14th: dropped
+
+## 2026-11-15 day
+- 06:10 five days ago, but only the 11-18 date sits below it: kept
+
 ## 2026-11-18 06:00 RECOVERY
-- 06:10 two days and six hours ago: dropped
+- 06:10 two days and six hours ago: kept, nothing below proves it older
 - 23:50 late on the 18th: kept
 - 00:10 the 19th, after midnight: kept
   a continuation line of it
@@ -137,11 +144,20 @@ class Tidy(unittest.TestCase):
             "a continuation line",
             "13:00 the 19th",
             "14:00 still",
+            "five days ago",
+            "06:10 two days",
         ):
             self.assertIn(line, kept)
-        for line in ("old work", "06:10 two days", "## 10-28"):
+        for line in (
+            "old work",
+            "six days ago",
+            "still the 14th",
+            "## 10-28",
+            "## 2026-11-14",
+        ):
             self.assertNotIn(line, kept)
         self.assertIn("## Role", kept)  # an undated section is kept whole
+        self.assertIn("Heph runs the fleet (undated, from 10-27).", kept)
         self.assertEqual(
             p.stat().st_mtime_ns, before, "fleet recover reads HEPH.md's time"
         )
@@ -230,9 +246,11 @@ class Tidy(unittest.TestCase):
             "task-old-finish.src": old,  # finished 9 days ago: goes
             "fresh-gone-20261101-0900-recover.src": old,  # goes
             "fresh-gone.src": old,  # goes
-            "task-new.src": 2 * DAY,  # written lately: stays
+            "task-new.src": 2 * DAY,  # no registry row: waits for a launch
+            "fresh-new-20261118-0900.src": 2 * DAY,  # written lately: stays
             "task-mentioned.src": old,  # its path is a panes.tsv field
             "task-unpaused.src": old,  # unpaused.tsv names it
+            "fresh-unpaused-20261101-0900.src": old,  # and its fresh brief
             "task-oddtime.src": old,  # finished, with a time that cannot be read
             "notes.md": old,  # not a brief
         }
@@ -251,6 +269,11 @@ class Tidy(unittest.TestCase):
         (s / "finished.tsv").write_text(
             f"%3\trecent-finish\tb\ts\tw\tc\t{recent}\n%4\told-finish\tb\ts\tw\tc\t{older}\n"
             "%5\toddtime\tb\ts\tw\tc\tyesterday-ish\n"
+            # Each protected agent also finished long ago, so only its protection keeps it.
+            + "".join(
+                f"%6\t{n}\tb\ts\tw\tc\t{older}\n"
+                for n in ("live", "paused", "paused2", "mentioned", "unpaused")
+            )
         )
         (s / "unpaused.tsv").write_text("unpaused\tsid\t2026-11-01T00:00:00\n")
         r = self.tidy("--apply", "briefs")
@@ -267,12 +290,15 @@ class Tidy(unittest.TestCase):
     def test_a_linked_brief_is_never_followed(self):
         target = self.tmp / "elsewhere.src"
         target.write_text("keep")
-        (self.state / "task-link.src").symlink_to(target)
+        (self.state / "fresh-link.src").symlink_to(target)
         os.utime(
-            self.state / "task-link.src", (NOW - 30 * DAY,) * 2, follow_symlinks=False
+            self.state / "fresh-link.src", (NOW - 30 * DAY,) * 2, follow_symlinks=False
         )
         self.tidy("--apply", "briefs")
         self.assertEqual(target.read_text(), "keep")
+        self.assertTrue(
+            (self.state / "fresh-link.src").is_symlink(), "a link is skipped"
+        )
 
     # --- archive --------------------------------------------------------------------------
 
@@ -482,23 +508,23 @@ class ReviewRound1(unittest.TestCase):
         self.assertTrue((self.state / "task-parked.src").exists())
 
     def test_a_held_registry_lock_refuses_the_briefs(self):
-        (self.state / "task-gone.src").write_text("x")
-        age(self.state / "task-gone.src", 30 * DAY)
+        (self.state / "fresh-gone.src").write_text("x")
+        age(self.state / "fresh-gone.src", 30 * DAY)
         with open(self.state / ".registry.lock", "a") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             r = self.tidy("--apply", "briefs", FLEET_REGISTRY_WAIT="0.3")
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("the registry lock was held", r.stdout)
-        self.assertTrue((self.state / "task-gone.src").exists())
+        self.assertTrue((self.state / "fresh-gone.src").exists())
         r = self.tidy("--apply", "briefs", FLEET_REGISTRY_WAIT="0.3")
         self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertFalse((self.state / "task-gone.src").exists())
+        self.assertFalse((self.state / "fresh-gone.src").exists())
 
     def test_a_later_start_here_newer_than_the_first_is_refused(self):
-        def doc(top: str, later: str) -> str:
+        def doc(top: str, later: str, mid: str = "") -> str:
             return (
                 f"# H\n## START HERE{top}\n- top\n## 11-12 09:00 log\n- 09:30 x\n"
-                f"## START HERE{later}\n- later\n## 11-20 09:00\n- 09:30 y\n"
+                f"## START HERE{later}\n- later\n{mid}## 11-20 09:00\n- 09:30 y\n"
             )
 
         for top, later in (
@@ -510,7 +536,9 @@ class ReviewRound1(unittest.TestCase):
                 ValueError, "START HERE block newer than the first"
             ):
                 self.plan(doc(top, later))
-        kept, _ = self.plan(doc(" (11-19 08:00)", " (11-12 10:00)"))
+        kept, _ = self.plan(
+            doc(" (11-19 08:00)", " (11-12 10:00)", "## 11-13 09:00\n- z\n")
+        )
         self.assertIn("- top\n", kept)
         self.assertNotIn("- later\n", kept)
 
@@ -533,7 +561,7 @@ class ReviewRound1(unittest.TestCase):
         text = (
             "# H\n## START HERE\n- now\n## 2026-11-10 day\n"
             + "".join(f"{ln}\n" for ln in noise[:1] + rules + noise[1:])
-            + "## 2026-11-20 day\n- 09:00 x\n"
+            + "## 2026-11-11 day\n- 09:00 z\n## 2026-11-20 day\n- 09:00 x\n"
         )
         kept, s = self.plan(text)
         for ln in rules:
@@ -556,6 +584,154 @@ class ReviewRound1(unittest.TestCase):
             ("2.5", 2.5),
         ):
             self.assertEqual(mod.wait_seconds(raw), want, raw)
+
+    def test_the_newest_lines_stay_whatever_their_shape(self):
+        """Heph's review, B1: a line with no date the parser reads took the last date above it,
+        so after a gap the newest lines were dropped. Each shape below is the newest line."""
+        for shape in (
+            "- 10:00 NEWEST",
+            "- Fri 11-20 10:00 NEWEST",
+            "- **Fri 11-20:** NEWEST",
+            "- Heph 11-20 10:00: NEWEST",
+            "10:00 NEWEST as a paragraph",
+            "### Fri 11-20\n- 10:00 NEWEST",
+        ):
+            text = self.HEAD.replace("2026-11-15", "2026-11-17") + shape + "\n"
+            kept, _ = self.plan(text)
+            self.assertIn("NEWEST", "".join(kept), shape)
+
+    def test_a_stop_order_written_after_a_gap_survives_apply(self):
+        text = (
+            "# H\n## START HERE (11-19 06:00)\n- now\n## 2026-11-17 06:50\n- 06:55 a\n"
+            "- 07:30 Heph: written Thu 11-19 07:30\n- 07:45 AJ: STOP merging #601 until Ben replies\n"
+        )
+        p = self.heph(text, written=14 * 60)
+        r = self.tidy("--apply", "heph", now=NOW - DAY + 8 * 3600)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("STOP merging #601", p.read_text())
+
+    def test_a_queued_task_brief_stays_and_a_finished_one_is_shelved(self):
+        s = self.state
+        for n in ("task-queued.src", "task-done.src"):
+            (s / n).write_text("x")
+            age(s / n, 30 * DAY)
+        older = dt.datetime.fromtimestamp(NOW - 9 * DAY).isoformat()
+        (s / "finished.tsv").write_text(f"%4\tdone\tb\ts\tw\tc\t{older}\n")
+        r = self.tidy("--apply", "briefs")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertTrue(
+            (s / "task-queued.src").exists(), "a brief waiting to launch stays"
+        )
+        self.assertFalse((s / "task-done.src").exists())
+        shelved = list((s / "archive" / "briefs").glob("task-done.src.tidy-*"))
+        self.assertEqual(len(shelved), 1)
+        self.assertGreaterEqual(shelved[0].stat().st_mtime, time.time() - 60)
+        r = self.tidy("--apply", "archive")
+        self.assertTrue(shelved[0].exists(), "the archive keeps it 7 more days")
+
+    def test_a_resume_brief_of_a_live_agent_stays(self):
+        s = self.state
+        (s / "fresh-live-20261101-0900-resume.src").write_text("x")
+        age(s / "fresh-live-20261101-0900-resume.src", 30 * DAY)
+        (s / "panes.tsv").write_text(f"%1\tlive\t{s}/task-live.src\tsid1\n")
+        self.assertEqual(self.tidy("--apply", "briefs").returncode, 0)
+        self.assertTrue((s / "fresh-live-20261101-0900-resume.src").exists())
+
+    def test_the_dry_run_lists_everything_it_would_drop(self):
+        s = self.state
+        names = [f"fresh-gone{i}.src" for i in range(7)]
+        for n in names:
+            (s / n).write_text("x")
+            age(s / n, 30 * DAY)
+        self.heph()
+        r = self.tidy("heph", "briefs")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("... and 2 more", r.stdout)
+        listed = (s / "tidy-preview.md").read_text()
+        self.assertIn(f"the full list is in {s / 'tidy-preview.md'}", r.stdout)
+        for n in names:
+            self.assertIn(f"\n{n}\n", listed)
+        for line in ("- 00:41 old work", "- 22:00 still the 14th: dropped"):
+            self.assertIn(f"\n{line}\n", listed)
+        self.assertTrue(
+            all((s / n).exists() for n in names), "a dry run removes nothing"
+        )
+
+    def test_a_second_tidy_is_refused(self):
+        self.heph()
+        with open(self.state / ".tidy.lock", "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            r = self.tidy("--apply", "heph")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("refused: another fleet tidy is running", r.stdout)
+        self.assertEqual((self.state / "HEPH.md").read_text(), HEPH)
+
+    def test_heph_refuses_an_archive_that_is_a_link_or_a_file(self):
+        p = self.heph()
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (self.state / "archive").symlink_to(outside)
+        r = self.tidy("--apply", "heph")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("archive/ is a link or no folder", r.stdout)
+        self.assertEqual(p.read_text(), HEPH)
+        self.assertEqual(list(outside.iterdir()), [])
+        (self.state / "archive").unlink()
+        (self.state / "archive").write_text("a file")
+        r = self.tidy("--apply", "heph")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(p.read_text(), HEPH)
+
+    def test_found_paths_outside_the_part_s_folder_are_refused(self):
+        mod = load_tidy(self.state, self.brief)
+        stray = self.tmp / "stray.src"
+        stray.write_text("x")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(mod.tidy_found("archive", [stray], True), 1)
+        self.assertIn(
+            f"refused: {self.tmp} is not {self.state / 'archive'}", out.getvalue()
+        )
+        self.assertTrue(stray.exists())
+
+    def test_a_line_is_bounded_by_every_date_below_it(self):
+        # cutoff 11-18 12:00. X sits above 11-17 (alone: kept to 11-19) and 11-16, a date that
+        # slipped back a day: written by the end of the 16th, plus a day, so it goes.
+        text = "# H\n## START HERE\n- now\n## 2026-11-10\n- X\n## 2026-11-17\n- a\n## 2026-11-16\n- b\n"
+        kept, _ = self.plan(text)
+        self.assertNotIn("- X\n", kept)
+
+    def test_a_date_keeps_the_lines_above_it_two_days(self):
+        # Above an 11-17 date only: the 17th plus two days of slack reaches past the cutoff.
+        text = "# H\n## START HERE\n- now\n## 2026-11-10\n- X\n## 2026-11-17\n- a\n"
+        kept, _ = self.plan(text)
+        self.assertIn("- X\n", kept)
+        text = text.replace("2026-11-17", "2026-11-16")
+        kept, _ = self.plan(text)
+        self.assertNotIn("- X\n", kept)
+
+    def test_shelve_refuses_a_path_outside_its_folder(self):
+        mod = load_tidy(self.state, self.brief)
+        stray = self.tmp / "stray.src"
+        stray.write_text("x")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(mod.shelve([stray], self.state), 1)
+        self.assertIn(f"refused: {stray} is not in {self.state}", out.getvalue())
+        self.assertTrue(stray.exists())
+
+    def test_the_preview_is_printed_when_state_is_no_state_folder(self):
+        (self.brief / "done").mkdir()
+        (self.brief / "done" / "W1.md").write_text("x")
+        git(self.brief, "add", "-A")
+        git(self.brief, "commit", "-qm", "d")
+        (self.state / "panes.tsv").unlink()
+        r = self.tidy("done")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("## done (1)\ndone/W1.md\n", r.stdout)
+        self.assertIn("the full list is above", r.stdout)
+        self.assertFalse((self.state / "tidy-preview.md").exists())
 
     def test_shapes_that_must_never_lose_recent_lines(self):
         cases = {
@@ -582,7 +758,6 @@ class ReviewRound1(unittest.TestCase):
         copies = list((self.state / "archive").glob("HEPH-dropped-*.md"))
         self.assertEqual(len(copies), 1)
         self.assertIn("00:41 old work", copies[0].read_text())
-        self.assertIn("loses 1 older", r.stdout)
         self.assertNotIn("00:41 old work", p.read_text())
 
     def test_heph_changed_mid_tidy_is_refused(self):

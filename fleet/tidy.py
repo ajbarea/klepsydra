@@ -1,21 +1,28 @@
 """tidy.py (`fleet tidy`): delete the finished history the fleet keeps outside git and GitHub.
 
 Usage:
-    fleet tidy [--apply] [PART ...]   a dry run without --apply; PART is one or more of
-                                      heph briefs archive queue done expired (default: all)
+    fleet tidy [--apply] [PART ...]   a dry run without --apply writes every line and path
+                                      that would go to tidy-preview.md in the state folder;
+                                      PART is one or more of heph briefs archive queue done
+                                      expired (default: all)
     fleet tidy --report FILE          the fleet-cleanup timer: prune the shots (fleet shots
                                       --apply), then write what is still left to FILE for doctor
 
 Finished work is recorded once, in merged PRs, closed issues and git history, so:
-  heph     HEPH.md keeps its head, its START HERE block and the log lines of the last
-           HEPH_HOURS hours; older lines go (outcomes live in GitHub and queue.md). Every date
-           guess errs toward keeping: an undated section stays whole, an earlier time means
-           midnight passed, and dates that go backwards refuse the tidy. What goes is copied
+  heph     HEPH.md keeps its head, its START HERE block, undated sections, standing rules and
+           every line it cannot prove older than HEPH_HOURS hours: a line goes only when an
+           explicit date below it (plus DATE_SLACK) is past the cutoff, and the lines below the
+           last date are bounded by the file's own time, so the newest never go. Dates that go
+           backwards, or a newer START HERE further down, refuse the tidy. What goes is copied
            to archive/ for KEEP_DAYS first (HEPH.md is in no repo). Refused while another
            process has it open or wrote it in the last WRITE_QUIET_S seconds. Its time is kept,
-           since `fleet recover` reads AJ's messages since HEPH.md was last written.
-  briefs   task-*.src and fresh-*.src of agents in no row of panes.tsv or paused.tsv and not
-           finished in the last KEEP_DAYS days, and older than KEEP_DAYS themselves.
+           since `fleet recover` reads AJ's messages since HEPH.md was last written. Writers
+           take no lock, so a write between the last check and the swap is lost, and the kept
+           time hides the rewrite from an editor's modified-since-read check: run it when the
+           orchestrator is between turns.
+  briefs   a fresh-*.src untouched for KEEP_DAYS, and a task-*.src once its agent finished over
+           KEEP_DAYS ago (one with no registry row waits for a launch); never one of an agent
+           in panes.tsv or paused.tsv. Each is moved to archive/briefs/ for KEEP_DAYS more.
   archive  entries of the state folder's archive/ untouched for KEEP_DAYS days, and each
            file of archive/briefs/ (brief.sh adds one per rewrite).
   queue    the briefing's Done lines dated before this week's Monday (the Monday sweep);
@@ -82,7 +89,7 @@ BRIEFING_KEEP = [
     ".gitattributes",
 ]
 BRIEF = re.compile(
-    r"^(?:task-(?P<t>.+)|fresh-(?P<f>.+?)(?:-\d{8}-\d{4}(?:-recover)?)?)\.src$"
+    r"^(?:task-(?P<t>.+)|fresh-(?P<f>.+?)(?:-\d{8}-\d{4}(?:-recover|-resume)?)?)\.src$"
 )
 
 log = logging.getLogger("fleet::tidy")
@@ -165,6 +172,7 @@ LINE_DATE = re.compile(r"^- (?:\*\*)?(?:(20\d\d)-)?(\d\d)-(\d\d)\b")
 LINE_TIME = re.compile(r"^- (?:\*\*)?(?:(?:20\d\d-)?\d\d-\d\d )?(\d{1,2}):(\d)(\d|x)\b")
 HEAD_TIME = re.compile(r"\b(\d{1,2}):(\d)(\d|x)\b")
 KEEP = dt.datetime.max  # the stamp of a line under an undated section: always kept
+DATE_SLACK = dt.timedelta(days=2)  # a date's own day, and the day it may slip back
 WINDOW_DAYS = 330  # a MM-DD further back than this is a future event named, not a date
 
 
@@ -189,9 +197,9 @@ def stamp_lines(
 ) -> tuple[list[dt.datetime | None], list[tuple[int, dt.date]]]:
     """A time for each line, and the explicit dates in file order as (line, date). The date
     comes from the nearest heading or dated line above, the time of day from the line's own
-    `- HH:MM` (or the line above). Every guess errs toward keeping: a time earlier than the one
-    before it with no new date means midnight passed, and a line under a `## ` heading that
-    carries no date is stamped KEEP. None only before the first heading."""
+    `- HH:MM` (or the line above). A line under a `## ` heading that carries no date is
+    stamped KEEP; None only before the first heading. These stamps date START HERE blocks and
+    mark undated sections; whether a log line goes is latest_times' bound, never a guess."""
     out: list[dt.datetime | None] = []
     marks: list[tuple[int, dt.date]] = []
     day: dt.date | None = None
@@ -233,12 +241,7 @@ def stamp_lines(
                 marks.append((n, got))
             t = LINE_TIME.match(line)
             if t and day and int(t[1]) < 24 and not undated:
-                mins = minutes_of(t)
-                if minutes is not None and mins < minutes:
-                    day += dt.timedelta(
-                        days=1
-                    )  # midnight passed, or an earlier note: keep
-                minutes = mins
+                minutes = minutes_of(t)
         if undated:
             out.append(KEEP)
         elif day is None:
@@ -255,10 +258,30 @@ STANDING = re.compile(
 )  # a rule AJ set to last
 
 
-def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
-    """The lines HEPH.md keeps, and a summary of what goes. Raises ValueError when the log
-    cannot be dated, has no START HERE block, or names dates out of order after it, so a
-    misread never drops a line."""
+def latest_times(
+    n: int, marks: list[tuple[int, dt.date]], written: dt.datetime
+) -> list[dt.datetime]:
+    """The latest each of N lines can have been written. The log only grows at its end, so a
+    line is no newer than the next explicit date below it (that day, plus the one day a date
+    may slip back), and the lines below the last date no newer than the file itself. A line
+    with no date of its own is never guessed old: a gap in the log cannot pull it back."""
+    at = dict(marks)
+    out: list[dt.datetime] = [written] * n
+    bound = written
+    for i in range(n - 1, -1, -1):
+        if i in at:
+            bound = min(bound, dt.datetime.combine(at[i], dt.time()) + DATE_SLACK)
+        out[i] = bound
+    return out
+
+
+def plan_heph(
+    text: str, now: dt.datetime, written: dt.datetime | None = None
+) -> tuple[list[str], dict]:
+    """The lines HEPH.md keeps, and a summary of what goes. A line goes only when the latest
+    it can have been written (latest_times; WRITTEN is the file's own time) is over HEPH_HOURS
+    ago. Raises ValueError when the log has no START HERE block, no date after it, or dates
+    out of order, so a misread never drops a line."""
     lines = text.splitlines(keepends=True)
     heads = [i for i, ln in enumerate(lines) if H2.match(ln)]
     if not heads:
@@ -291,6 +314,7 @@ def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
                 "merge it into the top one first"
             )
     cutoff = now - dt.timedelta(hours=HEPH_HOURS)
+    latest = latest_times(len(lines), marks, written or now)
     keep = set(range(heads[0])) | set(range(s0, s1))
     standing = 0
     losses: list[tuple[str, int]] = []
@@ -299,12 +323,12 @@ def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
             continue
         end = heads[n + 1] if n + 1 < len(heads) else len(lines)
         body = range(h + 1, end)
-        recent = [i for i in body if stamps[i] is not None and stamps[i] >= cutoff]
+        recent = [i for i in body if stamps[i] == KEEP or latest[i] >= cutoff]
         new = set(recent)
         marked = [i for i in body if i not in new and STANDING.search(lines[i])]
         standing += len(marked)
         recent += marked  # a standing rule stays until someone moves it to its home
-        if (stamps[h] is not None and stamps[h] >= cutoff) or recent:
+        if stamps[h] == KEEP or latest[h] >= cutoff or recent:
             keep.add(h)
             keep.update(recent)
             lost = len(body) - len(recent)
@@ -360,7 +384,7 @@ def tidy_heph(apply: bool) -> int:
     text = path.read_text(encoding="utf-8", errors="surrogateescape")
     now = dt.datetime.fromtimestamp(NOW)
     try:
-        kept, s = plan_heph(text, now)
+        kept, s = plan_heph(text, now, dt.datetime.fromtimestamp(st.st_mtime))
     except ValueError as exc:
         print(f"heph: refused: {exc}; nothing dropped")
         return 1
@@ -370,6 +394,7 @@ def tidy_heph(apply: bool) -> int:
         f"({s['kept_bytes'] // 1024} KB): the head, START HERE and the log since {s['since']}; "
         f"{'drops' if apply else 'would drop'} {gone} lines in {len(s['sections_dropped'])} sections"
     )
+    preview("heph", [ln.rstrip("\r\n") for ln in s["dropped_lines"]])
     secs = s["sections_dropped"]
     for h in secs if len(secs) <= 6 else [*secs[:3], "...", *secs[-3:]]:
         print(f"  {h[:110]}")
@@ -393,13 +418,12 @@ def tidy_heph(apply: bool) -> int:
         return 1
     # What goes is kept for KEEP_DAYS in archive/, which the archive part then expires, so a
     # misread date is recoverable for a week (HEPH.md is in no repo).
-    arc = STATE / "archive"
-    if arc.is_symlink():
+    arc = safe_archive(STATE / "archive")
+    if arc is None:
         print(
-            "heph: refused: archive/ is a link; the dropped lines need a safe copy first"
+            "heph: refused: archive/ is a link or no folder; the dropped lines need a safe copy first"
         )
         return 1
-    arc.mkdir(exist_ok=True)
     copy = arc / f"HEPH-dropped-{dt.datetime.fromtimestamp(NOW):%Y%m%d-%H%M%S}.md"
     copy.write_text(
         "".join(s["dropped_lines"]), encoding="utf-8", errors="surrogateescape"
@@ -451,11 +475,13 @@ def rows(path: Path) -> list[list[str]]:
     return [ln.split("\t") for ln in text.splitlines() if ln.strip()]
 
 
-def protected() -> tuple[set[str], set[str]]:
+def protected() -> tuple[set[str], set[str], set[str]]:
     """(names, paths) of agents whose briefs stay: every row of panes.tsv and paused.tsv, and
-    agents finished or unpaused in the last KEEP_DAYS days."""
+    agents finished or unpaused in the last KEEP_DAYS days; and the names of agents finished
+    before that, the only ones whose task brief may go."""
     names: set[str] = set()
     paths: set[str] = set()
+    gone: set[str] = set()
     for r in rows(STATE / "panes.tsv"):
         names.update(r[1:2])
         paths.update(f for f in r if f.endswith(".src"))
@@ -473,13 +499,18 @@ def protected() -> tuple[set[str], set[str]]:
         if recent:
             names.update(r[1:2])
             paths.update(f for f in r if f.endswith(".src"))
+        else:
+            gone.update(r[1:2])
     for r in rows(STATE / "unpaused.tsv"):
         names.update(r[:1])
-    return names - {""}, paths
+    return names - {""}, paths, gone
 
 
 def stale_briefs() -> list[Path]:
-    names, paths = protected()
+    """Briefs that may go: a fresh brief (pasted once at launch) untouched for KEEP_DAYS, and a
+    task brief only once its agent finished over KEEP_DAYS ago. A task brief with no registry
+    row waits for a launch, so it stays."""
+    names, paths, gone = protected()
     cutoff = NOW - KEEP_DAYS * 86400
     out = []
     with os.scandir(STATE) as it:
@@ -489,7 +520,8 @@ def stale_briefs() -> list[Path]:
                 continue
             name = m["t"] or m["f"]
             if (
-                name in names
+                (m["t"] is not None and name not in gone)
+                or name in names
                 or e.path in paths
                 or e.stat(follow_symlinks=False).st_mtime >= cutoff
             ):
@@ -532,6 +564,74 @@ def stale_archive() -> list[Path]:
             elif newest_mtime(p) < cutoff:
                 out.append(p)
     return sorted(out)
+
+
+PREVIEW: list[str] = []
+
+
+def preview(part: str, items: list[str]) -> None:
+    """Every line or path PART would drop, for the dry run's full list."""
+    if items:
+        PREVIEW.append(f"## {part} ({len(items)})\n")
+        PREVIEW.extend(f"{x}\n" for x in items)
+
+
+def write_preview() -> str:
+    """The dry run's full list, written to the state folder (or printed when it cannot be)."""
+    if not PREVIEW:
+        return "nothing would go"
+    out = STATE / "tidy-preview.md"
+    body = "# fleet tidy: everything the dry run would drop\n\n" + "".join(PREVIEW)
+    try:
+        # Only into the state folder; os.replace swaps a link itself, never its target.
+        if not is_state_folder(STATE):
+            raise OSError("not the state folder")
+        fd, tmp = tempfile.mkstemp(dir=STATE, prefix=".tidy-preview.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:
+            f.write(body)
+        os.replace(tmp, out)
+    except OSError:
+        sys.stdout.write(body)
+        return "the full list is above"
+    return f"the full list is in {out}"
+
+
+def safe_archive(arc: Path) -> Path | None:
+    """ARC, made if missing, or None when it is a link or not a folder."""
+    if arc.is_symlink():
+        return None
+    try:
+        arc.mkdir(exist_ok=True)
+    except OSError:
+        return None
+    return arc  # mkdir raised above when ARC is a file
+
+
+def shelve(paths: list[Path], under: Path) -> int:
+    """Move each brief, which must sit directly in UNDER, to archive/briefs/ stamped now, so the
+    archive part keeps it KEEP_DAYS more: a brief removed in error comes back from there."""
+    arc = safe_archive(STATE / "archive")
+    dest = safe_archive(arc / "briefs") if arc else None
+    if dest is None:
+        print(
+            "  refused: archive/ or archive/briefs/ is a link or no folder; nothing moved"
+        )
+        return 1
+    stamp = f"{dt.datetime.fromtimestamp(NOW):%Y%m%d-%H%M%S}"
+    failed = 0
+    for p in paths:
+        if p.parent != under:
+            print(f"  refused: {p} is not in {under}")
+            failed = 1
+            continue
+        to = dest / f"{p.name}.tidy-{stamp}"
+        try:
+            os.replace(p, to)
+            os.utime(to, follow_symlinks=False)
+        except OSError as exc:
+            print(f"  could not move {p.name}: {exc.strerror or exc}")
+            failed = 1
+    return failed
 
 
 def remove(paths: list[Path], under: Path) -> int:
@@ -606,6 +706,13 @@ def tidy_found(part: str, found: list[Path], apply: bool) -> int:
         print(f"  {p.name}")
     if len(found) > 5:
         print(f"  ... and {len(found) - 5} more")
+    preview(
+        part,
+        [
+            str(p.relative_to(STATE)) if p.is_relative_to(STATE) else str(p)
+            for p in found
+        ],
+    )
     if not apply or not found:
         return 0
     failed = 0
@@ -614,7 +721,8 @@ def tidy_found(part: str, found: list[Path], apply: bool) -> int:
             print(f"  refused: {parent} is not {under}")
             failed = 1
             continue
-        failed |= remove([p for p in found if p.parent == parent], parent)
+        mine = [p for p in found if p.parent == parent]
+        failed |= shelve(mine, parent) if part == "briefs" else remove(mine, parent)
     event(logging.INFO, f"{part} tidied", removed=len(found), failed=failed)
     return failed
 
@@ -689,6 +797,7 @@ def tidy_queue(apply: bool, mod) -> int:
     )
     for ln in dropped:
         print(f"  {ln[:140]}")
+    preview("queue", [ln.rstrip("\r\n") for ln in dropped])
     if not apply or not dropped:
         return 0
     try:
@@ -805,6 +914,7 @@ def tidy_done(apply: bool) -> int:
     print(
         f"done: {'removes' if apply else 'would remove'} {len(files)} retired done/ files (GitHub holds the work; harvest lessons first)"
     )
+    preview("done", files)
     if not apply or not files:
         return 0
     return git_remove(files, "Retire done/: finished work lives in GitHub")
@@ -833,6 +943,7 @@ def tidy_expired(apply: bool, mod) -> int:
     )
     for g, why in sorted(gone.items()):
         print(f"  {g}: {why}")
+    preview("expired", files)
     if not apply or not files:
         return 0
     return git_remove(files, f"Remove {len(files)} expired briefing files")
@@ -929,7 +1040,7 @@ def main(argv: list[str]) -> int:
             f"refused: {STATE} holds no panes.tsv, so it is not the fleet's state folder"
         )
         return 1
-    lock = open(STATE / ".tidy.lock", "w") if state_parts else None
+    lock = open(STATE / ".tidy.lock", "a") if state_parts else None
     if lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -950,7 +1061,7 @@ def main(argv: list[str]) -> int:
         elif part == "expired":
             failed |= tidy_expired(a.apply, mod)
     if not a.apply:
-        print("dry run: nothing changed; add --apply to do it")
+        print(f"dry run: nothing changed; {write_preview()}; add --apply to do it")
     return failed
 
 

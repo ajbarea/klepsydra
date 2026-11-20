@@ -552,7 +552,7 @@ elif ! cl=$(jq -r --argjson now "$now" --argjson hk "$heph_max_kb" '
       (if ((.unowned // []) | length) > 0 then "\(.unowned | length) briefing paths with no owner + expires (\(.unowned[0:3] | join(", "))): add the frontmatter, or harvest and delete them" else empty end),
       (if n("queue_old") > 0 then "\(n("queue_old")) Done lines in queue.md predate this week: harvest lessons, then fleet tidy --apply queue" else empty end),
       (if n("heph_bytes") > $hk * 1024 then "HEPH.md is \(n("heph_bytes") / 1024 | floor) KB, past \($hk) KB: the orchestrator runs fleet tidy heph (dry run first)" else empty end),
-      (if (n("briefs_stale") + n("archive_stale")) > 0 then "\(n("briefs_stale")) stale briefs and \(n("archive_stale")) old archive entries: fleet tidy --apply briefs archive" else empty end)
+      (if (n("briefs_stale") + n("archive_stale")) > 0 then "\(n("briefs_stale")) stale briefs and \(n("archive_stale")) old archive entries: fleet tidy briefs archive lists them all, then --apply" else empty end)
     ] | join("; ")' "$cleanup_report" 2>/dev/null); then
   report warn "cleanup" "could not read $(tilde "$cleanup_report"): fleet tidy --report rewrites it"
 elif [[ -n $cl ]]; then
