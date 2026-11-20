@@ -200,6 +200,8 @@ check "agy 1.5.12 real fixture: idle" "$(eng_state agy "$idle12")" "idle"
 check "agy 1.5.12 real fixture: busy" "$(eng_state agy "$busy12")" "busy"
 bg_task=$(cat "$here/fixtures/agy-1.5.13-bg-running.txt")
 check "agy 1.5.13 real background task fixture reads busy" "$(eng_state agy "$bg_task")" "busy"
+loading_screen=$'────\n> ask\n  reply\n⢿  Loading...\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%'
+check "agy: ⢿ Loading... screen reads busy" "$(eng_state agy "$loading_screen")" "busy"
 check "agy 1.5.12: a short reply that is a quota message is a limit" "$(eng_state agy $'────\n> ask\n  You have exhausted your quota\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%')" "limit"
 check "agy 1.5.12: a short answer about a 429 is a limit too" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\nGemini 3.8 Flash (Low) · ctx 0% · 5h 21% · 7d 39%')" "limit"
 

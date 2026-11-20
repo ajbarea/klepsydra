@@ -132,7 +132,9 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   elif [[ $engine == agy && $foot == *"· ctx "* ]]; then
     # agy 1.5.12+ status line footer (#488). Busy shows spinner/activity above the box,
     # or a background task row under the box whose text ends in "running".
-    if grep -Eq '●.*running[[:space:]]*$' <<<"$recent" || grep -Eq '([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⡿⣽⣻⣾⣷⣯⣟]|(Generating|Thinking|Running command|Planning)\.\.\.)' <<<"$(head -n -1 <<<"$recent")"; then
+    local above_foot
+    above_foot=$(head -n -1 <<<"$recent")
+    if grep -Eq '●.*running[[:space:]]*$' <<<"$recent" || grep -Pq '[\x{2800}-\x{28ff}]|(Generating|Thinking|Running command|Planning|Loading)\.\.\.' <<<"$above_foot"; then
       footer=busy
     else
       footer=idle
