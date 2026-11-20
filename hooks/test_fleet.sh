@@ -606,6 +606,31 @@ check "an end for an unknown session writes nothing" "$([[ -e $file ]] && echo w
 fire session-start.json '.session_title = "fleet-plan"'
 check "a custom title names it" "$(field .name)" '"fleet-plan"'
 
+# Session name fallback: engine title > worktree branch > brief first line (Claude and agy)
+rm -f "$file"
+fire session-start.json
+check "worktree branch fallback names it" "$(field .name)" '"feat/fleet-visualizer"'
+
+mkdir -p "$work/briefs"
+printf '# Fix agy cards\nDo something\n' >"$work/briefs/brief.md"
+rm -f "$file"
+fire session-start.json ".cwd = \"$repos/klepsydra\""
+now=1792353510 fire user-prompt.json ".cwd = \"$repos/klepsydra\" | .prompt = \"Read your brief at $work/briefs/brief.md\""
+check "brief first line fallback names it" "$(field .name)" '"Fix agy cards"'
+
+rm -f "$file"
+fire session-start.json '.engine = "agy" | .session_title = "custom-agy"'
+check "agy engine title names it" "$(field .name)" '"custom-agy"'
+
+rm -f "$file"
+fire session-start.json '.engine = "agy"'
+check "agy worktree fallback names it" "$(field .name)" '"feat/fleet-visualizer"'
+
+rm -f "$file"
+fire session-start.json ".engine = \"agy\" | .cwd = \"$repos/klepsydra\""
+now=1792353520 fire user-prompt.json ".engine = \"agy\" | .cwd = \"$repos/klepsydra\" | .prompt = \"Read your brief at $work/briefs/brief.md\""
+check "agy brief first line fallback names it" "$(field .name)" '"Fix agy cards"'
+
 echo "bad input"
 out=$(KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" bash "$hook" <"$fixtures/malformed.json"); rc=$?
 check "malformed: exit 0" "$rc" "0"
