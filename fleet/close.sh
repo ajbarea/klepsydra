@@ -99,9 +99,9 @@ above_raw() { head -n "$(above_rows "$1")" <<<"$1"; } # SCREEN
 above_rows() { # SCREEN
   plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }'
 }
-# Whether ABOVE (above_raw's) shows Claude Code's command menu, its "❯ /exit" row first (2.1.316 opens it
-# on "/exit" with no space after it).
-menu_open() { plain <<<"$1" | grep -q '^  ❯ /exit\( \|$\)'; } # ABOVE
+# Whether RAW_ABOVE (above_raw's, escapes kept) shows Claude Code's command menu, its "❯ /exit" row first
+# (2.1.316 opens it on "/exit" with no space after it).
+menu_open() { plain <<<"$1" | grep -q '^  ❯ /exit\( \|$\)'; } # RAW_ABOVE
 # Erase our "/exit " from PANE's box once its text reads just /exit: six backspaces, then again for what
 # is left of /exit should more spaces have followed it (the box shows none), so no "/e" stays behind.
 back_out() { # PANE

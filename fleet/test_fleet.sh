@@ -2346,6 +2346,13 @@ check "#496 review 3: \"/exit \" keeps the menu shut, so a resting screen reads 
 # is refused: 5 resting transcripts and a gap under the menu, and 10 that scrolled up under it (#483).
 check "#496 review 3: every screen with the /exit menu open differs (16 captures)" \
   "$(for f in "$cs"/*-after.txt "$cs"/*-scroll*.txt; do [[ $f == */space-* ]] && continue; fn=${f##*/}; replay "$cs/${fn%-*}-before.txt" "$f"; done | sort | uniq -c | tr -s ' ')" " 16 differs"
+# The menu check on real screens: it sees the menu on each of those 16 and on no "/exit " screen (#496 review 5).
+menu_seen() { # SCREEN-FILE: menu or none
+  ( eval "$(awk '/^above_raw\(\)/,/^steady\(\)/' "$here/close.sh" | sed '$d')"
+    menu_open "$(above_raw "$(cat "$1")")" && echo menu || echo none )
+}
+check "#496 review 5: menu_open finds the menu on all 16 real menu screens and on none of the 6 \"/exit \" screens" \
+  "$(for f in "$cs"/*-after.txt "$cs"/*-scroll*.txt; do [[ $f == */space-* ]] && continue; menu_seen "$f"; done | sort | uniq -c | tr -s ' ') $(for f in "$cs"/space-*-after.txt; do menu_seen "$f"; done | sort | uniq -c | tr -s ' ')" " 16 menu  6 none"
 # The last look before Enter, its screen read stubbed with a real capture (#496 review 2): unchanged it
 # passes; a spinner just above the box, a changed transcript row, or more text in the box each refuse.
 look() { # SREF-SCREEN NOW-SCREEN: ok, or the check that failed
