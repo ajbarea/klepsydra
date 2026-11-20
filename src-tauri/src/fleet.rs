@@ -190,15 +190,18 @@ fn needs_beside(
 }
 
 /// The queue file and the Needs you file the wall follows now, as the
-/// settings page shows them; an empty path where one cannot be told.
+/// settings page shows them: an empty path where one cannot be told, and why.
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FleetFiles {
     queue: String,
     needs: String,
+    queue_error: Option<String>,
+    needs_error: Option<String>,
 }
 
 fn fleet_files(app: &AppHandle) -> FleetFiles {
-    let shown = |p: &Result<PathBuf, String>| {
+    let path = |p: &Result<PathBuf, String>| {
         p.as_ref()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default()
@@ -206,8 +209,10 @@ fn fleet_files(app: &AppHandle) -> FleetFiles {
     let queue = queue_source(app).0;
     let needs = needs_beside(app, queue.clone()).0;
     FleetFiles {
-        queue: shown(&queue),
-        needs: shown(&needs),
+        queue: path(&queue),
+        needs: path(&needs),
+        queue_error: queue.as_ref().err().cloned(),
+        needs_error: needs.as_ref().err().cloned(),
     }
 }
 
@@ -248,6 +253,10 @@ async fn choose_list(app: AppHandle, list: queue::List) -> Result<FleetFiles, St
     };
     if let Some(folder) = source.0.ok().and_then(|p| Some(p.parent()?.to_path_buf())) {
         pick = pick.set_directory(folder);
+    }
+    // Modal to the wall: no second picker while this one is open.
+    if let Some(wall) = app.get_webview_window(WALL) {
+        pick = pick.set_parent(&wall);
     }
     // The dialog waits on the user: off the async runtime's workers.
     let file = tauri::async_runtime::spawn_blocking(move || pick.blocking_pick_file())
@@ -477,16 +486,23 @@ pub async fn open_settings(app: AppHandle) -> Result<(), String> {
 fn show_wall(app: &AppHandle, focus: &str, settings: bool) -> Result<(), String> {
     app.state::<Fleet>().focus(WALL, focus);
     if let Some(wall) = app.get_webview_window(WALL) {
-        if settings {
-            wall.eval("location.hash = '#settings'")
-                .map_err(|e| e.to_string())?;
-        }
+        // The hash is the wall's one switch between its page and the cards.
+        let to = if settings {
+            "location.hash = '#settings'"
+        } else {
+            "if (location.hash === '#settings') location.hash = ''"
+        };
+        wall.eval(to).map_err(|e| e.to_string())?;
         wall.show().map_err(|e| e.to_string())?;
         let _ = wall.unminimize();
         let _ = wall.set_focus();
         return Ok(());
     }
-    let page = if settings { "wall.html#settings" } else { "wall.html" };
+    let page = if settings {
+        "wall.html#settings"
+    } else {
+        "wall.html"
+    };
     let wall = WebviewWindowBuilder::new(app, "wall", WebviewUrl::App(page.into()))
         .title("klepsydra fleet")
         .inner_size(1280.0, 800.0)

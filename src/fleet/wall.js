@@ -1710,8 +1710,8 @@ new ResizeObserver(() => {
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
-// Characters (#135): the theme picker, the tray's Characters menu and the
-// phone all wear one theme. html[data-theme] names it, as a CSS colour theme
+// Characters (#135): the theme picker, the settings page's Characters row and
+// the phone all wear one theme. html[data-theme] names it, as a CSS colour theme
 // does, and a switch repaints every name, face, epithet and accent from the
 // data already held: the wall and its compact cards, the empty wall's keeper,
 // an open portrait, the Ledger and the Queue's keeper, with nothing read again.
@@ -1925,12 +1925,18 @@ document.addEventListener("visibilitychange", () => {
 // clears it. Rows bound to a wall control call that control's own function.
 const mainEl = document.getElementById("main");
 const settingsEl = document.getElementById("settings");
+// The engines the menu lets you make default (usable now); a saved one that
+// cannot start now stays listed, with what + New session starts instead.
 const nsView = () => {
-  const { entries } = nsState();
+  const { entries, pick } = nsState();
+  const saved = ns.prefs.default ?? "";
+  const off = saved && !entries.some((e) => e.id === saved && e.usable);
+  const name = entries.find((e) => e.id === saved)?.name ?? saved;
   return {
-    value: ns.prefs.default ?? "",
-    options: [{ value: "", label: "Last used" }, ...entries.map((e) => ({ value: e.id, label: e.name }))],
+    value: saved,
+    options: [{ value: "", label: "Last used" }, ...entries.filter((e) => e.usable || e.id === saved).map((e) => ({ value: e.id, label: e.name }))],
     disabled: !ns.ready,
+    note: off && ns.ready ? `${name} cannot start now, so + New session starts ${pick.entry.name}.` : "",
   };
 };
 settingsController = mountSettings({
@@ -1961,6 +1967,8 @@ function showView() {
   const settings = location.hash === "#settings" && !served;
   if (settings === !settingsEl.hidden) return;
   gear.open = false;
+  // A hidden Queue or Ledger, modal under 1200 px, would hold the focus: shut while the page shows.
+  if (settings) edge.hold();
   settingsEl.hidden = !settings;
   bar.hidden = settings;
   mainEl.hidden = settings;
@@ -1968,7 +1976,10 @@ function showView() {
   if (settings) {
     settingsController.refresh();
     settingsEl.querySelector("#settings-search-input").focus();
-  } else gear.querySelector("summary").focus();
+  } else {
+    gear.querySelector("summary").focus();
+    edge.release();
+  }
 }
 document.getElementById("gear-settings-open").addEventListener("click", () => {
   location.hash = "#settings";

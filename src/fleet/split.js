@@ -29,10 +29,19 @@ export function wireSplit({ button, note, invoke, app, follow }) {
     for (const f of heard) f(on);
   };
   show(false);
-  const set = async (on) => {
-    const said = await invoke("set_split_mode", { on });
-    show(on);
-    return said;
+  // One call at a time from the toolbar and the settings page alike: a second
+  // ask while one runs gets that one's answer.
+  let flying = null;
+  const set = (on) => {
+    flying ??= invoke("set_split_mode", { on })
+      .then((said) => {
+        show(on);
+        return said;
+      })
+      .finally(() => {
+        flying = null;
+      });
+    return flying;
   };
   const turn = (on) => press(button, note, () => set(on));
   const split = {

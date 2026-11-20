@@ -136,7 +136,7 @@ pub fn voices_args() -> Vec<String> {
         .to_vec()
 }
 
-/// Make keryx follow the saved Voices mode now, off the tray's thread, logged
+/// Make keryx follow the saved Voices mode now, off the caller's thread, logged
 /// like every call. The resume service applies a changed mode as well.
 pub fn apply_voices() {
     let args = voices_args();

@@ -203,7 +203,7 @@ fn layout_of(app: &tauri::AppHandle) -> &'static str {
 }
 
 /// Who follows the layout: the gauge, sent the saved layout when it subscribes
-/// and again after each change from the tray. A type of its own, not an alias:
+/// and again after each change from Settings. A type of its own, not an alias:
 /// the fleet's hub is managed state of the same shape.
 #[derive(Default)]
 struct Layouts(klepsydra_fleet::hub::Hub<fleet::Webview>);
@@ -1021,7 +1021,6 @@ fn main() {
             fleet::set_wall_density,
             theme::theme_subscribe,
             theme::set_theme,
-            theme::get_theme,
             voices::get_voices_mode,
             voices::set_voices_mode,
             fleet::open_settings,
@@ -1058,7 +1057,7 @@ fn main() {
             window.set_resizable(true)?;
 
             // Enable autostart once, on first run. Re-enabling unconditionally
-            // would quietly undo the user turning it off from the tray. When it
+            // would quietly undo the user turning it off in Settings. When it
             // is already on, re-register anyway so the recorded path follows the
             // executable if it moves.
             let autostart = app.autolaunch();

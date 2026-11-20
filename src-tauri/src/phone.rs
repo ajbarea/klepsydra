@@ -1,5 +1,5 @@
-//! The tray's Phone wall: the fleet crate's read-only wall server, on while
-//! the box is ticked and remembered in prefs.json. It serves the bundled
+//! Settings' Phone wall: the fleet crate's read-only wall server, on while
+//! the row is on and remembered in prefs.json. It serves the bundled
 //! frontend through Tauri's asset resolver, the fleet's latest snapshot and
 //! the usage readings the gauge reads.
 
@@ -24,7 +24,10 @@ pub fn saved(app: &AppHandle) -> bool {
 
 /// Whether the server is running now.
 pub fn serving(app: &AppHandle) -> bool {
-    app.state::<Phone>().0.lock().is_ok_and(|slot| slot.is_some())
+    app.state::<Phone>()
+        .0
+        .lock()
+        .is_ok_and(|slot| slot.is_some())
 }
 
 /// Turn the server on or off and return whether it is on now: a port in

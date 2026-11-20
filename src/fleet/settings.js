@@ -33,13 +33,19 @@ export async function readRow(row, invoke, bindings = {}) {
  * the app's message, if it sent one, as the note.
  */
 export async function apply(row, invoke, value, bindings = {}) {
+  return (await applied(row, invoke, value, bindings)).view;
+}
+
+/** `apply`, with the command's raw answer, which rows sharing it (registry `shares`) show too. */
+async function applied(row, invoke, value, bindings) {
   if (row.bind) {
     const b = bindings[row.bind];
     const said = await b.write(value);
     const view = b.view();
-    return typeof said === "string" && said && !view.note ? { ...view, note: said } : view;
+    return { view: typeof said === "string" && said && !view.note ? { ...view, note: said } : view };
   }
-  return viewOf(row, await row.write(invoke, value));
+  const raw = await row.write(invoke, value);
+  return { view: viewOf(row, raw), raw };
 }
 
 /** The words of a refusal: a Tauri command rejects with a string. */
@@ -127,7 +133,8 @@ export function mountSettings({ container, invoke, bindings = {}, onBack }) {
     }
     if (view.available === false) unavailable.add(id);
     else unavailable.delete(id);
-    if ("note" in view) e.note.textContent = view.note ?? "";
+    // Rewritten only when it changes: a status note is read out each time it is.
+    if ("note" in view && e.note.textContent !== (view.note ?? "")) e.note.textContent = view.note ?? "";
     e.show(view);
     applySearch();
   }
@@ -230,19 +237,46 @@ export function mountSettings({ container, invoke, bindings = {}, onBack }) {
       el.setAttribute("aria-describedby", `desc-${row.id} note-${row.id}`);
       return el;
     };
+    // One call at a time per row: a choice made while one runs waits, and only
+    // the last such choice is sent (a held arrow key sends two, not one a step).
+    let running = null;
+    let next = null; // { value } waiting for the running call
     /** Apply `value` and show what came back; a refusal keeps what was shown and says why. */
-    const run = async (value, busy) => {
-      busy.setAttribute("aria-busy", "true");
+    const run = (value, busy) => {
+      if (running) {
+        next = { value };
+        return running;
+      }
+      running = (async () => {
+        busy.setAttribute("aria-busy", "true");
+        let view = null;
+        try {
+          let ask = { value };
+          while (ask) {
+            view = await once(ask.value);
+            ask = next;
+            next = null;
+          }
+        } finally {
+          busy.removeAttribute("aria-busy");
+          running = null;
+        }
+        return view;
+      })();
+      return running;
+    };
+    const once = async (value) => {
       try {
-        const view = await apply(row, invoke, value, bindings);
+        const { view, raw } = await applied(row, invoke, value, bindings);
         show(row.id, view);
+        if (row.shares) for (const r of ROWS) if (r !== row && r.shares === row.shares) show(r.id, viewOf(r, raw));
         return view;
       } catch (err) {
         log.warn(`settings: ${row.id} was not changed`, err);
-        e.note.textContent = `Not changed: ${why(err)}`;
+        // A bound control may have changed the wall before its save failed: show it as it is.
+        if (row.bind) show(row.id, bindings[row.bind].view());
+        e.note.textContent = `${row.bind ? "Not saved" : "Not changed"}: ${why(err)}`;
         return null;
-      } finally {
-        busy.removeAttribute("aria-busy");
       }
     };
     const type = row.control.type;
@@ -275,7 +309,11 @@ export function mountSettings({ container, invoke, bindings = {}, onBack }) {
         b.tabIndex = -1;
         b.dataset.value = opt.value;
         b.addEventListener("click", () => {
-          if (b.getAttribute("aria-checked") !== "true") run(opt.value, seg);
+          if (b.getAttribute("aria-checked") === "true") return;
+          // Checked as chosen while the app answers; its answer then shows.
+          for (const r of radios) r.setAttribute("aria-checked", r === b ? "true" : "false");
+          stop();
+          run(opt.value, seg);
         });
         return b;
       });
@@ -284,13 +322,13 @@ export function mountSettings({ container, invoke, bindings = {}, onBack }) {
         for (const b of radios) b.tabIndex = b === on ? 0 : -1;
       };
       seg.addEventListener("keydown", (ev) => {
-        const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
-        if (!step) return;
-        ev.preventDefault();
         const at = radios.indexOf(document.activeElement);
-        const next = radios[(at + step + radios.length) % radios.length];
-        next.focus();
-        next.click();
+        const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+        const to = step ? (at + step + radios.length) % radios.length : { Home: 0, End: radios.length - 1 }[ev.key];
+        if (to === undefined) return;
+        ev.preventDefault();
+        radios[to].focus();
+        radios[to].click();
       });
       seg.append(...radios);
       stop();
@@ -308,11 +346,17 @@ export function mountSettings({ container, invoke, bindings = {}, onBack }) {
       // A choice still waiting to be saved (the theme's) is saved as the select lets go.
       sel.addEventListener("blur", () => row.bind && bindings[row.bind]?.flush?.());
       e.ctrl.append(sel);
+      let listed = "";
       return (view) => {
         if (view.options) {
           const value = String(view.value ?? "");
           const options = view.options.some((o) => o.value === value) ? view.options : [...view.options, { value, label: value }];
-          sel.replaceChildren(...options.map((o) => Object.assign(document.createElement("option"), { value: o.value, textContent: o.label })));
+          // Rebuilt only when the list changes: a rebuild closes a list the user has open.
+          const key = JSON.stringify(options);
+          if (key !== listed) {
+            listed = key;
+            sel.replaceChildren(...options.map((o) => Object.assign(document.createElement("option"), { value: o.value, textContent: o.label })));
+          }
         }
         if ("value" in view) sel.value = String(view.value ?? "");
         if ("disabled" in view) sel.disabled = Boolean(view.disabled);

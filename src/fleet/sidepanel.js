@@ -102,9 +102,27 @@ export function textKey(e) {
  */
 export function createEdge() {
   const panels = new Set();
+  let held = null; // the panels a page standing in the wall's place shut, to reopen
   return {
     join(panel) {
       panels.add(panel);
+    },
+    /**
+     * A page stands in the wall's place (Settings): shut every open panel,
+     * so no hidden modal holds the focus, and keep their keys from opening
+     * one until `release`, which reopens what was open.
+     */
+    hold() {
+      held ??= [...panels].filter((p) => p.isOpen);
+      for (const p of held) p.shut();
+    },
+    release() {
+      const open = held ?? [];
+      held = null;
+      for (const p of open) p.open();
+    },
+    get held() {
+      return held !== null;
     },
     /** Shut every panel but `panel`, leaving focus to the one that opens. */
     opening(panel) {

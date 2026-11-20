@@ -442,8 +442,8 @@ in front. Its menu holds three items: **Open wall**, **Settings...** and
 Every choice lives on one page of the wall window: **Settings...** in the tray,
 or **Settings…** under the wall's gear. A choice applies at once, with no Save
 button, and each row shows what the app reports back, so a choice the app
-could not make (a held login entry, a phone wall whose port is in use) reads
-as it is, with a line saying why. Press `/` to search the rows by name or
+could not make (a held login entry, a phone wall whose port is in use) shows
+as it is, with a note under the row; the [log](#logs) has the cause. Press `/` to search the rows by name or
 description; Escape clears the search, then returns to the wall. The rows for
 Split, card density, Characters and + New session's default run the same code
 as the wall's own controls, so the two always agree.

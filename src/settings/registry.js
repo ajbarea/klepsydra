@@ -123,7 +123,9 @@ export const ROWS = [
     control: { type: "path", buttonLabel: "Choose…" },
     read: (invoke) => invoke("get_fleet_files"),
     write: (invoke) => invoke("choose_queue_file"),
-    view: (files) => ({ value: files?.queue ?? "" }),
+    // Both files come back from either pick: a new queue file moves the Needs you file beside it.
+    shares: "fleet_files",
+    view: (files) => ({ value: files?.queue ?? "", note: files?.queueError ?? "" }),
   },
   {
     id: "needs_file",
@@ -133,7 +135,8 @@ export const ROWS = [
     control: { type: "path", buttonLabel: "Choose…" },
     read: (invoke) => invoke("get_fleet_files"),
     write: (invoke) => invoke("choose_needs_file"),
-    view: (files) => ({ value: files?.needs ?? "" }),
+    shares: "fleet_files",
+    view: (files) => ({ value: files?.needs ?? "", note: files?.needsError ?? "" }),
   },
   {
     id: "autostart",

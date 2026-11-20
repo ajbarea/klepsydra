@@ -1,5 +1,5 @@
 //! A choice kept in prefs.json under one key, from a fixed table of ids and
-//! the tray's labels, the first the default: the Characters theme and the
+//! their labels, the first the default: the Characters theme and the
 //! Voices mode.
 
 use serde_json::{Map, Value};

@@ -74,8 +74,14 @@ const CASES = [
     answer: { tick: "heph", says: "Not saved: the mode is still Heph only." },
     shown: { value: "heph", note: "Not saved: the mode is still Heph only." },
   },
-  { id: "queue_file", cmd: "choose_queue_file", args: undefined, answer: { queue: "C:\\q.md", needs: "C:\\n.md" }, shown: { value: "C:\\q.md" } },
-  { id: "needs_file", cmd: "choose_needs_file", args: undefined, answer: { queue: "C:\\q.md", needs: "C:\\n.md" }, shown: { value: "C:\\n.md" } },
+  { id: "queue_file", cmd: "choose_queue_file", args: undefined, answer: { queue: "C:\\q.md", needs: "C:\\n.md" }, shown: { value: "C:\\q.md", note: "" } },
+  {
+    id: "needs_file",
+    cmd: "choose_needs_file",
+    args: undefined,
+    answer: { queue: "C:\\q.md", needs: "", needsError: "the Needs you file cannot be the queue file" },
+    shown: { value: "", note: "the Needs you file cannot be the queue file" },
+  },
   { id: "reset_position", cmd: "reset_gauge_position", args: undefined, answer: null, shown: { value: null } },
   { id: "set_home", cmd: "set_gauge_home", args: undefined, answer: null, shown: { value: null } },
 ];
@@ -114,8 +120,8 @@ test("each row reads its state from the app's answer", async () => {
     phone_wall: { value: true },
     autostart: { value: true, label: "Start at login", disabled: false, note: "" },
     voices_mode: { value: null, note: "keryx now: on for 1 other session only" },
-    queue_file: { value: "/q.md" },
-    needs_file: { value: "/n.md" },
+    queue_file: { value: "/q.md", note: "" },
+    needs_file: { value: "/n.md", note: "" },
   });
   const { invoke: refuses } = recorder({ get_ping: () => Promise.reject("Ping plays on Windows only.") });
   await assert.rejects(readRow(row("ping"), refuses), /Windows only/, "a read the app refuses hides the row");
@@ -155,10 +161,25 @@ test("every command a row sends is registered with the app", async () => {
     await r.write(invoke, true);
     if (r.read) await r.read(invoke);
   }
-  const main = read("src-tauri/src/main.rs");
-  const list = main.match(/tauri::generate_handler!\[([\s\S]*?)\]/)[1];
-  const registered = new Set(list.split(",").map((s) => s.trim().split("::").pop()).filter(Boolean));
+  const registered = new Set(handlers().map((h) => h.split("::").pop()));
   for (const cmd of sent) assert.ok(registered.has(cmd), `${cmd} is in generate_handler!`);
+});
+
+/** The commands main.rs registers, as written there (`module::name` or `name`). */
+function handlers() {
+  const list = read("src-tauri/src/main.rs").match(/tauri::generate_handler!\[([\s\S]*?)\]/)[1];
+  return list.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+test("every command main.rs registers is a #[tauri::command] fn that exists", () => {
+  // A handler naming a deleted fn breaks the app's build, which this WSL cannot run.
+  for (const h of handlers()) {
+    const parts = h.split("::");
+    const name = parts.pop();
+    const file = parts.length ? `src-tauri/src/${parts.join("/")}.rs` : "src-tauri/src/main.rs";
+    const src = read(file);
+    assert.match(src, new RegExp(`#\\[tauri::command\\]\\s*(?:#\\[[^\\]]*\\]\\s*)*(?:pub(?:\\([^)]*\\))? )?(?:async )?fn ${name}\\b`), `${h}: no #[tauri::command] fn ${name} in ${file}`);
+  }
 });
 
 test("each bound row's binding is the function the wall's own control calls (one code path)", () => {
@@ -170,7 +191,7 @@ test("each bound row's binding is the function the wall's own control calls (one
   // Split: the toolbar's click and the page both run split.set.
   assert.match(bindings, /split: \{ view: split\.view, write: split\.set \}/);
   assert.match(split, /const turn = \(on\) => press\(button, note, \(\) => set\(on\)\);/);
-  assert.match(split, /const set = async \(on\) => \{\s*const said = await invoke\("set_split_mode", \{ on \}\);\s*show\(on\);/);
+  assert.match(split, /const set = \(on\) => \{\s*flying \?\?= invoke\("set_split_mode", \{ on \}\)\s*\.then\(\(said\) => \{\s*show\(on\);/);
   // Density: the gear's picker and the page both run pickDensity.
   assert.match(bindings, /density: \{ view: \(\) => \(\{ value: choice \}\), write: pickDensity \}/);
   assert.match(wall, /densityPicker\.addEventListener\("change", \(e\) => \{\s*pickDensity\(e\.target\.value\)/);
@@ -190,8 +211,9 @@ test("each bound row's binding is the function the wall's own control calls (one
 
 test("the + New session row offers the engines + New session lists, by their real ids", () => {
   const wall = read("src/fleet/wall.js");
-  assert.match(wall, /const nsView = \(\) => \{\s*const \{ entries \} = nsState\(\);/, "the same entries the button and menu use");
-  assert.match(wall, /options: \[\{ value: "", label: "Last used" \}, \.\.\.entries\.map\(\(e\) => \(\{ value: e\.id, label: e\.name \}\)\)\]/);
+  assert.match(wall, /const nsView = \(\) => \{\s*const \{ entries, pick \} = nsState\(\);/, "the same entries and pick the button and menu use");
+  // Only engines the menu would let you make default, plus the saved one.
+  assert.match(wall, /\.\.\.entries\.filter\(\(e\) => e\.usable \|\| e\.id === saved\)\.map\(\(e\) => \(\{ value: e\.id, label: e\.name \}\)\)/);
   assert.doesNotMatch(read("src/settings/registry.js"), /claude:default/);
 });
 
@@ -204,8 +226,9 @@ test("the Voices row offers keryx's modes as the app names them", () => {
 
 test("the tray opens the settings page by its hash, which the wall reads at start and on change", () => {
   const fleet = read("src-tauri/src/fleet.rs");
-  assert.match(fleet, /let page = if settings \{ "wall\.html#settings" \} else \{ "wall\.html" \};/, "a wall made now loads the page");
-  assert.match(fleet, /wall\.eval\("location\.hash = '#settings'"\)/, "a wall already open is sent the hash");
+  assert.match(fleet, /let page = if settings \{\s*"wall\.html#settings"\s*\} else \{\s*"wall\.html"\s*\};/, "a wall made now loads the page");
+  assert.match(fleet, /"location\.hash = '#settings'"/, "a wall already open is sent the hash");
+  assert.match(fleet, /"if \(location\.hash === '#settings'\) location\.hash = ''"/, "and Open wall or a card click takes it back to the cards");
   assert.doesNotMatch(fleet, /emit\("open-settings"/, "no event a wall still loading would miss");
   const wall = read("src/fleet/wall.js");
   assert.match(wall, /addEventListener\("hashchange", showView\);\nshowView\(\);/);

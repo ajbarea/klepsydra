@@ -51,11 +51,10 @@ pub async fn get_voices_mode(app: AppHandle) -> VoicesShown {
     };
     let reader = app.clone();
     let shown = tauri::async_runtime::spawn_blocking(move || {
-        // A late answer is dropped: the page reads afresh each time it opens.
         reader
             .state::<VoicesReader>()
             .0
-            .read(&dir, saved, PAGE_WAIT, |_| {})
+            .read(&dir, saved, PAGE_WAIT)
     })
     .await
     .ok()
@@ -82,10 +81,12 @@ pub fn set_voices_mode(app: AppHandle, mode: String) -> VoicesShown {
         String::new()
     } else {
         log::warn!(voices = mode.as_str(), saved = now; "voices: not saved; the mode is still the saved one");
-        let label = VOICES.iter().find(|(id, _)| *id == now).map_or(now, |(_, l)| l);
+        let label = VOICES
+            .iter()
+            .find(|(id, _)| *id == now)
+            .map_or(now, |(_, l)| l);
         format!("Not saved: the mode is still {label}.")
     };
-    app.state::<VoicesReader>().0.supersede();
     VoicesShown {
         tick: Some(now),
         says,

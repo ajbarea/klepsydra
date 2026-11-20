@@ -425,8 +425,8 @@
   display: none !important;
 }
 
-/* The page stands alone: the wall's Ledger and Queue tabs and docked panels wait behind it. */
-.settings-open :is(#ledger-tab, #queue-tab, #ledger, #queue) {
+/* The page stands alone: the Ledger and Queue tabs wait behind it (wall.js shuts the panels). */
+.settings-open :is(#ledger-tab, #queue-tab) {
   display: none !important;
 }
 

@@ -1,4 +1,4 @@
-//! The tray's Ping, Windows only: a short cue when a session needs AJ or
+//! Settings' Ping, Windows only: a short cue when a session needs AJ or
 //! finishes, played here rather than in a webview so it sounds with the wall
 //! closed and no autoplay gate applies.
 

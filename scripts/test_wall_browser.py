@@ -5679,7 +5679,7 @@ window.__answers = {
   get_voices_mode: { tick: null, says: 'keryx now: on for 1 other session only; saved: Heph only' },
   set_voices_mode: (a) => ({ tick: a.mode, says: '' }),
   get_fleet_files: { queue: '/fleet/queue.md', needs: '/fleet/needs-you.md' },
-  choose_queue_file: () => ({ queue: '/picked/queue.md', needs: '/fleet/needs-you.md' }),
+  choose_queue_file: () => ({ queue: '/picked/queue.md', needs: '/picked/needs-you.md' }),
   choose_needs_file: () => Promise.reject('needs-you.md was not saved: denied'),
   get_split_mode: false,
   set_split_mode: (a) => (a.on ? 'Split: the terminal is on the right.' : ''),
@@ -5831,11 +5831,25 @@ def settings_rows_show_answers(wall):
     wall.check(got == ["off", "true", [-1, -1, 0]], "arrow keys move and choose within the group, one tab stop", got)
 
     sent = click("#row-queue_file .btn-action")
-    got = page.evaluate("document.querySelector('#row-queue_file .path-val').textContent")
-    wall.check(sent == [["choose_queue_file", None]] and got == "/picked/queue.md", "the queue row shows the path the picker returned, at once", [sent, got])
+    got = page.evaluate("() => [...document.querySelectorAll('#settings .path-val')].map((p) => p.textContent)")
+    wall.check(
+        sent == [["choose_queue_file", None]] and got == ["/picked/queue.md", "/picked/needs-you.md"],
+        "the file rows show both paths the picker's answer holds, at once (Needs you moves beside a new queue file)",
+        [sent, got],
+    )
     sent = click("#row-needs_file .btn-action")
     got = page.evaluate("() => [document.querySelector('#row-needs_file .path-val').textContent, document.getElementById('note-needs_file').textContent]")
-    wall.check(got == ["/fleet/needs-you.md", "Not changed: needs-you.md was not saved: denied"], "a refused pick keeps the path and says why", got)
+    wall.check(got == ["/picked/needs-you.md", "Not changed: needs-you.md was not saved: denied"], "a refused pick keeps the path and says why", got)
+
+    # A slow app: arrow keys held over Voices send the first mode and the last, not one a step.
+    page.evaluate("""() => { window.__answers.set_voices_mode = (a) => new Promise((r) => setTimeout(() => r({ tick: a.mode, says: '' }), 300)); window.__calls = []; }""")
+    page.focus("#row-voices_mode [aria-checked='true']")
+    for key in ("ArrowLeft", "ArrowLeft", "ArrowRight", "ArrowLeft", "End"):
+        page.keyboard.press(key)
+    page.wait_for_timeout(900)
+    sent = page.evaluate("window.__calls.filter(([c]) => c === 'set_voices_mode').map(([, a]) => a.mode)")
+    got = page.evaluate("document.querySelector('#row-voices_mode [aria-checked=\"true\"]').dataset.value")
+    wall.check(len(sent) == 2 and sent[-1] == "off" and got == "off", "a held key over Voices runs fleet voices twice at most, ending on the last mode", [sent, got])
     page.close()
 
     page = open_app(
@@ -5928,6 +5942,17 @@ def settings_bound_controls(wall):
     wall.check(got == ["true", "comfortable"], "the toolbar's Split and the gear's density show on the page", got)
     page.close()
 
+    # A saved default that cannot start now (agy not installed) stays listed, with what starts instead.
+    page = open_settings(wall, init="window.__engines = { claude: ['personal'], agy: false, copilot: false }; window.__nsprefs = { default: 'agy', last: null };")
+    got = page.evaluate("""() => [[...document.querySelectorAll('#row-new_session_default option')].map((o) => o.value),
+      document.querySelector('#row-new_session_default select').value, document.getElementById('note-new_session_default').textContent]""")
+    wall.check(
+        got[0] == ["", "claude:personal", "agy"] and got[1] == "agy" and got[2] == "Antigravity cannot start now, so + New session starts Claude.",
+        "only engines that can start are offered; a saved one that cannot is shown with what starts instead",
+        got,
+    )
+    page.close()
+
 
 def settings_by_hash(wall):
     """The tray's Settings... opens the page on a wall made then (it loads
@@ -5945,6 +5970,31 @@ def settings_by_hash(wall):
     page.wait_for_timeout(100)
     again = page.evaluate("!document.getElementById('settings').hidden")
     wall.check(again, "the hash set on a wall already open shows the page again", again)
+    page.evaluate("location.hash = ''")
+    page.wait_for_timeout(100)
+    wall.check(page.evaluate("document.getElementById('settings').hidden"), "Open wall (the app clears the hash) shows the cards", True)
+    page.close()
+
+    # Under 1200 px a panel is a modal dialog: the page shuts it (no hidden modal holds the
+    # focus), keeps Ctrl+Alt+B from opening one, and reopens it on Back.
+    page = open_app(wall, 945, 1000, init=SETTINGS_ANSWERS)
+    page.click("#queue-open")
+    page.wait_for_timeout(SETTLE_MS)
+    modal = page.evaluate("document.querySelector('dialog:modal')?.id ?? null")
+    page.evaluate("location.hash = '#settings'")
+    page.wait_for_selector("#settings:not([hidden]) #row-ping:not([hidden])")
+    page.wait_for_timeout(SETTLE_MS)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_timeout(100)
+    page.evaluate("window.__calls = []")
+    page.click("#row-ping .tog")
+    page.wait_for_timeout(100)
+    got = page.evaluate("() => [document.querySelector('dialog[open]')?.id ?? null, window.__calls.filter(([c]) => c === 'set_ping').length]")
+    wall.check(modal == "queue" and got == [None, 1], "a modal Queue shuts under the page, Ctrl+Alt+B opens none, and the page takes clicks", [modal, got])
+    page.click("#settings-back")
+    page.wait_for_timeout(SETTLE_MS)
+    back = page.evaluate("document.getElementById('queue').open")
+    wall.check(back, "Back reopens the Queue that was open", back)
     page.close()
 
 
