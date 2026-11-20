@@ -1,56 +1,41 @@
-# IMPL: klepsydra#438: gauge background opacity (step 2 of #421)
+# IMPL: klepsydra#492, perf class (a): one process per batch in the fleet's shell loops
 
-Branch feat/gauge-opacity-438 (worktree .claude/worktrees/gauge-438), on main since #482 merged (958dbb2).
-Push only with `git push --force-with-lease origin HEAD:refs/heads/feat/gauge-opacity-438`. Never push to main.
-Design: AJ's pick on #459; thresholds from the mockup (docs/mockups/2026-11-18/mock.css `.panel.halo/.thin`,
-review.md), moved by measured contrast in review: full ink below 85%, halo below 65% dark / 50% light; default 85.
+Branch perf/shell-forks (worktree .claude/worktrees/perf-shell-forks), cut `--no-track` from origin/main 958dbb2.
+Push only: `git push -u origin perf/shell-forks:perf/shell-forks`. Never push to main.
+Role (Athena 11-19): perf-k measures and specifies; agy workers implement slices from the specs; perf-k
+verifies each PR against before.md. perf-k codes a slice only when it is too subtle for Flash.
 
-## Plan (the #421 brief, one PR per step)
-1. ✅ #482 floating strip, variant A: merged 11-19 (958dbb2).
-2. **This branch: #438 opacity.** 0-100 step 5 in prefs.json (`gauge_opacity`, default 85), live.
-3. Docked gauges in the wall header + floating strip hidden while the wall has focus + Settings › Gauges rows
-   (+ #479 double, #481 tap/keyboard detail). Phone dockKey needs an id mapping (usage ids are a1..).
-4. System chip (off by default), only after 1-3.
+## Slices (specs in ~/.local/state/fleet-orchestrator/briefs-free/perf-shell-forks-N-*.md)
+1. sessions: one jq for every session file (hook's fleet_rows block shared into lib.sh). agy, first.
+2. panes: live_panes_load once + pane_live. agy, after 1.
+3. lib-load: lib.sh load 16-19 -> 1 fork, flog +8 -> +5, hook mkdir. agy, after 1.
+4. screen parse (THIS BRANCH, perf-k): one awk per capture; armed_at; stopped_at via printf.
+5. paths: basename/dirname -> parameter expansion + lint. agy, after 1 and 3.
 
-## Done (this branch)
-- klepsydra_fleet::opacity (KEY, DEFAULT 85, snap, of, value, confirm; tested); app src-tauri/src/opacity.rs
-  (`Opacities` hub, `opacity_subscribe`, `set_gauge_opacity`, published at startup); phone serves opacity.js.
-- src/opacity.js (inkFor thresholds, applyOpacity; tested); main.js follows it and redraws on ink change;
-  style.css `--panel-alpha`, ink tokens on #panel, `[data-clear]`.
-- Wall gear slider (src/fleet/opacitypick.js: saves once it rests or on release; tested), README section.
-- Live (pre-round-1 build, stage klepsydra-build-gauge421): taskbar at 0% and 100% work
-  (/mnt/c/Users/ajbar/klepsydra-live-gauge421/exe438-op{0,100}.png).
-- Review round 1 fixed (809f5b6: thresholds by measured contrast, full ink <85, halo <65 dark / <50 light).
-- 11-19 session 2 (Personal): rounds 2 and 3 fixed (resets and route word take the ink, a stale chip keeps
-  its dim, solid under prefers-reduced-transparency, tray cache, confirm checks the stored key); #484 filed for
-  the theme save's twin gap. Rebased on main; toRows duplicate keys removed, biome noDuplicateObjectKeys on.
-  Pushed (no PR yet). Live harness: .live/live_opacity.py (real readings, 0/50/100, both schemes, both desktops).
+## Done
+- Baseline 06df2c2: docs/perf/2026-11-19-shell-forks/before.md, harness scripts/perf/forks/.
+- Slice 4 7662892: resume pass 772 -> 472, watch tick (3 panes) 152 -> 39, doctor 1645 -> 1479.
+  Differential test 22227 checks (368 screens x gawk+mawk, both orders) + stopped_at DST; Opus review
+  round 1: no divergence; should-fix (failed parse cached, cache transitions untested, 4 helpers
+  missing) fixed. Mutations: 7 of 9 killed and confirmed, keep-failed + no-idle-order rerunning.
+- Specs 1-3, 5 written, SOTA guard policy folded in (gate on counts, wall time reported only).
+- Reported to Athena 16:42 (fleet send).
 
-- 11-19 session 3: heavy runs done. Live exe on the taskbar at 0/50/100% and solid with Windows
-  transparency off (restored to 1); browser montages at 1920/390; contrast split fresh/stale/placeholder
-  (fresh text >= 4.6:1 wherever the panel carries it); CPU 0.069 -> 0.070% (85%), 0.067 -> 0.075% (0%).
-  Stale chip's 0.5 dim is 3.1:1 in light at 100%: pre-existing (#482), filed #486. test_wall_browser's
-  2 Ledger fails are on main too (#363). Shots: fleet-briefing shots/2026-11-19/klepsydra-438-*.png.
-
-## Next (resume here)
-1. PR open for this branch (see `gh pr list --head feat/gauge-opacity-438`): wait for CI and Heph's review;
-   fix findings on this branch. Do not merge.
-2. Step 3, split in two PRs on new branches off main (after this PR merges, or stacked):
-   - 3a: chips docked in the wall header (desktop: toRows(read_usage); phone: usageRows(snapshot), one chip per
-     row, replacing the `.limits` rings), chevron to hide, pref `gauges_in_header` (default on), gear row.
-   - 3b: floating strip hidden while the wall has focus (fleet.rs wall window Focused events), floating strip
-     on/off (tray item + gear), Reset position (main.rs reset_position) and click-through in the gear.
-   Mockups: design-pass worktree docs/mockups/2026-11-18/wall-header.html, review.md; shots 2026-11-18/design-wall-header-*.
-3. Step 4 System chip only after 1-3.
-
-## Heavy runs (each under `flock -o /tmp/fleet-heavy.lock timeout N`; system python3 has no Playwright)
-- PY="uv run -q --no-project --with playwright --with pillow python -I"
-- Browser: `$PY .live/live_opacity.py . /mnt/c/Users/ajbar/AppData/Local/dev.ajsoftworks.klepsydra <out>`
-  (WIDTHS=1920 for numbers only).
-- CPU: `git worktree add --detach <scratch>/main origin/main`; `$PY scripts/perf/measure_gauge.py <main> .
-  .live/readings.json .live/fleet.json 120 3 layout=compact` (and `'layout=compact&opacity=0'`).
-- Build: `KLEPSYDRA_STAGE=klepsydra-build-gauge421 bash scripts/build-windows.sh [--check]`; live:
-  `OPACITY=0 .live/live_app.sh start <exe> compact`, `shot <name>`, `stop` (SP in the script = your scratchpad).
+## Next
+1. #500: round 2 (fresh Opus) CLEAN; its nits (armed_at takes its own screen, harness hook rows run with the read-only
+   tmux shim) committed with this IMPL. test_forks_screen.sh 26069 passed (strace 6.8). Report to Athena; do not merge.
+2. #510 (perf/readers, Closes #501): verify pass CLEAN; should-fix (ctime part of the change marker untested) fixed
+   on that branch. Do not merge.
+3. #497 (agy slice 1): re-verified 11-20 01:50 on 96777d2, both should-fix fixed (PR comment). #497 and #500 conflict
+   (test-forks target, CI step, lib.sh): second to merge rebases.
+4. Slices 2, 3, 5 (specs in briefs-free) start after #497 merges; agy implements unless Athena hands them to perf-k.
+5. Class c (frontend P1-P3, P12, A1) after the gauge header PR (feat/gauge-header-421) merges.
+- Checked and left: statusLine 6 processes / 2 jq per 30 s refresh per session (fixture run, strace).
+- Lesson: while a PR's CI runs, commit IMPL locally and push it with the next code change (a lone IMPL push cancels the run).
 
 ## Verify
-- `node --test src/*.test.js`; `npm run lint`; `(cd src-tauri && cargo fmt --all --check && cargo test -p klepsydra-fleet)`.
+- `bash fleet/test_forks_screen.sh` (STRACE=, mawk on PATH; ~2.5 min); `make test-forks`. strace here: `apt-get download strace && dpkg -x strace_*.deb root`, then STRACE=root/usr/bin/strace.
+- BEFORE/AFTER: detached worktree at origin/main + `SANDBOX_SEED=<copy> bash scripts/perf/forks/run.sh OUT %59 %60 %63`
+  for each checkout, under `flock -o /tmp/fleet-heavy.lock`.
+- strace/hyperfine/mawk without root: `apt-get download X && dpkg -x X_*.deb root`.
+- Never pkill -f a pattern that appears in your own command line (it kills your shell: exit 144).
