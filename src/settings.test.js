@@ -172,33 +172,112 @@ function handlers() {
 }
 
 /**
- * Why `fn name` in `src` is not a command every system builds, or null: the attributes and
- * doc lines right above it must hold #[tauri::command] and no #[cfg(...)].
+ * Rust source with comments removed and string and char contents blanked, so neither a
+ * comment nor a string can hide or fake an attribute or its brackets.
+ */
+function rustCode(src) {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (c === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+    } else if (c === "/" && next === "*") {
+      let depth = 0;
+      do {
+        if (src.startsWith("/*", i)) (depth++, (i += 2));
+        else if (src.startsWith("*/", i)) (depth--, (i += 2));
+        else i++;
+      } while (depth > 0 && i < src.length);
+      out += " ";
+    } else if (c === "r" && /^r#*"/.test(src.slice(i, i + 260)) && !/\w/.test(src[i - 1] ?? "")) {
+      const hashes = src.slice(i + 1).match(/^#*/)[0];
+      const close = src.indexOf(`"${hashes}`, i + hashes.length + 2);
+      out += '""';
+      i = close < 0 ? src.length : close + 1 + hashes.length;
+    } else if (c === '"') {
+      i++;
+      while (i < src.length && src[i] !== '"') i += src[i] === "\\" ? 2 : 1;
+      out += '""';
+      i++;
+    } else if (c === "'" && (next === "\\" || src[i + 2] === "'")) {
+      const close = src.indexOf("'", i + 2);
+      out += "' '";
+      i = close < 0 ? src.length : close + 1;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+/** The outer attributes (`#[...]`, nearest last) written right before index `at` of `code` (from rustCode). */
+function attrsBefore(code, at) {
+  const attrs = [];
+  let s = code.slice(0, at).trimEnd();
+  while (s.endsWith("]")) {
+    let depth = 0;
+    let j = s.length - 1;
+    for (; j >= 0; j--) {
+      if (s[j] === "]") depth++;
+      else if (s[j] === "[" && --depth === 0) break;
+    }
+    if (j < 1 || s[j - 1] !== "#") break;
+    attrs.unshift(s.slice(j - 1));
+    s = s.slice(0, j - 1).trimEnd();
+  }
+  return attrs;
+}
+
+/** Whether an attribute can switch its item off on some system: cfg, or cfg_attr naming a cfg. */
+const gates = (attr) => /\bcfg\s*\(/.test(attr);
+
+/**
+ * Why `fn name` in `src` is not a command every system builds, or null: its attributes must
+ * hold #[tauri::command] and none may gate it.
  */
 function commandProblem(src, name) {
-  const m = src.match(new RegExp(`((?:[ \\t]*(?:#\\[[^\\]]*\\]|///[^\\n]*)\\s*\\n)*)[ \\t]*(?:pub(?:\\([^)]*\\))? )?(?:async )?fn ${name}\\b`));
+  const code = rustCode(src);
+  const m = new RegExp(`(?<!\\w)(?:pub(?:\\s*\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\b`).exec(code);
   if (!m) return `no fn ${name}`;
-  if (!m[1].includes("#[tauri::command]")) return `fn ${name} is not a #[tauri::command]`;
-  if (/#\[cfg\(/.test(m[1])) return `fn ${name} is cfg-gated`;
+  const attrs = attrsBefore(code, m.index);
+  if (!attrs.some((a) => /^#\[\s*tauri\s*::\s*command\s*[\]\(]/.test(a))) return `fn ${name} is not a #[tauri::command]`;
+  if (attrs.some(gates)) return `fn ${name} is cfg-gated`;
   return null;
 }
 
-/** The modules main.rs declares under #[cfg(...)], which some systems never build. */
-const gatedModules = (main) => [...main.matchAll(/#\[cfg\([^\]]*\]\s*(?:pub(?:\([^)]*\))? )?mod (\w+);/g)].map((m) => m[1]);
+/** The modules main.rs declares under a cfg, which some systems never build. */
+function gatedModules(main) {
+  const code = rustCode(main);
+  return [...code.matchAll(/(?<!\w)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g)]
+    .filter((m) => attrsBefore(code, m.index).some(gates))
+    .map((m) => m[1]);
+}
 
-test("the command check catches a missing, unmarked or gated fn, docs or not, and a gated module", () => {
+test("the command check catches a missing, unmarked or gated fn, whatever sits between, and a gated module", () => {
   const ok = "/// Says hi.\n#[tauri::command]\npub async fn hi() {}\n";
   assert.equal(commandProblem(ok, "hi"), null);
   assert.equal(commandProblem("#[tauri::command]\n#[allow(unused)]\nfn hi() {}\n", "hi"), null);
+  assert.equal(commandProblem('#[doc = "cfg(x) [y]"]\n#[tauri::command(rename_all = "snake_case")]\npub(crate) fn hi() {}\n', "hi"), null);
   assert.match(commandProblem(ok, "bye"), /no fn bye/);
   assert.match(commandProblem("/// Says hi.\npub fn hi() {}\n", "hi"), /not a #\[tauri::command\]/);
+  assert.match(commandProblem("// #[tauri::command]\nfn hi() {}\n", "hi"), /not a #\[tauri::command\]/);
+  assert.match(commandProblem('#[tauri::command]\nfn x() {}\nconst S: &str = "fn hi";\nfn hi() {}\n', "hi"), /not a #\[tauri::command\]/);
   for (const gated of [
     "#[cfg(windows)]\n#[tauri::command]\nfn hi() {}\n",
     "#[tauri::command]\n#[cfg(windows)]\nfn hi() {}\n",
     "#[cfg(windows)]\n/// Says hi.\n#[tauri::command]\nfn hi() {}\n",
+    "#[cfg(windows)]\n// a note\n#[tauri::command]\nfn hi() {}\n",
+    "#[cfg(windows)]\n/* a note */\n/** Says hi. */\n#[tauri::command]\nfn hi() {}\n",
+    '#[cfg(windows)]\n#[doc = "see [x]"]\n#[tauri::command]\nfn hi() {}\n',
+    "#[cfg_attr(not(windows), cfg(any()))]\n#[tauri::command]\nfn hi() {}\n",
+    "#[cfg(any(\n    windows,\n    target_os = \"macos\",\n))]\n#[tauri::command]\npub async fn hi() {}\n",
   ])
     assert.match(commandProblem(gated, "hi"), /cfg-gated/, gated);
-  assert.deepEqual(gatedModules("mod a;\n#[cfg(windows)]\nmod ping;\n#[cfg(test)] pub mod t;\n"), ["ping", "t"]);
+  const main = 'mod a;\n#[cfg(windows)]\nmod ping;\n#[cfg(test)] pub mod t;\n#[cfg(windows)]\n/// Docs.\n#[allow(x)]\nmod w;\n#[doc = "cfg(x)"]\nmod d;\n';
+  assert.deepEqual(gatedModules(main), ["ping", "t", "w"]);
 });
 
 test("every command main.rs registers is a #[tauri::command] fn that every system builds", () => {
