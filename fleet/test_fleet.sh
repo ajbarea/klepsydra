@@ -930,7 +930,9 @@ check "--check passes a current brief" "$(bash "$here/brief.sh" --check "$out" 2
 sed 's/^Usage cap: run at most two/Usage cap: run at most three/' "$out" >"$FLEET_STATE/task-old.src"
 check "--check names a brief whose shared rules drifted" "$(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" "$out" 2>/dev/null)" "stale: task-old.src"
 printf 'Last item (AJ 10-28): ship the thing.\n' >>"$FLEET_STATE/task-old.src"
+touch -d '2026-10-01 12:00' "$FLEET_STATE/task-old.src"
 bash "$here/brief.sh" --refresh "$FLEET_STATE/task-old.src" >/dev/null 2>&1
+check "--refresh keeps the brief's own time, which fleet tidy ages it by" "$(date -r "$FLEET_STATE/task-old.src" +%F)" "2026-10-01"
 check "--refresh brings the rules up to date, keeping the body and a line added after them" \
   "$(head -2 "$FLEET_STATE/task-old.src" | tr '\n' '|')$(grep -c '^Usage cap: run at most two' "$FLEET_STATE/task-old.src") $(grep -c 'at most three' "$FLEET_STATE/task-old.src") $(grep -c '^Last item (AJ 10-28): ship the thing.$' "$FLEET_STATE/task-old.src") $(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" >/dev/null 2>&1; echo $?)" \
   "Do X.|Then Y.|1 0 1 0"
@@ -1136,7 +1138,9 @@ echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 # the wrappers write the shipped path, $KLEPSYDRA_DIR/prefs.json, and remove it
 # after, so later sections see no file. DOC_PREFS=none: no file.
 doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
-doctor() { local rc; doc_prefs; FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
+# Every case but the #511 ones sees a fresh, clean cleanup report, so its line is ok.
+printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":1,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$work/clean-cleanup.json"
+doctor() { local rc; doc_prefs; FLEET_CLEANUP_REPORT="${FLEET_CLEANUP_REPORT:-$work/clean-cleanup.json}" FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" FLEET_UNITS="$work/dunits" bash "$here/doctor.sh" 2>/dev/null; rc=$?
   rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
 phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
@@ -1211,6 +1215,24 @@ printf 'fleet-a-1.scope 6900 8745 gone\nfleet-b-2.scope 100 8745\n' >"$work/scop
 check "#353: a scope that ended between the listing and the read is not called astray" \
   "$(DOC_SLICES="$work/slices" DOC_SCOPES="$work/scopes" doctor | grep 'memory cap')" \
   "ok   memory cap: fleet.slice 8412 MiB, fleet-workers.slice 7601 MiB"
+# Cleanup (#511): doctor reads the fleet-cleanup timer's report and names the fleet tidy command.
+cr="$work/cleanup-report.json"
+check "#511: no cleanup report yet warns, naming fleet install" \
+  "$(FLEET_CLEANUP_REPORT="$work/no-report.json" doctor | grep -c '^warn cleanup: no cleanup report yet: fleet install adds the fleet-cleanup timer')" "1"
+printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":1000,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$cr"
+check "#511: a clean, fresh report is ok" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^ok   cleanup: nothing finished or expired is kept outside git and GitHub')" "1"
+printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":160000,"heph_drop":5,"heph_due":false,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$cr"
+check "#511: a few lines past the cut is no tidy due yet" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^ok   cleanup: nothing finished or expired')" "1"
+printf '{"ts":%s,"shots_rc":3,"shots_said":"gh\\ndown","techne":null,"unowned":["review/"],"stale":["review/a.md: expired 2026-11-01 (owner heph)"],"queue_old":2,"done_files":4,"heph_bytes":300000,"heph_drop":12,"heph_due":true,"heph_refused":"line 9 is a START HERE block just above the kept lines","queue_refused":"queue.md holds a line break other than \\\\n: edit that line by hand","briefs_stale":5,"archive_stale":1}\n' "$(( $(date +%s) - 86400 ))" >"$cr"
+got=$(FLEET_CLEANUP_REPORT="$cr" doctor | grep '^warn cleanup')
+for want in "the cleanup timer last ran 24 h ago" "fleet shots --apply failed (gh down)" "techne cleanup.py not found" \
+  "done/ holds 4 retired week files: harvest lessons from fleet tidy done (it lists them), then --apply" "fleet tidy expired lists them and --apply removes them" \
+  "1 briefing paths with no owner + expires (review/)" "2 Done lines in queue.md predate this week" \
+  "HEPH.md has 12 lines a tidy would drop: the orchestrator runs fleet tidy heph (it lists them), then --apply" "HEPH.md cannot be tidied: line 9 is a START HERE block" "queue.md cannot be tidied: queue.md holds a line break" "5 stale briefs and 1 old archive entries: fleet tidy briefs archive lists them all, then --apply"; do
+  check "#511: a report with work left names: $want" "$(grep -cF -- "$want" <<<"$got")" "1"
+done
+printf 'not json' >"$cr"
+check "#511: a report that cannot be read warns" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^warn cleanup: could not read')" "1"
 # The orchestrator's claude (pid 4242 in the section's /proc) in its scope.
 printf '0::/user.slice/user-1.slice/user@1.service/fleet.slice/fleet-heph-9.scope\n' >"$work/dproc/4242/cgroup"
 printf 'fleet-heph-9.scope 10 8745 fleet.slice\nfleet-b-2.scope 100 8745\n' >"$work/scopes"
@@ -1684,6 +1706,7 @@ ok   fleet-sync-briefing.timer: enabled and active
 ok   fleet-ci-watch.service: enabled and active
 ok   fleet-doctor.timer: enabled and active
 ok   fleet-tmux-watch.timer: enabled and active
+ok   fleet-cleanup.timer: enabled and active
 ok   the resume service logged its start
 rc=0"
 check "no transient unit is left" "$(find "$SC" -name '*.transient' | wc -l)" "0"

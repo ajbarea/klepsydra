@@ -25,7 +25,7 @@ fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
 # A dry run writes nothing, its log included: its events go to stderr only.
 ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}" >&2; else flog "$@"; fi; }
-SCRIPTS=(launch.sh delegate.sh headless.sh engines.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh close.sh send.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py prune_shots.py worker-settings.json)
+SCRIPTS=(launch.sh delegate.sh headless.sh engines.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh close.sh send.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py prune_shots.py tidy.py worker-settings.json)
 # Scripts the checkout no longer has: their links in the state folder go (#326).
 RETIRED=(agora.py digest.py)
 UNITS=$FLEET_UNIT_DIR
@@ -196,6 +196,28 @@ Description=klepsydra fleet: sync the fleet-briefing repo every 5 min
 
 [Timer]
 OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+# Cleanup (#511): prune the decided shots and write what is still kept outside git and GitHub
+# for doctor. Low priority, and a run missed while WSL was down happens at the next start.
+unit fleet-cleanup.service "[Unit]
+Description=klepsydra fleet: prune the briefing's decided shots and report what cleanup is left
+
+[Service]
+Type=oneshot
+TimeoutStartSec=600
+Nice=19
+IOSchedulingClass=idle
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+ExecStart=/usr/bin/python3 -I $FLEET_STATE/tidy.py --report $FLEET_STATE/cleanup-report.json"
+unit fleet-cleanup.timer "[Unit]
+Description=klepsydra fleet: cleanup every 6 hours
+
+[Timer]
+OnCalendar=*-*-* 00/6:40:00
+RandomizedDelaySec=10min
 Persistent=true
 
 [Install]
