@@ -249,7 +249,7 @@ export function wireListSplit(lists, split, key = "klepsydra.queue.split") {
  * `.list-scroll` around one keeps its place), `-resize`, `-smaller`,
  * `-reset`, `-larger`, `-full`, `-close` and `-live`. `returnTo()` is where focus goes when the
  * panel is closed (Close, Esc, the button); `onOpen()` runs as it opens and
- * `onShut()` once it has shut; `onLayout()` on every layout; `onResized()`
+ * `onShut(forGood)` once it has shut (false when shut for a while, as Settings does); `onLayout()` on every layout; `onResized()`
  * once at the end of a drag of the separator.
  */
 export function createSidePanel({
@@ -351,7 +351,7 @@ export function createSidePanel({
     if (view !== "shut") return;
     if (focus instanceof HTMLElement) focus.focus();
     else if (had && !quiet) (tab.hidden ? returnTo() : tab).focus();
-    if (was !== "shut") onShut();
+    if (was !== "shut") onShut(remember);
   }
 
   /** The button's toggle: shut opens docked; open shuts, focus staying on the button. */
