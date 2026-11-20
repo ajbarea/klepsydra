@@ -1221,6 +1221,8 @@ check "#511: no cleanup report yet warns, naming fleet install" \
   "$(FLEET_CLEANUP_REPORT="$work/no-report.json" doctor | grep -c '^warn cleanup: no cleanup report yet: fleet install adds the fleet-cleanup timer')" "1"
 printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":1000,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$cr"
 check "#511: a clean, fresh report is ok" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^ok   cleanup: nothing finished or expired is kept outside git and GitHub')" "1"
+printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":160000,"heph_drop":5,"heph_due":false,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$cr"
+check "#511: a few lines past the cut is no tidy due yet" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^ok   cleanup: nothing finished or expired')" "1"
 printf '{"ts":%s,"shots_rc":3,"shots_said":"gh\\ndown","techne":null,"unowned":["review/"],"stale":["review/a.md: expired 2026-11-01 (owner heph)"],"queue_old":2,"done_files":4,"heph_bytes":300000,"heph_drop":12,"heph_due":true,"heph_refused":"line 9 is a START HERE block just above the kept lines","briefs_stale":5,"archive_stale":1}\n' "$(( $(date +%s) - 86400 ))" >"$cr"
 got=$(FLEET_CLEANUP_REPORT="$cr" doctor | grep '^warn cleanup')
 for want in "the cleanup timer last ran 24 h ago" "fleet shots --apply failed (gh down)" "techne cleanup.py not found" \

@@ -579,7 +579,8 @@ class ReviewRound1(unittest.TestCase):
         undated_later = doc(20).replace(
             "## START HERE (12-30 handoff)", "## START HERE"
         )
-        mod.plan_heph(undated_later, 5)  # undated: kept whole, so no refusal
+        kept, _ = mod.plan_heph(undated_later, 5)  # undated: kept whole, so no refusal
+        self.assertIn("- later\n", kept)
         self.assertIn("- later\n", kept)
 
     def test_standing_rules_in_old_sections_stay(self):
