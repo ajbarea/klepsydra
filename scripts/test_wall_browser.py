@@ -5692,7 +5692,8 @@ def theme_list_is_dark(wall):
 # Every word on the floating strip, as the browser renders it: its own and its
 # ancestors' opacity, any filter: opacity(), and its fill colour's alpha (rgb(... /
 # a), rgba, color-mix with transparent), multiplied. Text that is drawn reads
-# at full alpha; #zoom (opacity 0 until a scroll) is not drawn.
+# at full alpha, with no mask, blend mode or other filter on it or above it;
+# #zoom (opacity 0 until a scroll) is not drawn.
 STRIP_INK = """() => {
   const alphaOf = (c) => {
     const slash = c.match(/\\/\\s*([\\d.]+)(%?)\\s*\\)\\s*$/);
@@ -5700,6 +5701,12 @@ STRIP_INK = """() => {
     const rgba = c.match(/^rgba\\(([^)]*)\\)/);
     if (rgba) return Number(rgba[1].split(',')[3]);
     return c === 'transparent' ? 0 : 1;
+  };
+  // The filter's own functions, not the colours inside them: drop-shadow(rgb(...) ...) is one drop-shadow.
+  const topFunctions = (f) => {
+    let flat = f === 'none' ? '' : f;
+    for (let prev = ''; prev !== flat; ) { prev = flat; flat = flat.replace(/\\([^()]*\\)/g, '[]'); }
+    return [...flat.matchAll(/([\\w-]+)\\[\\]/g)].map((m) => m[1]);
   };
   const filterOf = (f) => [...f.matchAll(/opacity\\(([\\d.]+)(%?)\\)/g)].reduce((a, m) => a * Number(m[1]) / (m[2] ? 100 : 1), 1);
   const panel = document.getElementById('panel');
@@ -5709,13 +5716,22 @@ STRIP_INK = """() => {
   const faded = [];
   for (const e of els) {
     if (!e.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+    const name = `${e.getAttribute('class') || e.tagName} '${e.textContent.trim().slice(0, 20)}'`;
     // The fill colour paints the glyphs; it computes to `color` unless set.
     let a = alphaOf(getComputedStyle(e).webkitTextFillColor);
     for (let n = e; n; n = n.parentElement) {
       const cs = getComputedStyle(n);
       a *= Number(cs.opacity) * filterOf(cs.filter);
+      // Routes that wash a word out without an alpha to multiply: a mask, a blend
+      // mode, any filter but opacity() and the halo's drop-shadow on its marks.
+      const at = n === e ? '' : ` (on ${n.getAttribute('class') || n.tagName})`;
+      if ((cs.maskImage || cs.webkitMaskImage || 'none') !== 'none') faded.push(`${name}: mask${at}`);
+      if (cs.mixBlendMode !== 'normal') faded.push(`${name}: ${cs.mixBlendMode}${at}`);
+      const other = topFunctions(cs.filter).filter((f) => f !== 'opacity');
+      const halo = n.matches('#panel :is(.mark, .pip, .face)') && other.every((f) => f === 'drop-shadow');
+      if (other.length && !halo) faded.push(`${name}: filter ${other.join(' ')}${at}`);
     }
-    if (a < 0.999) faded.push(`${e.className || e.tagName} '${e.textContent.trim().slice(0, 20)}' ${a.toFixed(2)}`);
+    if (a < 0.999) faded.push(`${name} ${a.toFixed(2)}`);
   }
   return { words: els.size, faded };
 }"""
@@ -5734,7 +5750,9 @@ SPEAKING_RING = """() => {
 
 def strip_words_keep_their_ink(wall):
     """#498: no word on the floating strip is faded by any route (opacity,
-    filter, colour alpha), in either layout and scheme, at 0, 50, 85 and 100%:
+    filter, colour alpha, mask, blend mode), in either layout and scheme, at 0,
+    50, 70, 85 and 100%, so each ink renders (0: halo; 50: halo dark, full
+    light; 70: full in both; 85, 100: none):
     a fresh chip, a stale one with a monogram, a spent week (the Full layout's
     "hidden" word) and the Copilot placeholder. The speaking ring's gap is the
     panel's solid colour as rendered, at 0% too."""
@@ -5755,7 +5773,7 @@ def strip_words_keep_their_ink(wall):
     fleet = shifted(fixture, now - at)
     for layout in ("compact", "full"):
         for scheme in ("dark", "light"):
-            for op in (0, 50, 85, 100):
+            for op in (0, 50, 70, 85, 100):
                 page = wall.browser.new_page(viewport={"width": 1600, "height": 300}, color_scheme=scheme)
                 page.route("**/dev-fixture.json", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(readings)))
                 page.route("**/dev-fleet.json", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(fleet)))
@@ -5763,6 +5781,9 @@ def strip_words_keep_their_ink(wall):
                 page.wait_for_selector("#chips > .chip")
                 page.wait_for_selector("#strip .face.speaking", timeout=5000)
                 page.wait_for_timeout(300)
+                want = {0: "halo", 50: "halo" if scheme == "dark" else "full", 70: "full"}.get(op)
+                worn = page.evaluate("document.documentElement.dataset.ink ?? null")
+                wall.check(worn == want, f"the strip wears its ink ({layout}, {scheme}, {op}%)", {"ink": worn, "want": want})
                 ink = page.evaluate(STRIP_INK)
                 states = page.evaluate("[...document.querySelectorAll('#chips > .chip')].map((c) => Object.keys(c.dataset).filter((k) => !['harness', 'key'].includes(k)).join('+') || 'fresh')")
                 at_ = f"{layout}, {scheme}, {op}%"
@@ -5905,6 +5926,10 @@ def main() -> int:
             theme_retry_waits_before_loading,
             living_backdrop_and_arrival_motifs,
         )
+        unknown = set(only) - {case.__name__ for case in cases}
+        if unknown:  # a misspelt case would pass by running nothing
+            print(f"no such case: {', '.join(sorted(unknown))}")
+            return 2
         for case in cases:
             if not only or case.__name__ in only:
                 case(wall)

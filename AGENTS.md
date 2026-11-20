@@ -14,7 +14,7 @@ klepsydra is an always-on-top desktop gauge (Tauri 2 shell, plain JavaScript fro
 - `npm run lint` (Biome's `noConsole`: pages log through `src/log.js`) and `uvx ruff check` (the Python scripts, with ruff's `G` and `LOG` logging rules)
 - `(cd src-tauri && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings)`
 - `(cd src-tauri && cargo test -p klepsydra-fleet)`
-- `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py` (a few minutes; needs Playwright's Chromium; local only)
+- `uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py` (a few minutes; needs Playwright's Chromium; local only, except strip_words_keep_their_ink, which CI runs)
 - `uv run -q --no-project --with playwright python -I scripts/test_phone_browser.py` (builds and runs the phone wall server; needs cargo and Playwright's Chromium; local only)
 
 Under WSL the app crate cannot compile (no WebKitGTK headers): use `-p klepsydra-fleet` for clippy and `bash scripts/build-windows.sh --check` for the rest. From a worktree, set `KLEPSYDRA_STAGE=klepsydra-build-<name>` so it mirrors into a stage of its own; `<name>` takes only letters, digits, `.` and `_` (`scripts/build-windows.sh` refuses `-`), so write `agents-md` as `agents_md`.
