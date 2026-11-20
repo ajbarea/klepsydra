@@ -19,13 +19,15 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
 - ✅ test_tidy.py 33 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
 
 ## Next
-- ✅ Own review: 2 reader rounds + 2 verify passes (to 9df86e3).
-- ✅ Heph independent r1 (reports/fleet-tidy-514-r1.md: B1 + S1-S3 + nits) fixed in ebeb330:
-  latest_times bounds each HEPH line by the next date below (+2 d) or the file time, so the
-  newest never go; task briefs go only when finished > 7 d, removed briefs shelved to
-  archive/briefs/; dry runs write every item to STATE/tidy-preview.md; every guard hand-mutated
-  red (51 tests). Live copy: HEPH.md 1507 → 551.
-1. 📋 Fresh verify pass on ebeb330 (running); then update the PR body; Heph reviews again.
+- ✅ Own review: 2 reader rounds + 2 verify passes (to 9df86e3). ✅ Heph r1 fixed (ebeb330).
+- ✅ Verify passes since: B1-bis (a dated recap pulled recent lines back) → first-seen record
+  (876463f): no date in the log decides age; keys = text + the line above, a repeated key is
+  always new (d5d0cd2; fuzzed 390k checks, 0 losses); report under the tidy lock; the report's
+  shots prune runs on tidy's own briefing (7cbafa9: in-process tests had reached the live
+  briefing; it changed nothing). 62 tests, every guard hand-mutated red.
+1. 📋 Narrow verify on 7cbafa9 (running); then PR body; Heph reviews again.
 2. 📋 After techne#394 merges: repin ci.yml's techne ref to its merge SHA, then #514.
+3. 📋 Skill fix (own techne PR): bug-classes.md learned class "test child reaches a live
+   default" (env restored after import; a subprocess falls back to the live path).
 - Live dry run 11-20: HEPH.md 1476 → 429 lines; 175 stale briefs; archive entries; 2 queue lines.
 - Never `--apply heph` on the live file yourself; the orchestrator runs it after the dry run.
