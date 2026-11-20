@@ -4,6 +4,11 @@
 //! `cargo run --release --example readcost -- <data folder> [calls]`
 //! The data folder should be a copy: the fleet reader writes picks.json.
 
+#![expect(
+    clippy::print_stdout,
+    reason = "a measurement tool: its report is its output"
+)]
+
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 

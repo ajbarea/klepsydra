@@ -42,3 +42,18 @@ after the scan: each session's reply clip (two queries), the wrap-up files and k
 
 The installed app after the change: it is measured with `scripts/perf/io.ps1` once a build with
 this change is deployed.
+
+## Leads checked and left as they are
+
+`src-tauri/fleet/examples/phonecost.rs` replays the phone feed's work on the same data copy
+(7 sessions, 71 readings; release build, WSL, 300 calls, median). The phone feed runs only while
+the tray's "Phone wall" is ticked.
+
+| Lead (first-pass audit) | Measured | How often | Kept as is because |
+|---|---:|---|---|
+| P6: the feed clones and serialises the 24,330-byte snapshot on each usage poll | 0.22 ms | every 5 s | about 0.004% of one core |
+| P7: an audio range request parses the whole snapshot | 0.22 ms | 3 to 5 per clip played | about 1 ms per clip |
+| A2: gauge and phone each poll usage | 0.57 ms (the shared reader's pass above) | every 5 s | one reader now serves both; a single poller would save 0.57 ms per 5 s |
+
+A1 (the usage readings crossing IPC and reconciled in `src/gauge.js`) belongs to the frontend
+pass, which measures it in the webview.
