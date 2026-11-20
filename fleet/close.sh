@@ -99,6 +99,21 @@ above_raw() { head -n "$(above_rows "$1")" <<<"$1"; } # SCREEN
 above_rows() { # SCREEN
   plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }'
 }
+# Whether ABOVE (above_raw's) shows Claude Code's command menu, its "❯ /exit" row first (2.1.316 opens it
+# on "/exit" with no space after it).
+menu_open() { plain <<<"$1" | grep -q '^  ❯ /exit\( \|$\)'; } # ABOVE
+# Erase our "/exit " from PANE's box once its text reads just /exit: six backspaces, then again for what
+# is left of /exit should more spaces have followed it (the box shows none), so no "/e" stays behind.
+back_out() { # PANE
+  local b n
+  t send-keys -t "$1" -N 6 BSpace
+  for n in 1 2; do
+    sleep "${FLEET_TICK:-0.5}"
+    b=$(input_text "$(screen "$1")")
+    [[ -n $b && /exit == "$b"* ]] || return 0
+    t send-keys -t "$1" -N "${#b}" BSpace
+  done
+}
 # The first lines that differ between OLD and NEW (plain text), at most 5, each cut to 120
 # characters and joined by " | ", then how many blank lines differ: what a refusal's log shows of a
 # screen that changed. Blank lines are counted, not quoted, so they cannot hide the line that moved.
@@ -142,12 +157,13 @@ exit_dialog() {
 }
 no_exit_dialog() { ! exit_dialog "$1"; }
 # Refuse the close for WHY (at_rest's or the screen's), found by CHECK (busy, input_box,
-# session_file, quiet_screen, fingerprint, transcript, input_text), saying so in one line that names
+# session_file, quiet_screen, fingerprint, menu, transcript, input_text), saying so in one line that names
 # the check; the log line adds what differed (KEY=VALUE...). Returns 10 to 12.
 refuse() { # NAME PANE CHECK WHY [KEY=VALUE...]
   local c=$3 w=$4 more
   flog WARN "close: not confirmed at rest; left open" name="$1" pane="$2" check="$c" why="$w" "${@:5}"
   more="[check: $c; fleet close --why $1]"
+  [[ $c == menu ]] && { err "refused: typing \"/exit \" in $1 opened Claude Code's command menu, which would hide a new turn; fleet close needs updating for this Claude Code; left open $more"; return 12; }
   case $w in
     working) err "refused: $1 is working again (its session file says so); close it once the turn ends $more"; return 10 ;;
     working*) err "refused: $1 is working again (${w#working (}; close it once the turn ends $more"; return 10 ;;
@@ -218,6 +234,9 @@ close_now() { # PANE NAME SID
     fi
   elif busy "$s"; then
     check=busy why="working (a turn started as /exit went in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
+  elif menu_open "$(above_raw "$s")" && ! menu_open "$ref"; then
+    check=menu why="unconfirmed Claude Code's command menu opened over the transcript as \"/exit \" went in (a Claude Code that no longer shuts it on the space, or the space was lost), so a new turn would not show; fleet close needs updating for it"
+    more=(differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$s" | plain)")")
   elif [[ $(above_raw "$s") != "$ref" ]]; then
     check=transcript why="working (its screen changed as /exit went in)"
     more=(differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$s" | plain)")")
@@ -239,7 +258,7 @@ close_now() { # PANE NAME SID
   fi
   if [[ -n $check ]]; then
     # Back out only our own /exit: text typed after it stays, and so does the close's refusal.
-    [[ $box == /exit ]] && t send-keys -t "$1" -N 6 BSpace
+    [[ $box == /exit ]] && back_out "$1"
     refuse "$2" "$1" "$check" "$why" "${more[@]}"
     return
   fi

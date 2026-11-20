@@ -2367,11 +2367,12 @@ for w in 84 160; do
   check "#496 review 2: at $w columns the last look passes an unchanged screen and refuses a spinner (busy), a changed row (quiet_screen), more text in the box (input_text)" \
     "$(for f in "$lk" "$work/look-spin" "$work/look-moved" "$work/look-box"; do printf '%s ' "$(look "$lk" "$f")"; done)" "ok busy quiet_screen input_text "
 done
-# A Claude Code that kept the menu open after the space would draw it over the transcript's last rows: refused (#496 review 3).
+# A Claude Code that kept the menu open after the space would draw it over the transcript's last rows: refused at
+# its own check, the error saying close needs updating rather than that the agent works (#496 reviews 3 and 4).
 for m in true '"wide"'; do
   state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":$m,\"slash_menu_space\":true,\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
-  check "#496 review 3: a menu still open after \"/exit \" (slash_menu $m) is refused (1) at check transcript, nothing submitted, /exit backed out" \
-    "$(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 transcript 0 0"
+  check "#496 review 4: a menu still open after \"/exit \" (slash_menu $m) is refused (1) at check menu, says close needs updating, nothing submitted, /exit backed out" \
+    "$(bash "$here/fleet" close wrk7 2>&1 >/dev/null | grep -c "opened Claude Code's command menu.*needs updating.*\[check: menu;") $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 menu 0 0"
 done
 # A prompt and its spinner arriving as /exit goes in scroll the transcript up; the menu being shut, the spinner shows (#483 review).
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_hidden\":[\"❯ a phone prompt\",\"✢ Churning… (1s · esc to interrupt)\"],\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
@@ -2407,6 +2408,12 @@ state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\"
 after_typed "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_hidden\":[\"❯ a phone prompt\"],\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"
 check "#483 review 2: a transcript that moves within the settle window after /exit went in refuses the close (1) at check quiet_screen, nothing submitted, /exit backed out" \
   "$(FLEET_CLOSE_SETTLE=3 bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 quiet_screen 0 0"
+wait "$wrp" 2>/dev/null
+# Spaces after our "/exit " do not show in the box: the back-out erases what is left of /exit too, so no "/e" stays (#496 review 4).
+state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"; settle; : >"$work/wrk7.log"
+after_typed "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_hidden\":[\"❯ a phone prompt\"],\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true,\"input\":\"/exit   \"}"
+check "#496 review 4: with two more spaces after \"/exit \" a refusal (1, quiet_screen) still leaves the box empty, nothing submitted" \
+  "$(FLEET_CLOSE_SETTLE=3 bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 1.5; input_text "$(screen "$b")" | grep -c .)" "1 quiet_screen 0 0"
 wait "$wrp" 2>/dev/null
 # The box is read once more just before Enter: text added to it within the settle window refuses the close and stays (#483 review 2).
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"; settle; : >"$work/wrk7.log"
