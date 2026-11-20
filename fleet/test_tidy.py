@@ -25,6 +25,22 @@ TECHNE = os.environ.get("TECHNE_CLEANUP") or str(
     Path.home() / "ajsoftworks/techne/plugins/techne/_shared/cleanup.py"
 )
 HAVE_TECHNE = Path(TECHNE).is_file()
+
+# Nothing this suite starts may reach the live fleet: every child, in-process or not, sees a
+# gh that records its call and fails, a briefing slug that names no repo, and a shots prune
+# that does nothing (a test that needs another sets its own).
+SANDBOX = Path(tempfile.mkdtemp(prefix="test-tidy-"))
+(SANDBOX / "gh").write_text(
+    '#!/bin/sh\necho "$@" >> "$(dirname "$0")/gh-calls"\nexit 1\n'
+)
+(SANDBOX / "gh").chmod(0o755)
+(SANDBOX / "shots.py").write_text("raise SystemExit(0)\n")
+SAFE_ENV = {
+    "FLEET_GH": str(SANDBOX / "gh"),
+    "BRIEFING_SLUG": "test/no-such-briefing",
+    "FLEET_PRUNE_SHOTS": str(SANDBOX / "shots.py"),
+}
+os.environ.update(SAFE_ENV)
 NEEDS_TECHNE = unittest.skipUnless(
     HAVE_TECHNE or os.environ.get("KLEPSYDRA_NO_TECHNE") != "1", "KLEPSYDRA_NO_TECHNE=1"
 )
@@ -119,7 +135,7 @@ class Tidy(unittest.TestCase):
             for k, v in os.environ.items()
             if not k.startswith(("GIT_", "FLEET_", "BRIEFING_", "TECHNE_"))
         }
-        e |= {
+        e |= SAFE_ENV | {
             "FLEET_STATE": str(self.state),
             "BRIEFING_DIR": str(self.brief),
             "FLEET_NOW": str(now),
@@ -862,6 +878,24 @@ class ReviewRound1(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 mod.report(self.tmp / "report.json")
         self.assertEqual(seen.read_text(), f"{self.brief}|{self.state}")
+
+    def test_the_real_shots_prune_under_the_suite_reaches_no_live_repo(self):
+        mod = load_tidy(self.state, self.brief)
+        calls = SANDBOX / "gh-calls"
+        calls.unlink(missing_ok=True)
+        with mock.patch.dict(
+            os.environ, {"FLEET_PRUNE_SHOTS": str(HERE / "prune_shots.py")}
+        ):
+            with contextlib.redirect_stdout(io.StringIO()):
+                mod.report(self.tmp / "report.json")
+        made = calls.read_text() if calls.exists() else ""
+        self.assertIn(
+            "issue list -R test/no-such-briefing", made
+        )  # it did ask gh, the stub
+        self.assertNotIn("ajbarea/fleet-briefing", made)
+        self.assertTrue(
+            all("test/no-such-briefing" in c for c in made.splitlines()), made
+        )
 
     def test_the_report_records_first_sight(self):
         (self.state / "HEPH.md").write_text(HEPH)
