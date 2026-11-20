@@ -22,13 +22,15 @@ verifies each PR against before.md. perf-k codes a slice only when it is too sub
 - Reported to Athena 16:42 (fleet send).
 
 ## Next
-1. Athena round 1 on #500 (reports/perf-500-r1.md): SF1 menu screen " ❯ 1. Yes" added (mutant == 1 -> >= 1);
-   SF2 budget now covers rc_settled, armed_at, input_text, plus a watch-tick count against a stub tmux
-   (23 per tick, 2 panes; 82 on 958dbb2; ps=$(plain) put back fails it); nits: idle_empty/box_empty parse
-   their own screen, redundant rule-gap test dropped, missing strace is a loud local warning (CI already fails).
-   Then commit, push, CI green, report to Athena (a fresh reviewer runs round 2). Resume pass: covered by the
-   helper budget and the harness, not a unit count (one() needs a dozen stubs).
-2. Verify each agy PR (slices 1, 2, 3, 5): rerun the harness BEFORE/AFTER with SANDBOX_SEED, compare with before.md.
+1. #500: round-1 fixes in ed62ff8 (menu screen, wider budget, watch-tick count, nits); Sources added to the body.
+   When CI is green: report to Athena for round 2 (fresh reviewer). Do not merge.
+2. #497 (agy slice 1) verified 11-19 23:10: doctor 1748 -> 1111, resume pass 972 -> 964, hook unchanged;
+   doctor --json equal on the seeded live copy. Should-fix posted (PR comment; reports/perf-497-verify.md):
+   keep the hook's `.v == 1` + UUID rules and fix fixtures; drop the hard-coded strace path. #497 and #500
+   conflict (test-forks target, CI step, lib.sh): second to merge rebases.
+3. Slices 2, 3, 5 (specs in briefs-free) start after #497 merges; agy implements unless Athena hands them to perf-k.
+   Verify each against before.md with `ba.sh A B PANES` (scratchpad helper: seeds one copy, runs run.sh from
+   worktree A then B; copy scripts/perf into a detached worktree of the PR head).
 
 ## Verify
 - `bash fleet/test_forks_screen.sh` (STRACE=, mawk on PATH; ~2.5 min); `make test-forks`. strace here: `apt-get download strace && dpkg -x strace_*.deb root`, then STRACE=root/usr/bin/strace.
