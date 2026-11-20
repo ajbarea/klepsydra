@@ -100,6 +100,12 @@ impl<T: Clone> Memo<T> {
     pub fn reads(&self) -> u64 {
         self.reads
     }
+
+    /// Values held between passes.
+    #[cfg(test)]
+    pub fn kept(&self) -> usize {
+        self.kept.len() + self.seen.len()
+    }
 }
 
 /// One pass of a reader over its folders.

@@ -16,10 +16,13 @@ Push only: `git push -u origin perf/readers:perf/readers`. Never push to main.
   opens per thread, phone.rs doc. Mutations: 11 of 11 killed. Linux fleet tests 454 pass; Windows
   `build-windows.sh --check` passes; clippy clean.
 
+- Verify pass (fresh Opus) on 46bed16: CLEAN. Should-fix (ctime part of the change marker untested) fixed: tests for an
+  in-place rewrite keeping size and time, delete-and-recreate, unopenable file, future mtime, 200 paths leave nothing
+  held; mutate.py adds "ctime dropped, ino kept" and "usage listed stamp dropped": 13 of 13 killed. Clippy, fmt clean.
+
 ## Next
-1. PR (label performance, assignee ajbarea, Closes #501), report to Athena; do not merge.
+1. PR #510 open (label performance, assignee ajbarea, Closes #501): CI on the new head, then report to Athena; do not merge.
 2. Class (c) frontend only after the gauge header PR (feat/gauge-header-421) merges: P1-P3, P12, A1.
-3. Verify agy's #492 slices against docs/perf/2026-11-19-shell-forks/before.md.
 
 ## Verify
 - `cd src-tauri/fleet && flock -o /tmp/fleet-heavy.lock timeout 1500 cargo test -q --lib`

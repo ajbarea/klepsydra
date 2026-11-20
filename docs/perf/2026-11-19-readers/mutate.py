@@ -72,6 +72,18 @@ M = [
         "        if !meta.is_file() {\n            return None;",
         "        if meta.is_symlink() {\n            return None;",
     ),
+    (
+        "usage: listed stamp dropped (always None)",
+        "src/usage.rs",
+        "            Some((meta.modified().ok()?, e.path(), Stamp::of(&meta)))",
+        "            Some((meta.modified().ok()?, e.path(), None))",
+    ),
+    (
+        "ctime dropped, ino kept",
+        "src/memo.rs",
+        "        Change([meta.ino() as i64, meta.ctime(), meta.ctime_nsec()])",
+        "        Change([meta.ino() as i64, 0, 0])",
+    ),
 ]
 
 

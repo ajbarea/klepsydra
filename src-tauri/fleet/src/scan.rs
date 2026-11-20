@@ -76,6 +76,12 @@ impl Scanner {
         self.sessions.reads() + self.beats.reads()
     }
 
+    /// Values held between passes.
+    #[cfg(test)]
+    pub fn kept(&self) -> usize {
+        self.sessions.kept() + self.beats.kept()
+    }
+
     /// Every `<uuid>.json` in `fleet` with its `<uuid>.beat`. Anything else
     /// there (temp files mid-write, the hook's lock, stray files) is not a
     /// session and is passed over without a word. A missing directory is an
@@ -309,6 +315,113 @@ pub(crate) mod tests {
             s.scan(&dir.0).entries[0].file.state,
             crate::session::State::Ended
         );
+    }
+
+    // A copy that keeps its source's time written in place (`cp -p` over
+    // the file): same inode, length and time; only the change time moves.
+    #[cfg(unix)]
+    #[test]
+    fn an_in_place_rewrite_with_the_same_length_and_time_is_read() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = Scratch::new("in-place");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let ino = || std::fs::metadata(dir.0.join(&name)).unwrap().ino();
+        let before = ino();
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        std::fs::write(dir.0.join(&name), session(A, "ended")).unwrap();
+        age(&dir, &name, 1_700_000_000);
+        assert_eq!(ino(), before, "the same inode");
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Ended
+        );
+    }
+
+    #[test]
+    fn a_file_deleted_and_made_again_is_read() {
+        let dir = Scratch::new("recreate");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        std::fs::remove_file(dir.0.join(&name)).unwrap();
+        assert!(s.scan(&dir.0).entries.is_empty());
+        dir.write(&name, &session(A, "ended"));
+        age(&dir, &name, 1_700_000_000);
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Ended
+        );
+        // With no pass between.
+        std::fs::remove_file(dir.0.join(&name)).unwrap();
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Error
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_opened_is_tried_on_every_pass() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = Scratch::new("eacces");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let p = dir.0.join(&name);
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&p).is_ok() {
+            return; // root reads it anyway
+        }
+        let mut s = Scanner::default();
+        for _ in 0..2 {
+            let l = s.scan(&dir.0);
+            assert_eq!((l.entries.len(), l.problems.len()), (0, 1));
+        }
+        assert_eq!(s.reads(), 2);
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(s.scan(&dir.0).entries.len(), 1);
+        assert_eq!(s.reads(), 3);
+    }
+
+    #[test]
+    fn a_time_in_the_future_is_read_on_every_pass() {
+        let dir = Scratch::new("future");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        File::options()
+            .write(true)
+            .open(dir.0.join(&name))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        s.scan(&dir.0);
+        assert_eq!(s.reads(), 2);
+    }
+
+    #[test]
+    fn sessions_that_come_and_go_leave_nothing_held() {
+        let dir = Scratch::new("churn");
+        let mut s = Scanner::default();
+        for i in 0..200u32 {
+            let id = format!("{i:08x}-1514-44d1-a31c-eba4a7cb41ed");
+            let name = format!("{id}.json");
+            dir.write(&name, &session(&id, "working"));
+            age(&dir, &name, 1_700_000_000);
+            s.scan(&dir.0);
+            std::fs::remove_file(dir.0.join(&name)).unwrap();
+        }
+        s.scan(&dir.0);
+        assert_eq!(s.kept(), 0);
     }
 
     // A copy that keeps its source's time (`cp -p`, `touch -r`, a restore)
