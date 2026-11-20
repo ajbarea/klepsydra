@@ -82,9 +82,11 @@ class Fake:
         self.calls.append(path)
         for b in self.broken:
             if b in path:
-                raise ci_watch.urllib.error.HTTPError(
+                err = ci_watch.urllib.error.HTTPError(
                     path, 403, "rate limited", {}, None
                 )
+                err.close()  # as the real get() leaves it: no open response
+                raise err
         url = urllib.parse.urlparse(path)
         q = dict(urllib.parse.parse_qsl(url.query))
         if url.path.endswith("/jobs"):
