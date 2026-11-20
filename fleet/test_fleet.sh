@@ -2237,7 +2237,7 @@ check "#496 review: a session file that says orchestrator refuses the close with
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "refused: .* is the orchestrator's pane \[check: orchestrator;") $(lastclose wrk7 '.check + " " + .by') $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 orchestrator session_file 0"
 done_live "$b" "done" '[]'
 check "#496 review: a name with no finished row logs check finished and names it in the error" \
-  "$(bash "$here/fleet" close nobody 2>&1 | grep -c '\[check: finished\]$') $(lastclose nobody .check)" "1 finished"
+  "$(bash "$here/fleet" close ghost 2>&1 | grep -c '\[check: finished\]$') $(lastclose ghost .check)" "1 finished"
 # The race: the pane goes busy while close waits for the pane lock (a send mid-paste); the check runs under the lock.
 exec 8>"$FLEET_STATE/locks/send-${b#%}"; flock 8
 FLEET_SEND_WAIT=8 bash "$here/fleet" close wrk7 >"$work/clr.out" 2>&1 & clp=$!

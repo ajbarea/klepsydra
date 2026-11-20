@@ -52,9 +52,19 @@ Do not merge: Heph reviews and merges.
 - Round 4: clean (19 adversarial screen pairs, the blankabove fixture pins the fix). Suite 1008/0; live rest
   closes at 84 and 160, mid-turn refused.
 
+## Independent round 1 (Athena's Opus, 11-19 ~21:15; report reports/close-496-r1.md)
+- Should-fix: a turn could land wholly under the 5-row menu in a 2-5 row gap a bottom-pinned box leaves
+  under a short transcript. Now refused at check menu_gap (gap >= 2 and the transcript's last row at or
+  past the compared rows). Replay matrix 84 (gaps 0-6) and 160 (1-4), the reviewer's gap screen, a live
+  fake-pane test (`slash_fill`); mutant without the check closes the hidden turn (caught).
+- Nits taken: last look also compares the screen with the settle window's; check= on every refusal
+  (finished, pane_session, exit_dialog, exit_wait, typing, lock); the session file's .orchestrator flag
+  is a second orchestrator guard; PR body current. Footer "← N agents" = agent-view sessions run by a
+  separate supervisor (survive /exit): comment, no refusal. Nits 2, 5, 6 left (fingerprint backs 2;
+  5 and 6 pre-existing).
+- Suite 1014/1 locally: my new test's name collided with the `--why nobody` test; renamed to ghost.
+
 ## Next
-1. ✅ PR #496 open (Fixes #483). 11-19 evening: CI went red on shellcheck SC2030/SC2031 after the main merge
-   (the scroll replay loop's `b` shadowed the pane's `b`); renamed to `fn` in 3de0833, both replay checks
-   re-run standalone (5 same, 10 differs).
-2. ✅ CI green on dd0e926; reported to Heph 11-19 19:43. Do not merge.
-3. 📋 `fleet done` once #502 (klepsydra CI) and techne#386 are through (their IMPL.md files on ci/best-practice).
+1. 📋 CI green on the round-1 push, then report to Athena/Heph (fleet send, else inbox/close-menu.md).
+2. 📋 A fresh reviewer runs round 2 (Athena's). Do not merge.
+3. 📋 `fleet done` once #496 round 2 is clean, #502 (green) and techne #387 are through.
