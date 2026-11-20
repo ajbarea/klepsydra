@@ -43,7 +43,7 @@ export function wireDock({ els, inTauri, invoke, follow, log, look, onChange = (
     // With no reading at all the dock waits; the Copilot placeholder alone is not a reading.
     const chips = rows.length ? toChips(rows, now) : [];
     els.wait.hidden = chips.length > 0;
-    els.wait.textContent = WAITING;
+    if (els.wait.textContent !== WAITING) els.wait.textContent = WAITING; // a same-text write still replaces the node
     syncChips(els.chips, chips, { now, layout: "linear", ...look() });
   }
 

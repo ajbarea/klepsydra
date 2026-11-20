@@ -188,17 +188,22 @@ const startDefault = (button) => {
 newButton.hidden = !inTauri;
 newButton.addEventListener("click", () => startDefault(newButton));
 
+let buttonLook = ""; // what the button last drew: it repaints on every usage read (5 s with the dock on)
 function paintButton() {
   const { entry, reason } = nsState().pick;
+  setWaiting(newButton, !ns.ready);
+  setWaiting(startButton, !ns.ready);
+  const title = buttonTitle(entry);
+  const look = [entry.engine, entry.shortName, entry.name, entry.badge, title, reason, Boolean(ns.prefs.default), inTauri].join("|");
+  if (look === buttonLook) return;
+  buttonLook = look;
   newButton.querySelector(".ico").replaceChildren(iconNode(entry.engine));
   const label = newButton.querySelector(".new-label");
   label.replaceChildren(`New ${entry.shortName}`, Object.assign(document.createElement("span"), { className: "ns-word", textContent: " session" }));
   const mono = newButton.querySelector(".mono");
   mono.hidden = !entry.badge;
   mono.textContent = entry.badge;
-  newButton.title = buttonTitle(entry);
-  setWaiting(newButton, !ns.ready);
-  setWaiting(startButton, !ns.ready);
+  newButton.title = title;
   newButton.setAttribute("aria-label", `New ${entry.name} session`);
   newKind.hidden = !inTauri;
   footWhy.textContent = `Default: ${entry.name}, ${reason}.`;
