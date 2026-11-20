@@ -16,6 +16,7 @@
 #   fleet done [NAME] "REPORT"  mark an agent finished (default: this pane's), so nothing relaunches it,
 #                         and send the one-line REPORT to the orchestrator (- reads stdin)
 #   fleet close NAME      close a finished agent's pane once its report is read
+#   fleet close --why NAME  the last close of NAME: closed, or the check that refused it and what differed
 #   fleet voices [MODE]   make keryx follow the tray's Voices mode (heph, everyone, off) now;
 #                         --if-changed only a mode not yet applied, --check only report
 #   fleet pause NAME WHY  set aside an agent whose session is gone (paused.tsv keeps its row)
