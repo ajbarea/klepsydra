@@ -1,0 +1,12 @@
+#!/bin/bash
+# A read-only tmux, first on PATH in the sandbox: reads go to the real tmux,
+# any other command (send-keys, kill-pane, set-hook ...) is refused and logged
+# to $SHIM_LOG, so a measured fleet script never types into a live pane.
+a=("$@") i=0
+while [[ ${a[i]:-} == -* ]]; do case ${a[i]} in -L | -S | -f) i=$((i + 2)) ;; *) i=$((i + 1)) ;; esac; done
+case ${a[i]:-} in
+  list-panes | lsp | list-windows | lsw | list-sessions | ls | display-message | display | capture-pane | capturep | \
+    show-options | show | show-environment | showenv | has-session | has | list-clients | lsc | show-buffer)
+    exec "${REAL_TMUX:-/usr/bin/tmux}" "$@" ;;
+  *) echo "REFUSED $*" >>"${SHIM_LOG:-/dev/null}"; exit 1 ;;
+esac
