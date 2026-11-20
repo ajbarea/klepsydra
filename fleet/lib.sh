@@ -631,7 +631,35 @@ SESSION_FIELDS='[(.tmux.pane | or_q), (if .tmux.socket == null then "-" else (.t
   ((.claude.start | numbers) // "-")]'
 fleet_sessions_tsv() {
   if [[ -n ${SESSION_ROWS+set} ]]; then [[ -z $SESSION_ROWS ]] || printf '%s\n' "$SESSION_ROWS"; return 0; fi
-  fleet_rows "$KLEPSYDRA_DIR/fleet" "$SESSION_FIELDS"
+  if [[ ${FUNCNAME[1]:-} == live_session ]]; then
+    fleet_rows "$KLEPSYDRA_DIR/fleet" "$SESSION_FIELDS"
+    return
+  fi
+  local dir="${KLEPSYDRA_DIR:-$HOME/.local/share/klepsydra}/fleet"
+  local f b names=() rows
+  for f in "$dir"/*.json; do
+    [[ -f $f && ! -L $f ]] || continue
+    b=${f##*/}
+    [[ ${b%.json} =~ $UUID_RE ]] && names+=("$b")
+  done
+  rows=$(fleet_rows "$dir" "$SESSION_FIELDS")
+  local n_files=${#names[@]} n_rows=0
+  if [[ -n $rows ]]; then
+    mapfile -t _r <<<"$rows"
+    n_rows=${#_r[@]}
+  fi
+  if (( n_files != n_rows )); then
+    local parsed_names bad=()
+    parsed_names=$(awk -F'\t' '{ print $1 }' <<<"$rows")
+    for f in "${names[@]}"; do
+      grep -qxF -- "$f" <<<"$parsed_names" || bad+=("$f")
+    done
+    flog WARN "session file parse mismatch" named="$n_files" returned="$n_rows" bad="${bad[*]}"
+    [[ -n ${FLEET_STATE:-} && -d $FLEET_STATE ]] && printf '%s\n' "${bad[@]}" >"$FLEET_STATE/bad-sessions" 2>/dev/null || true
+  else
+    [[ -n ${FLEET_STATE:-} && -f $FLEET_STATE/bad-sessions ]] && rm -f -- "$FLEET_STATE/bad-sessions" 2>/dev/null || true
+  fi
+  [[ -z $rows ]] || printf '%s\n' "$rows"
 }
 # Whether PANE's window is the one its tmux session shows (#216). A pane's
 # successor opens behind and comes forward only in place of a window AJ was

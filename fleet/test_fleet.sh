@@ -1386,6 +1386,12 @@ state wpane '{"above":["idle"]}'
 printf 'parked\tPAUSED 11-01 07:16: no room\n' >"$FLEET_STATE/paused.tsv"
 check "#246: paused agents are listed, never a failure" "$(doctor | grep '^ok   paused agents')" "ok   paused agents: parked: fleet unpause NAME brings one back"
 rm -f "$FLEET_STATE/paused.tsv"
+trunc_id="00000000-0000-4000-8000-000000000099"
+printf '{"v":1,"tmux":' >"$KLEPSYDRA_DIR/fleet/$trunc_id.json"
+check "#492 review 2: a truncated session file warns in doctor, named" \
+  "$(doctor | grep '^warn session files')" "warn session files: corrupt or truncated: $trunc_id.json"
+rm -f "$KLEPSYDRA_DIR/fleet/$trunc_id.json"
+check "#492 review 2: clean session files pass" "$(doctor | grep -c '^ok   session files')" "1"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
 touch -d '@1000' "$FLEET_STATE/resume.beat"
 check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resume loop: last pass')" "1"

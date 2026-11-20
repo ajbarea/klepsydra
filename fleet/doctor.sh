@@ -185,6 +185,12 @@ panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
 # One read of every session file for the whole run: the checks below ask it per pane.
 # shellcheck disable=SC2034 # read by fleet_sessions_tsv
 SESSION_ROWS=$(fleet_sessions_tsv)
+if [[ -s ${FLEET_STATE:-}/bad-sessions ]]; then
+  bad_sessions=$(tr '\n' ' ' <"${FLEET_STATE:-}/bad-sessions" | sed 's/ $//')
+  report warn "session files" "corrupt or truncated: $bad_sessions" files="$bad_sessions"
+else
+  report ok "session files" "every session file parsed"
+fi
 
 # Limits as the fleet hook's StopFailure record dates them (#311), else as the
 # panes show them (#263): one still at a limit OVERDUE_S past its reset was
