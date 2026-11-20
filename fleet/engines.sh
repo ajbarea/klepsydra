@@ -135,7 +135,7 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
     # or a background task row under the box whose text ends in "running".
     local above_foot
     above_foot=$(head -n -1 <<<"$recent")
-    if grep -Eq '●.*running[[:space:]]*$' <<<"$recent" || grep -Pq '[\x{2800}-\x{28ff}]|(Generating|Thinking|Running command|Planning|Loading)\.\.\.' <<<"$above_foot"; then
+    if grep -Eq '●.*running[[:space:]]*$' <<<"$recent" || LC_ALL=C /usr/bin/grep -aqP '\xe2[\xa0-\xa3][\x80-\xbf]|(Generating|Thinking|Running command|Planning|Loading)\.\.\.' <<<"$above_foot"; then
       footer=busy
     else
       footer=idle

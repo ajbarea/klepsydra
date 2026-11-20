@@ -218,6 +218,13 @@ task_only=$(cat "$here/fixtures/agy-busy-task-only.txt")
 check "agy busy fixture: spinner only reads busy" "$(eng_state agy "$spinner_only")" "busy"
 check "agy busy fixture: phrase only reads busy" "$(eng_state agy "$phrase_only")" "busy"
 check "agy busy fixture: task row only reads busy" "$(eng_state agy "$task_only")" "busy"
+check "agy busy fixtures under LC_ALL=C read busy" "$(
+  LC_ALL=C eng_state agy "$busy12"
+  LC_ALL=C eng_state agy "$busy13"
+  LC_ALL=C eng_state agy "$spinner_only"
+  LC_ALL=C eng_state agy "$phrase_only"
+  LC_ALL=C eng_state agy "$loading_screen"
+)" $'busy\nbusy\nbusy\nbusy\nbusy'
 trust_screen=$(cat "$here/fixtures/agy-1.5.13-trust.txt")
 check "agy 1.5.13 real trust dialog reads trust" "$(eng_state agy "$trust_screen")" "trust"
 check "agy trust key is Enter" "$(eng_trust_key agy)" "Enter"
