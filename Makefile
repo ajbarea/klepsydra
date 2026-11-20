@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -38,6 +38,12 @@ test-headless:
 
 test-heavy-lock:
 	$(HEAVY) bash fleet/test_heavy_lock.sh
+
+# Fork budgets (#492): each fleet/test_forks_*.sh counts the processes a hot
+# path starts (strace) and checks a rewrite against the code it replaced.
+# No tmux server: runs without the lock.
+test-forks:
+	@for t in fleet/test_forks_*.sh; do echo "== $$t"; bash "$$t" || exit 1; done
 
 # The memory slices and OOM ranks (#353); its live part needs a user manager and
 # skips without one (CI), and reads WSL's free memory, so it takes the lock.

@@ -47,7 +47,7 @@ FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a work
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said screen_seen pane_session
 declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
@@ -120,6 +120,19 @@ resume_typed() { # PANE
   submit "$1"
 }
 
+# ARMED: the time BELOW's last "Continuing automatically at TIME" names
+# (after screen_parse), trailing spaces cut; empty when none. Matches as grep -o
+# would: each match runs to the next "·".
+armed_at() {
+  local l rest m="" below=() re='Continuing automatically at ([^·]*)'
+  mapfile -t below <<<"$BELOW"
+  for l in "${below[@]}"; do
+    rest=$l
+    while [[ $rest =~ $re ]]; do m=${BASH_REMATCH[1]} rest=${rest#*"${BASH_REMATCH[0]}"}; done
+  done
+  ARMED=${m%"${m##*[! ]}"}
+}
+
 # When the agent in PANE (screen PLAIN) stopped: the last moment, at most 15
 # min past the clock now (a turn can end while a pass runs), whose local time
 # reads the "done 4:21 PM" its last turn printed, at the end of that minute.
@@ -129,17 +142,18 @@ resume_typed() { # PANE
 # status line redraws keep fresh, so it under-counts. Always a number: when
 # unsure, NOW.
 stopped_at() { # PANE PLAIN
-  local at day now d c k best="" stopped
+  local at day now d c k got best="" stopped
   at=$(grep -o 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$2" | tail -1 | cut -c6-)
   at=${at#0}
   now=$(clock)
-  if [[ -n $at ]] && day=$(date -d "@$now" +%F); then
+  if [[ -n $at ]] && printf -v day '%(%F)T' "$now"; then
     for d in -1 0 1; do
       # Noon is never skipped or repeated, so the day before and after are sure.
       c=$(date -d "$(date -d "$day 12:00 PM $d day" +%F) $at" +%s 2>/dev/null) || continue
       for k in -7200 -3600 -1800 0 1800 3600 7200; do
         (( c + k <= now + 900 && c + k > ${best:-0} )) || continue
-        [[ $(LC_ALL=C date -d "@$((c + k))" '+%-I:%M %p') == "$at" ]] && best=$((c + k))
+        LC_ALL=C printf -v got '%(%-I:%M %p)T' "$((c + k))"
+        [[ $got == "$at" ]] && best=$((c + k))
       done
     done
   fi
@@ -527,6 +541,103 @@ done_move() { # PANE KIND RC NEW CTX
 }
 
 
+# Update heartbeat in <session>.beat on screen CHANGE only (#416),
+# never on "process alive". A hung agent must still go silent.
+# Write in statusline format atomically without overwriting any statusline name,
+# and only when no fresh status-line beat exists.
+update_heartbeat() { # PANE SCREEN
+  local p=$1 s=$2
+  local screen_f="$FLEET_STATE/screens/${p//%/_}"
+  local prev_screen="" screen_changed=0
+  if [[ -n ${screen_seen[$p]+set} ]]; then
+    [[ "$s" != "${screen_seen[$p]}" ]] && screen_changed=1
+  elif [[ -f "$screen_f" ]]; then
+    { IFS= read -r -d '' prev_screen <"$screen_f"; } 2>/dev/null || true
+    [[ "$s" != "$prev_screen" ]] && screen_changed=1
+  else
+    screen_changed=1
+  fi
+  (( screen_changed )) || return 0
+  screen_seen[$p]="$s"
+  mkdir -p "$FLEET_STATE/screens" 2>/dev/null
+  printf '%s' "$s" >"$screen_f"
+
+  local sid=""
+  if [[ -n ${pane_session[$p]:-} ]] && session_alive "${pane_session[$p]}"; then
+    sid=${pane_session[$p]}
+  fi
+  if [[ -z $sid ]]; then
+    local reg_p r_name r_brief r_sid
+    if [[ -r ${REGISTRY:-$FLEET_STATE/panes.tsv} ]]; then
+      while IFS=$'\t' read -r reg_p r_name r_brief r_sid _; do
+        if [[ $reg_p == "$p" && -n $r_sid ]]; then
+          sid=$r_sid
+          break
+        fi
+      done < "${REGISTRY:-$FLEET_STATE/panes.tsv}" 2>/dev/null
+    fi
+    if [[ -z $sid && -n $ORCH && $p == "$ORCH" ]]; then
+      sid=${OSID:-}
+      [[ -z $sid ]] && sid=$(cat "$FLEET_STATE/orchestrator.session" 2>/dev/null)
+    fi
+    if [[ -z $sid ]]; then
+      sid=$(live_session "$p") || sid=""
+    fi
+    [[ -n $sid ]] && pane_session[$p]=$sid
+  fi
+  [[ -n $sid ]] || return 0
+
+  local beat="$KLEPSYDRA_DIR/fleet/$sid.beat"
+  local was_name="" was_bucket=""
+  if [[ -f $beat ]]; then
+    { IFS=$'\t' read -r was_name was_bucket <"$beat"; } 2>/dev/null || true
+  fi
+  if [[ $was_bucket =~ ^[0-9]+$ ]]; then
+    # Statusline refreshes every 30 s: if within 45 s, Claude Code keeps its own beat unchanged.
+    (( NOW - was_bucket * 10 < 45 )) && return 0
+  fi
+
+  local beat_name="$was_name"
+  if [[ -z $beat_name ]]; then
+    local sjson=""
+    if [[ -f "$KLEPSYDRA_DIR/fleet/$sid.json" ]]; then
+      { IFS= read -r sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null || true
+      if [[ $sjson =~ \"name\":\"([^\"]+)\" ]]; then
+        beat_name="${BASH_REMATCH[1]}"
+      elif [[ $sjson =~ \"worktree\":\"([^\"]+)\" && $sjson =~ \"branch\":\"([^\"]+)\" ]]; then
+        local br="${BASH_REMATCH[2]}"
+        [[ -n $br && $br != "main" && $br != "master" ]] && beat_name="$br"
+      fi
+    fi
+    if [[ -z $beat_name ]]; then
+      local brief_file="${r_brief:-}"
+      if [[ -z $brief_file && $sjson =~ Read\ your\ brief\ at\ ([^[:space:]\"]+) ]]; then
+        brief_file="${BASH_REMATCH[1]}"
+        [[ $brief_file == ~* ]] && brief_file="${HOME:-}${brief_file#\~}"
+      fi
+      if [[ -n $brief_file && -f $brief_file ]]; then
+        local b_line=""
+        { IFS= read -r b_line <"$brief_file"; } 2>/dev/null || true
+        b_line=${b_line#\# }
+        b_line=${b_line#\#}
+        b_line=${b_line#Task: }
+        b_line=${b_line#"${b_line%%[![:space:]]*}"}
+        b_line=${b_line%"${b_line##*[![:space:]]}"}
+        beat_name="$b_line"
+      fi
+    fi
+    [[ -z $beat_name ]] && beat_name="${r_name:-}"
+  fi
+
+  local beat_line="$beat_name"$'\t'"$((NOW / 10))"
+  if mkdir -p "${beat%/*}" 2>/dev/null; then
+    local tmp="$beat.$$.tmp"
+    if printf '%s\n' "$beat_line" >"$tmp" 2>/dev/null; then
+      mv -f "$tmp" "$beat" 2>/dev/null || rm -f "$tmp"
+    fi
+  fi
+}
+
 one() { # PANE
   local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp rc
   # Heph is the session on record in the pane on record. A tmux restart reuses
@@ -555,12 +666,13 @@ one() { # PANE
   (( orch )) && cfg=$(heph_config)
   PANE_ID=${ACCT_ID[$cfg]:-}
   [[ -n $PANE_ID ]] && ACTIVE=$(account_label "$PANE_ID")
-  (( NOW - ${last[$p]:-0} < 900 )) && return
-  [[ -n ${job[$p]:-} ]] && return
   launching "$p" && return
   s=$(screen "$p") || return
-  ps=$(plain <<<"$s")
-  typed=$(input_text "$s")
+  update_heartbeat "$p" "$s"
+  (( NOW - ${last[$p]:-0} < 900 )) && return
+  [[ -n ${job[$p]:-} ]] && return
+  screen_parse "$s"
+  ps=$SCR_PLAIN typed=$SCR_INPUT
 
   # Claude Code's limit menu: take option 1, "Stop and wait for limit to reset";
   # on the next pass the pane reads as an ordinary limited one.
@@ -573,7 +685,8 @@ one() { # PANE
   # Claude Code's own auto-continue resumes the whole transcript; on a
   # registered pane with over FRESH_AFTER_S to wait, cancel it ("esc to
   # cancel") so the pane gets a fresh session at the reset. Never over typed text.
-  armed=$(split_screen "$s"; printf '%s\n' "$BELOW" | grep -o 'Continuing automatically at [^·]*' | tail -1 | sed 's/^Continuing automatically at //; s/ *$//')
+  armed_at
+  armed=$ARMED
   if (( !orch )) && [[ -n $armed && -z $typed ]] && registered "$p"; then
     at=$(date -d "${armed//,/}" +%s 2>/dev/null) || at=0
     (( at > 0 && NOW - at > 21600 )) && at=$((at + 86400))

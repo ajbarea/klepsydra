@@ -67,6 +67,7 @@ ci_wake() {
 # until it clears (#246), so a watcher started during a shared limit does not
 # wake the orchestrator at once on each of them.
 declare -A held
+DONE_RE='done [0-9]{1,2}:[0-9][0-9] [AP]M' BG_RE='still running|Waiting for [0-9]+ background'
 resets=""
 for p in "$@"; do
   s=$(screen "$p")
@@ -89,7 +90,9 @@ while :; do
     if ! fleet_panes | grep -qx "$p"; then
       flog INFO "watched pane gone" pane="$p"; echo "GONE $p"; exit 0
     fi
-    s=$(screen "$p") ps=$(plain <<<"$s")
+    s=$(screen "$p")
+    screen_parse "$s"
+    ps=$SCR_PLAIN
     if [[ -n ${held[$p]:-} ]]; then
       if pane_limited "$p" "$s" >/dev/null; then continue; fi
       unset "held[$p]"
@@ -102,10 +105,10 @@ while :; do
       flog INFO "watched pane limited" pane="$p" reason="limit" message="$limit_line" reset_at="${limit%%$'\t'*}" screen="$limit_line"
       echo "LIMIT $p $(reset_label "${limit%%$'\t'*}" "$limit_line")"; exit 0
     fi
-    if busy "$s" || ! grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps"; then
+    if busy "$s" || ! [[ $ps =~ $DONE_RE ]]; then
       unset "since[$p]"; continue
     fi
-    if grep -qE 'still running|Waiting for [0-9]+ background' <<<"$ps" || pane_background "$p" "$now"; then
+    if [[ $ps =~ $BG_RE ]] || pane_background "$p" "$now"; then
       unset "since[$p]"; continue
     fi
     : "${since[$p]:=$now}"

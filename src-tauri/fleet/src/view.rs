@@ -206,7 +206,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         .as_ref()
         .map_or(entry.modified, |b| b.0.max(entry.modified));
     // A prompt hides the status line, so a waiting session sends no beats.
-    let silent = !matches!(f.state, State::Ended | State::NeedsYou)
+    let silent = !matches!(f.state, State::Ended | State::NeedsYou | State::Done)
         && now.saturating_sub(last_word) > SILENT_AFTER;
     let mut crew = Crew::default();
     if matches!(f.state, State::Working | State::NeedsYou) {
@@ -781,6 +781,21 @@ mod tests {
     }
 
     #[test]
+    fn done_session_with_old_beat_is_not_silent_working_session_is() {
+        let mut e = entry("a", State::Done, NOW - 300, NOW - 300);
+        e.beat = Some((NOW - SILENT_AFTER - 10, None));
+        e.modified = NOW - SILENT_AFTER - 10;
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.status, Status::Done);
+
+        let mut w = entry("a", State::Working, NOW - 300, NOW - 300);
+        w.beat = Some((NOW - SILENT_AFTER - 10, None));
+        w.modified = NOW - SILENT_AFTER - 10;
+        let vw = view(&w, NOW).unwrap();
+        assert_eq!(vw.status, Status::Silent);
+    }
+
+    #[test]
     fn an_old_file_reads_as_before_and_the_crew_is_always_sent() {
         let text = format!(
             r#"{{"v":1,"session_id":"cb9fa591-1514-44d1-a31c-eba4a7cb41ed","state":"working","state_at":{},"written_at":{}}}"#,
@@ -858,7 +873,12 @@ mod tests {
         assert_eq!(view(&e, NOW).unwrap().status, Status::Done);
         e.file.state_at = NOW - 200;
         e.modified = NOW - 200;
-        assert_eq!(view(&e, NOW).unwrap().status, Status::Silent);
+        assert_eq!(view(&e, NOW).unwrap().status, Status::Done);
+        let mut w = entry("a", State::Working, NOW - 200, 0);
+        w.beat = None;
+        w.file.state_at = NOW - 200;
+        w.modified = NOW - 200;
+        assert_eq!(view(&w, NOW).unwrap().status, Status::Silent);
     }
 
     #[test]

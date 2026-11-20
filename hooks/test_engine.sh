@@ -81,6 +81,9 @@ check "$(run agy "{\"conversationId\":\"11111111-2222-4333-8444-555555555555\",\
 check "$(run copilot '{"sessionId":"11111111-2222-4333-8444-555555555555","cwd":"/repo","toolName":"Read","toolInput":{"path":"x"}}' preToolUse)" \
   '{"session_id":"11111111-2222-4333-8444-555555555555","hook_event_name":"PreToolUse","cwd":"/repo","transcript_path":"","prompt":"","last_assistant_message":"","tool_name":"Read","tool_input":{"path":"x"},"tool_response":null,"agent_id":"","engine":"copilot","source":""}'
 
+# Title pass-through when engine provides one
+check "$(run agy '{"conversationId":"11111111-2222-4333-8444-555555555555","sessionTitle":"custom-agy"}' SessionStart | jq -r .session_title)" "custom-agy"
+
 check "$(run agy '{}' Nope)" ""
 check "$(run nope '{}' SessionStart)" ""
 

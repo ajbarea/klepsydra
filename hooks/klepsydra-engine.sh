@@ -83,7 +83,8 @@ printf '%s' "$input" | jq -c \
     tool_response: (.toolResponse // .tool_response // null),
     agent_id: ((.agentId // .agent_id) | text),
     engine: $engine,
-    source: ((.source // .reason) | text)
+    source: ((.source // .reason) | text),
+    session_title: ((.sessionTitle // .session_title // .title) | text)
   }
   | if .hook_event_name == "UserPromptSubmit" and .prompt == ""
     then del(.prompt)
@@ -91,6 +92,10 @@ printf '%s' "$input" | jq -c \
     end
   | if .hook_event_name == "SessionEnd" and .source == ""
     then del(.source)
+    else .
+    end
+  | if .session_title == ""
+    then del(.session_title)
     else .
     end
 ' | exec bash "$fleet"

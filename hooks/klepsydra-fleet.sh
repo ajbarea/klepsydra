@@ -683,7 +683,10 @@ def assistant_text($line):
             ended: null, turns: 0, written_at: $now}) as $s
   | $s
   | .engine = (($ev.engine | strings | select(test("^[A-Za-z0-9._-]{1,32}$"))) // .engine // "claude")
-  | .name = (($ev.session_title | text) // .name)
+  | (if ($worktree != "" and $branch != "" and ($branch | IN("main", "master") | not)) then $branch
+     elif ($brief_title != "") then $brief_title
+     else null end) as $fallback_name
+  | .name = (($ev.session_title | text) // .name // $fallback_name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
   # An orchestrator file written before faces (#222) is Hephaestus's: it keeps him.
@@ -1149,16 +1152,17 @@ fleet_registry_event() { # state event session source input cleared_sid
 }
 
 main() {
-  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine=""
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine="" prompt=""
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
     [ (.session_id | s), (.hook_event_name | s), (.cwd | s),
       (if .hook_event_name == "PostToolUse" and (.tool_name | IN("Edit", "Write", "NotebookEdit"))
        then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end),
-      (.transcript_path | s), (.source | s), (.engine | s)
+      (.transcript_path | s), (.source | s), (.engine | s),
+      (.prompt | s)
     ] | join("\u001f")' 2>/dev/null) || return 0
-  IFS=$'\x1f' read -r session event cwd edited transcript source engine <<<"$fields"
+  IFS=$'\x1f' read -r session event cwd edited transcript source engine prompt <<<"$fields"
   [[ $session =~ $UUID_RE && " $EVENTS " == *" $event "* ]] || return 0
 
   now=${KLEPSYDRA_NOW:-}
@@ -1271,8 +1275,23 @@ main() {
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
   [[ -n $old_git && ! -e $old_git ]] && where_gone=true
+  local brief_title="" brief_file=""
+  if [[ $prompt =~ Read\ your\ brief\ at\ ([^[:space:]]+) ]]; then
+    brief_file=${BASH_REMATCH[1]}
+    [[ $brief_file == ~* ]] && brief_file="${HOME:-}${brief_file#\~}"
+  elif [[ -n $tmux_pane && -r ${REGISTRY:-${FLEET_STATE:-}/panes.tsv} ]]; then
+    brief_file=$(awk -F'\t' -v p="$tmux_pane" '$1 == p { print $3 }' "${REGISTRY:-${FLEET_STATE:-}/panes.tsv}" 2>/dev/null)
+  fi
+  if [[ -n $brief_file && -f $brief_file ]]; then
+    { IFS= read -r brief_title <"$brief_file"; } 2>/dev/null
+    brief_title=${brief_title#\# }
+    brief_title=${brief_title#\#}
+    brief_title=${brief_title#Task: }
+    brief_title=${brief_title#"${brief_title%%[![:space:]]*}"}
+    brief_title=${brief_title%"${brief_title##*[![:space:]]}"}
+  fi
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" --argjson bg_max "$BACKGROUND_MAX" --argjson stopped_ttl "$STOPPED_TTL" \
-    --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
+    --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" --arg brief_title "$brief_title" \
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" --arg dir "$where_dir" --arg gh "$where_remote" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \

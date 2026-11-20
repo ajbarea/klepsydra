@@ -20,7 +20,7 @@ real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 # Never AJ's briefing: `fleet done` writes an undelivered report into this queue file (#445).
 export FLEET_QUEUE_MD="$work/queue.md"
-mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
+mkdir -p "$FLEET_STATE/log" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
 export FLEET_HEADLESS_CONFIG="$work/no-api" # never the real ~/.claude-api (#260)
@@ -372,6 +372,49 @@ state sent "{\"above\":[\"work\",\"❯ AJ: sent while limited\",\"$LIMIT\"],\"cl
 resume "$(( noon + 4330 ))"
 check "a line AJ already sent is not sent twice; the continue message follows it" "$(has "$(events sent)" "SUBMIT The usage limit has reset.") $(grep -c 'AJ: sent' "$work/sent.log")" "yes 0"
 t kill-window -t "$p"
+
+echo "resume: agy heartbeat on screen change (#416)"
+: >"$FLEET_LOG"
+AGY_SID=aaaaaaaa-4444-4111-8222-333333333333
+CLA_SID=bbbbbbbb-4444-4111-8222-333333333334
+p_agy=$(pane agybeat '{"above":["agy task running..."]}'); settle
+live "$p_agy" "$AGY_SID"
+printf '%s\tagy-worker\t%s\t%s\t/w\n' "$p_agy" "$work/agy.brief" "$AGY_SID" >>"$REGISTRY"
+
+p_cla=$(pane clabeat '{"above":["claude working..."]}'); settle
+live "$p_cla" "$CLA_SID"
+printf '%s\tclaude-worker\t%s\t%s\t/w\n' "$p_cla" "$work/claude.brief" "$CLA_SID" >>"$REGISTRY"
+
+# Pass 1 at noon: screen seen, initial beat written for agy
+resume "$noon"
+b_agy1=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
+check "#416: agy initial beat written on screen seen" "$b_agy1" "agy-worker"$'\t'"$((noon / 10))"
+
+# Pass 2 at noon+60: screen changes, so the beat refreshes
+state agybeat '{"above":["agy task running...", "tool executed"]}'
+resume "$(( noon + 60 ))"
+b_agy2=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
+check "#416: screen changes, so the beat refreshes" "$b_agy2" "agy-worker"$'\t'"$(((noon + 60) / 10))"
+
+# Pass 3 at noon+160: screen frozen past 90 s, so no beat and it reads silent
+resume "$(( noon + 160 ))"
+b_agy3=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
+check "#416: screen frozen past 90 s: beat not rewritten" "$b_agy3" "$b_agy2"
+beat_bucket=$(cut -f2 <<<"$b_agy3")
+beat_age=$(( (noon + 160) - beat_bucket * 10 ))
+check "#416: screen frozen past 90 s: reads silent (beat age $beat_age > 90 s)" "$(( beat_age > 90 ))" "1"
+
+# Pass 4: a Claude pane with a fresh status-line beat is untouched
+printf 'claude-tab\t%s\n' "$(((noon + 160) / 10))" >"$KLEPSYDRA_DIR/fleet/$CLA_SID.beat"
+state clabeat '{"above":["claude working...", "new output"]}'
+resume "$(( noon + 170 ))"
+b_cla=$(cat "$KLEPSYDRA_DIR/fleet/$CLA_SID.beat" 2>/dev/null || echo none)
+check "#416: Claude pane with fresh status-line beat is untouched" "$b_cla" "claude-tab"$'\t'"$(((noon + 160) / 10))"
+
+t kill-window -t "$p_agy"
+t kill-window -t "$p_cla"
+rm -f "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" "$KLEPSYDRA_DIR/fleet/$AGY_SID.json" \
+      "$KLEPSYDRA_DIR/fleet/$CLA_SID.beat" "$KLEPSYDRA_DIR/fleet/$CLA_SID.json"
 
 echo "resume: review round 1 (S1, S2, S5, S6)"
 : >"$FLEET_LOG"
