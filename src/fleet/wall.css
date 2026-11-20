@@ -412,7 +412,7 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .wall, .empty, .limits { position: relative; z-index: 1; }
 .wall {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min), 100%), 1fr));
   gap: var(--card-gap);
   padding: var(--card-gap) var(--wall-pad) var(--wall-pad);
 }
