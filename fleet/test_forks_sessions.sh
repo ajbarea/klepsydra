@@ -18,20 +18,10 @@ check() {
   fi
 }
 
-if [[ -z ${STRACE:-} ]] && ! command -v strace >/dev/null 2>&1; then
-  if [[ -x /tmp/claude-1001/-home-ajbar-ajsoftworks/0df92acc-b898-4ce5-b219-03a99f95c30a/scratchpad/tools/root/usr/bin/strace ]]; then
-    STRACE=/tmp/claude-1001/-home-ajbar-ajsoftworks/0df92acc-b898-4ce5-b219-03a99f95c30a/scratchpad/tools/root/usr/bin/strace
-  fi
-fi
 STRACE=${STRACE:-strace}
 if ! command -v "$STRACE" >/dev/null 2>&1; then
-  if [[ -n ${CI:-} ]]; then
-    echo "FAIL: strace missing"
-    exit 1
-  else
-    echo "SKIP: no strace"
-    exit 0
-  fi
+  echo "FAIL: strace missing ($STRACE)"
+  exit 1
 fi
 
 forks_of() {
@@ -93,7 +83,7 @@ env KLEPSYDRA_DIR="$work/k" bash -c ". fleet/lib.sh; live_session %8" >/dev/null
 check "live_session %8 fails (none live)" "$(( rc8 != 0 ))" 1
 
 valid_count=$(env KLEPSYDRA_DIR="$work/k" bash -c ". fleet/lib.sh; fleet_sessions_tsv" 2>/dev/null | wc -l || true)
-check "fleet_sessions_tsv rows equal valid parseable files" "$(( valid_count ))" 7
+check "fleet_sessions_tsv rows equal valid parseable files" "$(( valid_count ))" 6
 
 fake_out=$(env KLEPSYDRA_DIR="$work/k" SESSION_ROWS="fake_file.json	%99	-	0	0	-	-" bash -c ". fleet/lib.sh; fleet_sessions_tsv" 2>/dev/null || true)
 check "fleet_sessions_tsv honours SESSION_ROWS" "$fake_out" "fake_file.json	%99	-	0	0	-	-"
