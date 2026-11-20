@@ -55,6 +55,18 @@ M = [
         "        let now = SystemTime::now();\n        self.memo = Memo::default();\n        let mut pass = self.memo.pass();",
     ),
     (
+        "change marker ignored",
+        "src/memo.rs",
+        "        Change([meta.ino() as i64, meta.ctime(), meta.ctime_nsec()])",
+        "        let _ = meta.ino();\n        Change::default()",
+    ),
+    (
+        "second ask in a pass reads again",
+        "src/memo.rs",
+        "            if let Some((stamp, value)) = memo.seen.get(path) {",
+        "            if let Some((stamp, value)) = memo.seen.get(path).filter(|_| false) {",
+    ),
+    (
         "listing stamp follows links (dir type)",
         "src/memo.rs",
         "        if !meta.is_file() {\n            return None;",

@@ -69,12 +69,15 @@ pub fn read_text_stamped(path: &Path, max: u64) -> Result<(String, Option<Stamp>
     if !held.is_file() {
         return Err(Refused::NotFile);
     }
-    let stamp = Stamp::of(&held);
     // One byte past the cap tells a file that grew since the check.
     let mut bytes = Vec::new();
-    file.take(max + 1)
+    (&file)
+        .take(max + 1)
         .read_to_end(&mut bytes)
         .map_err(Refused::Unreadable)?;
+    // Stamped after the read, as scan's reads are: a write during the read
+    // moves the stamp off the listed one, so the text is not kept.
+    let stamp = file.metadata().ok().and_then(|m| Stamp::of(&m));
     if bytes.len() as u64 > max {
         return Err(Refused::TooLarge);
     }

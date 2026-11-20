@@ -16,11 +16,37 @@ use std::time::{Duration, SystemTime};
 /// granularity it may have: FAT keeps times to 2 s.
 pub const RACY: Duration = Duration::from_secs(2);
 
-/// A regular file's length and modification time.
+/// A regular file's length and modification time, and what tells a file
+/// replaced under the same length and time (`cp -p`, `touch -r`, a restore).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stamp {
     pub len: u64,
     pub modified: SystemTime,
+    pub change: Change,
+}
+
+/// On Unix the inode and change time, as git's index keeps them: no tool sets
+/// a change time back. A Windows listing carries no change time; its creation
+/// time stands in, though NTFS tunnelling can carry a name's old creation
+/// time over to a file renamed onto it within 15 s.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Change(pub [i64; 3]);
+
+impl Change {
+    #[cfg(unix)]
+    fn of(meta: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Change([meta.ino() as i64, meta.ctime(), meta.ctime_nsec()])
+    }
+    #[cfg(windows)]
+    fn of(meta: &std::fs::Metadata) -> Self {
+        use std::os::windows::fs::MetadataExt;
+        Change([meta.creation_time() as i64, 0, 0])
+    }
+    #[cfg(not(any(unix, windows)))]
+    fn of(_: &std::fs::Metadata) -> Self {
+        Change::default()
+    }
 }
 
 impl Stamp {
@@ -33,6 +59,7 @@ impl Stamp {
         Some(Stamp {
             len: meta.len(),
             modified: meta.modified().ok()?,
+            change: Change::of(meta),
         })
     }
 
@@ -97,6 +124,13 @@ impl<T: Clone> Pass<'_, T> {
     ) -> Result<T, E> {
         let memo = &mut *self.memo;
         if let Some(listed) = listed {
+            // Asked twice in one pass (two names for one folder): the first
+            // answer stands.
+            if let Some((stamp, value)) = memo.seen.get(path) {
+                if *stamp == listed {
+                    return Ok(value.clone());
+                }
+            }
             if let Some((stamp, value)) = memo.kept.remove(path) {
                 if stamp == listed {
                     memo.seen.insert(path.to_path_buf(), (stamp, value.clone()));
@@ -130,6 +164,7 @@ mod tests {
         Stamp {
             len,
             modified: SystemTime::UNIX_EPOCH + Duration::from_secs(secs),
+            change: Change::default(),
         }
     }
 

@@ -642,6 +642,22 @@ mod tests {
     }
 
     #[test]
+    fn one_folder_named_twice_is_read_once() {
+        let d = Scratch::new("usage-twice");
+        ok(&d.0, PERSONAL, "a");
+        touch(
+            &d.0.join("accounts").join(PERSONAL).join("a.json"),
+            1_700_000_000,
+        );
+        let mut r = Reader::default();
+        let first = r.read([&d.0, &d.0]);
+        assert_eq!(sessions(&first), vec!["a".to_string(), "a".to_string()]);
+        r.read([&d.0, &d.0]);
+        r.read([&d.0, &d.0]);
+        assert_eq!(r.reads(), 1, "a second name for the folder read it again");
+    }
+
+    #[test]
     fn past_a_cap_the_newest_files_and_accounts_are_kept() {
         let d = Scratch::new("usage-caps");
         for (n, at) in [("old", 1_000), ("new", 3_000), ("mid", 2_000)] {

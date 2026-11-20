@@ -32,6 +32,8 @@ pub struct Listing {
 /// this one handle, so a rename over the path mid-read cannot pair old time
 /// with new text.
 fn stamped(mut file: File) -> std::io::Result<(String, i64, Option<Stamp>)> {
+    #[cfg(test)]
+    OPENS.with(|n| n.set(n.get() + 1));
     let mut text = String::new();
     file.read_to_string(&mut text)?;
     let meta = file.metadata()?;
@@ -41,6 +43,12 @@ fn stamped(mut file: File) -> std::io::Result<(String, i64, Option<Stamp>)> {
         .map_err(std::io::Error::other)?;
     let secs = i64::try_from(t.as_secs()).map_err(std::io::Error::other)?;
     Ok((text, secs, Stamp::of(&meta)))
+}
+
+// Files this thread's scans have read, whichever scanner read them.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static OPENS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// What a session file read as: its mtime and the parsed file, or why not.
@@ -296,6 +304,28 @@ pub(crate) mod tests {
         let tmp = format!("{A}.json.9.tmp");
         dir.write(&tmp, &session(A, "ended"));
         age(&dir, &tmp, 1_700_000_001);
+        std::fs::rename(dir.0.join(&tmp), dir.0.join(&name)).unwrap();
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Ended
+        );
+    }
+
+    // A copy that keeps its source's time (`cp -p`, `touch -r`, a restore)
+    // renamed over the path: same length and time, a new inode and change
+    // time. Unix only: NTFS tunnelling may carry the old creation time over.
+    #[cfg(unix)]
+    #[test]
+    fn a_replace_with_the_same_length_and_time_is_read() {
+        let dir = Scratch::new("same-len-time");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        let tmp = format!("{A}.json.9.tmp");
+        dir.write(&tmp, &session(A, "ended"));
+        age(&dir, &tmp, 1_700_000_000);
         std::fs::rename(dir.0.join(&tmp), dir.0.join(&name)).unwrap();
         assert_eq!(
             s.scan(&dir.0).entries[0].file.state,

@@ -481,28 +481,23 @@ mod tests {
     #[test]
     fn a_step_over_an_unchanged_fleet_opens_no_session_file() {
         let (root, mut r) = reader("still-step");
-        let file = root.0.join(format!("fleet/{A}.json"));
-        let date = |p: &std::path::Path| {
-            std::fs::File::options()
-                .write(true)
-                .open(p)
-                .unwrap()
-                .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
-                .unwrap();
-        };
         root.write(&format!("fleet/{A}.json"), &session(A, "error"));
-        date(&file);
+        std::fs::File::options()
+            .write(true)
+            .open(root.0.join(format!("fleet/{A}.json")))
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+            .unwrap();
         assert!(r.step(Duration::ZERO, unix_now).0.is_some());
-        // New text under the same length and time: a file not re-opened still
-        // reads as before, so nothing changes.
-        root.write(&format!("fleet/{A}.json"), &session(A, "ended"));
-        date(&file);
+        // Counted per thread, so a reader that starts a fresh scanner each
+        // step is caught too.
+        let opens = crate::scan::OPENS.with(std::cell::Cell::get);
+        assert_eq!(r.step(Duration::ZERO, unix_now).0, None);
         assert_eq!(
-            r.step(Duration::ZERO, unix_now).0,
-            None,
+            crate::scan::OPENS.with(std::cell::Cell::get) - opens,
+            0,
             "an unchanged file was re-read"
         );
-        assert_eq!(r.scanner.reads(), 1);
     }
 
     #[test]
