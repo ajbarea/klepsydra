@@ -377,7 +377,7 @@ start_watcher() { # ID
 cmd_watch() { # ID
   # Started right after a prompt went in (deliver saw the turn begin), so a reply
   # that finished before the first poll is still a turn end: seen_busy starts at 1.
-  local id=$1 pane engine st seen_busy=1 turn started screen ans dir=$DEL_ROOT/$1
+  local id=$1 pane engine st seen_busy=1 idle_count=0 turn started screen ans dir=$DEL_ROOT/$1
   pane=$(meta_get "$id" pane) engine=$(meta_get "$id" engine)
   turn=$(meta_get "$id" turn); turn=${turn:-0}
   started=$SECONDS
@@ -393,7 +393,7 @@ cmd_watch() { # ID
     screen=$(pane_screen "$pane")
     st=$(eng_state "$engine" "$screen" "$(meta_get "$id" prompt)")
     case $st in
-      busy) seen_busy=1 ;;
+      busy) seen_busy=1; idle_count=0 ;;
       limit | auth)
         printf '%s\n' "$screen" >"$dir/screen.txt"
         { stamp "$engine" "$(meta_get "$id" model)"; eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)"; } >"$dir/answer.md"
@@ -402,8 +402,10 @@ cmd_watch() { # ID
         notify "$id" "[fleet delegate] $id engine=$engine status=$st: the lane stopped (screen: $dir/screen.txt; the reply is in $dir/answer.md in case it is an answer that mentions a limit). Re-run with the other engine."
         return 0 ;;
       idle)
+        idle_count=$((idle_count + 1))
         # Idle with no echo of the prompt sent, or no reply under it, is the gap before the engine's busy footer shows: not a turn end.
-        if (( seen_busy )) && [[ -n $(eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)") ]]; then
+        # Idle must hold for 3 consecutive polls before a turn counts as finished (#488).
+        if (( seen_busy && idle_count >= 3 )) && [[ -n $(eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)") ]]; then
           turn=$((turn + 1))
           ans=$(eng_answer "$engine" "$screen" "$(meta_get "$id" prompt)")
           { stamp "$engine" "$(meta_get "$id" model)"; printf '%s\n' "$ans"; } >"$dir/answer-$turn.md"
@@ -414,6 +416,7 @@ cmd_watch() { # ID
           notify "$id" "[fleet delegate] $id engine=$engine status=ok turn=$turn answer=$dir/answer.md (an unverified lead: read it, verify what you use; follow up: fleet delegate msg $id TEXT)"
           return 0
         fi ;;
+      *) idle_count=0 ;;
     esac
     if (( SECONDS - started > TURN_TIMEOUT )); then
       t send-keys -t "$pane" Escape 2>/dev/null

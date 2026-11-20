@@ -130,8 +130,9 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   if [[ $engine == agy && $foot == *"esc to cancel"* ]]; then footer=busy
   elif [[ $engine == agy && $foot == *"? for shortcuts"* ]]; then footer=idle
   elif [[ $engine == agy && $foot == *"· ctx "* ]]; then
-    # agy 1.5.12 status line footer (#488). Busy shows spinner/activity above the box.
-    if grep -Eq '([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⡿⣽⣻⣾⣷⣯⣟]|(Generating|Thinking|Running command|Planning)\.\.\.)' <<<"$(head -n -1 <<<"$recent")"; then
+    # agy 1.5.12+ status line footer (#488). Busy shows spinner/activity above the box,
+    # or a background task row under the box whose text ends in "running".
+    if grep -Eq '●.*running[[:space:]]*$' <<<"$recent" || grep -Eq '([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⡿⣽⣻⣾⣷⣯⣟]|(Generating|Thinking|Running command|Planning)\.\.\.)' <<<"$(head -n -1 <<<"$recent")"; then
       footer=busy
     else
       footer=idle
