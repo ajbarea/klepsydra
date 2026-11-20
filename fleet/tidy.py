@@ -1032,6 +1032,8 @@ def report(out: Path) -> int:
             text=True,
             timeout=540,
             check=False,
+            # The same briefing and state this tidy reads, never the defaults.
+            env=os.environ | {"BRIEFING_DIR": str(BRIEFING), "FLEET_STATE": str(STATE)},
         )
         data["shots_rc"] = shots.returncode
         if shots.returncode:

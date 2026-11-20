@@ -824,6 +824,45 @@ class ReviewRound1(unittest.TestCase):
         mod.NOW = NOW
         self.assertGreater(checked, 500)
 
+    def test_the_report_skips_the_record_while_a_tidy_runs(self):
+        (self.state / "HEPH.md").write_text(HEPH)
+        mod = load_tidy(self.state, self.brief)
+        stub = mock.patch.dict(os.environ, {"FLEET_PRUNE_SHOTS": str(self.shots)})
+        with stub, open(self.state / ".tidy.lock", "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            with contextlib.redirect_stdout(io.StringIO()):
+                mod.report(self.tmp / "report.json")
+            self.assertFalse((self.state / ".heph-seen.tsv").exists())
+        with stub, contextlib.redirect_stdout(io.StringIO()):
+            mod.report(self.tmp / "report.json")
+        self.assertTrue((self.state / ".heph-seen.tsv").exists())
+
+    def test_a_record_that_cannot_be_saved_is_logged(self):
+        mod = load_tidy(self.state, self.brief)
+        got = []
+        with mock.patch.object(mod, "event", lambda level, msg, **kw: got.append(msg)):
+            with mock.patch.object(
+                mod.os, "replace", mock.Mock(side_effect=OSError("full"))
+            ):
+                mod.save_seen(["k"], [NOW])
+        self.assertEqual(
+            got, ["first-seen record not saved; lines it lacks count as new"]
+        )
+        self.assertEqual(list(self.state.glob(".heph-seen.*")), [])
+
+    def test_the_report_prunes_the_shots_of_its_own_briefing(self):
+        mod = load_tidy(self.state, self.brief)
+        seen = self.tmp / "env.txt"
+        self.shots.write_text(
+            "import os, pathlib\n"
+            f"pathlib.Path({str(seen)!r}).write_text(os.environ['BRIEFING_DIR'] + '|' + os.environ['FLEET_STATE'])\n"
+        )
+        with mock.patch.dict(os.environ, {"FLEET_PRUNE_SHOTS": str(self.shots)}):
+            os.environ.pop("BRIEFING_DIR", None)
+            with contextlib.redirect_stdout(io.StringIO()):
+                mod.report(self.tmp / "report.json")
+        self.assertEqual(seen.read_text(), f"{self.brief}|{self.state}")
+
     def test_the_report_records_first_sight(self):
         (self.state / "HEPH.md").write_text(HEPH)
         r = self.tidy("--report", str(self.tmp / "report.json"))
