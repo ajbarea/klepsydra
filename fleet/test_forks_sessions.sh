@@ -30,9 +30,14 @@ if ! command -v "$STRACE" >/dev/null 2>&1; then
 fi
 
 forks_of() {
-  local log count
+  local log count rc=0
   log=$(mktemp)
-  "$STRACE" -f -qq -e trace=clone,clone3,fork,vfork -e signal=none -o "$log" "$@" >/dev/null 2>&1 </dev/null
+  "$STRACE" -f -qq -e trace=clone,clone3,fork,vfork -e signal=none -o "$log" "$@" >/dev/null 2>&1 || rc=$?
+  if (( rc != 0 )); then
+    rm -f -- "${log:?}"
+    echo "FAIL: strace exited $rc ($STRACE)" >&2
+    exit 1
+  fi
   count=$(grep -cE ' (clone|clone3|fork|vfork)\(' "$log" || true)
   rm -f -- "${log:?}"
   printf '%s' "$count"
@@ -55,6 +60,10 @@ mk() {
 }
 
 base=$(forks_of env KLEPSYDRA_DIR="$work/k" bash -c ". fleet/lib.sh")
+if (( base <= 0 )); then
+  echo "FAIL: strace traced 0 forks (base=$base; ptrace blocked or unsupported)" >&2
+  exit 1
+fi
 mk 10
 a=$(forks_of env KLEPSYDRA_DIR="$work/k" bash -c ". fleet/lib.sh; live_session %7")
 rm -f -- "$work"/k/fleet/*
