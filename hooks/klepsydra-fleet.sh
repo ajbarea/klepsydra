@@ -299,6 +299,7 @@ tmux_facts() {
   fi
 }
 
+# --- session rows: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
 # One tab-separated row per named session file whose first line is a v1
 # object: its name, then what the jq array `fields` picks from the object
 # (`last_active` is its newest time field, `or_q` a string or "?"). One jq
@@ -336,6 +337,7 @@ fleet_rows() { # folder fields
     done
     session_rows "$2" "${names[@]}" )
 }
+# --- end session rows ---
 
 # Delete the files of sessions whose Claude Code process is gone and whose
 # last activity is more than a day old, heartbeats a day old with no session

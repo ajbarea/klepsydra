@@ -173,16 +173,24 @@ fi
 
 # The newest live session file of tmux pane PANE.
 session_of() {
-  local f best="" best_at=-1 at
-  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-    [[ -f $f ]] || continue
-    at=$(jq -r --arg p "$1" 'select(.tmux.pane == $p and .ended == null) | (.started_at // 0)' "$f" 2>/dev/null)
-    [[ -n $at ]] && (( ${at%.*} > best_at )) && best=$f best_at=${at%.*}
-  done
+  local f pane ended at best="" best_at=-1
+  while IFS=$'\t' read -r f pane _ ended at _; do
+    [[ $pane == "$1" && $ended == 0 ]] || continue
+    (( ${at%.*} > best_at )) && best=$KLEPSYDRA_DIR/fleet/$f best_at=${at%.*}
+  done < <(fleet_sessions_tsv)
   printf '%s' "$best"
 }
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
+# One read of every session file for the whole run: the checks below ask it per pane.
+# shellcheck disable=SC2034 # read by fleet_sessions_tsv
+SESSION_ROWS=$(fleet_sessions_tsv)
+if [[ -s ${FLEET_STATE:-}/bad-sessions ]]; then
+  bad_sessions=$(tr '\n' ' ' <"${FLEET_STATE:-}/bad-sessions" | sed 's/ $//')
+  report warn "session files" "corrupt or truncated: $bad_sessions" files="$bad_sessions"
+else
+  report ok "session files" "every session file parsed"
+fi
 
 # Limits as the fleet hook's StopFailure record dates them (#311), else as the
 # panes show them (#263): one still at a limit OVERDUE_S past its reset was
@@ -410,13 +418,8 @@ voice_voices=${KERYX_VOICES:-${XDG_CACHE_HOME:-$HOME/.cache}/keryx/voices.json}
 proc_root=${KLEPSYDRA_PROC:-/proc}
 # What keryx speaks is its hold in voices.json (a `keryx voice` pick outranks the
 # session's KERYX_VOICE); the session's KERYX_VOICE stands in when it holds none.
-for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-  [[ -f $f ]] || continue
-  IFS=$'\x1f' read -r expected pid start ended < <(jq -r '[
-    (if .orchestrator == true then (if .orchestrator_face == "bf_emma" or .orchestrator_face == "bf_alice" then "bf_emma" else "am_michael" end)
-     else (.voice // "") end),
-    (.claude.pid // "" | tostring), (.claude.start // "" | tostring), (if .ended then "ended" else "" end)] | join("\u001f")' "$f" 2>/dev/null)
-  [[ -z $ended && -n $expected && $pid =~ ^[1-9][0-9]*$ ]] || continue
+while IFS=$'\t' read -r _ expected pid start ended; do
+  [[ $ended == 0 && $expected != '?' && $pid =~ ^[1-9][0-9]*$ ]] || continue
   actual=""
   [[ -r $voice_voices ]] &&
     actual=$(jq -r --arg h "$pid:$start" '.holders[$h].voice // empty | strings' "$voice_voices" 2>/dev/null)
@@ -425,7 +428,8 @@ for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
   [[ -n $actual && $actual != "$expected" ]] || continue
   report warn "voice $pid" "card has $expected but terminal has $actual" \
     pid="$pid" expected="$expected" actual="$actual"
-done
+done < <(fleet_rows "$KLEPSYDRA_DIR/fleet" '[(if .orchestrator == true then orch_face else (.voice | or_q) end),
+  ((.claude.pid // "-") | tostring | or_q), ((.claude.start // "-") | tostring | or_q), (if .ended then 1 else 0 end)]')
 
 # CI reds routed to an agent (#180) wait in its inbox for an idle prompt; an hour is too long.
 stale_inbox=$(find "$FLEET_STATE/inbox" -mindepth 2 -maxdepth 2 -name '*.txt' -type f -mmin +60 -printf '%P ' 2>/dev/null)
@@ -609,7 +613,7 @@ heavy_lock_check
 # last changed). One idle past FLEET_BROWSER_IDLE_MIN minutes (30) warns, as
 # does one whose MCP server is gone (the resume service closes it).
 browser_check() {
-  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0
+  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0 cpid
   [[ $min =~ ^[0-9]+$ ]] || min=30
   idle_max=$((min * 60))
   while IFS=$'\t' read -r pid server claude idle dir; do
@@ -617,9 +621,9 @@ browser_check() {
     who="claude $claude"
     if [[ $claude == - ]]; then who="no session"
     else
-      while IFS= read -r f; do
-        jq -e --argjson p "$claude" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1 && { who="session $(basename "$f" .json | cut -c1-8)"; break; }
-      done < <(grep -lE -- "\"pid\": *${claude}[,} ]" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+      while IFS=$'\t' read -r f _ _ ended _ cpid _; do
+        [[ $cpid == "$claude" && $ended == 0 ]] && { who="session ${f:0:8}"; break; }
+      done < <(fleet_sessions_tsv)
     fi
     list+="pid $pid ($who, idle $( [[ $idle == - ]] && echo '?' || echo "$((idle / 60)) min")"
     if [[ $server == - ]]; then list+=", its MCP server is gone"; warned=1
