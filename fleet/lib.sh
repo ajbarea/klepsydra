@@ -102,6 +102,7 @@ plain() { sed -E $'s/\e\\][^\a\e]*(\a|\e\\\\)//g; s/\e\\[[0-9;?]*[A-Za-z]//g'; }
 #              placeholder and suggestions) and the mark removed; empty when
 #              the box is empty or not on screen (a menu replaces it)
 # Asking the same capture again costs no process (#492).
+# shellcheck disable=SC2016  # an awk program: its $fields are awk's, never the shell's.
 SCR_AWK='
   BEGIN {
     E = sprintf("%c", 27); B = sprintf("%c", 7); Z = sprintf("%c", 0)

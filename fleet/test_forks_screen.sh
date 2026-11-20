@@ -276,7 +276,9 @@ if command -v "$STRACE" >/dev/null; then
     grep -cE ' (clone|clone3|fork|vfork)\(' "$work/trace"
   }
   printf '%s' "${corpus[2]}" >"$work/screen"
+  # shellcheck disable=SC2016  # the child bash expands $1 and $2, its positional args.
   load=$(forks_of env -u FLEET_RUN_ID bash -c '. "$1/fleet/lib.sh"; s=$(<"$2")' _ "$root" "$work/screen")
+  # shellcheck disable=SC2016  # the child bash expands $1, $2 and $s.
   all=$(forks_of env -u FLEET_RUN_ID bash -c '. "$1/fleet/lib.sh"; s=$(<"$2")
     busy "$s"; has_input_box "$s"; idle_empty "$s"; limit_line "$s" >/dev/null; limit_menu "$s"
     split_screen "$s"; near 6 >/dev/null; holds_input "$s"; box_empty "$s"' _ "$root" "$work/screen")
