@@ -19,13 +19,13 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
 - ✅ test_tidy.py 33 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
 
 ## Next
-- ✅ Hand mutation: 31 guards killed (6bbdb50). ✅ Reader round 2: 4 Should-fix fixed in 158d43e
-  (brief --refresh keeps the file time; unreadable or locked registry refuses; a newer later
-  START HERE refuses; STANDING/PERMANENT/binding lines stay); 6 new guards hand-mutated, all red.
-  Minors left for the PR body: no registry lock in done.sh race (now locked), queue date takes
-  the first MM-DD, done/expired dry run prints counts, BriefingLock duplicates prune_shots's.
-1. ✅ Verify passes: 9df86e3 fixed the case-sensitive standing match; final verify clean.
-   📋 CI green on the head, then Heph reviews and merges (deferred minors are in the PR body).
-2. 📋 Pin ci.yml's techne ref to #394's merge SHA once merged.
+- ✅ Own review: 2 reader rounds + 2 verify passes (to 9df86e3).
+- ✅ Heph independent r1 (reports/fleet-tidy-514-r1.md: B1 + S1-S3 + nits) fixed in ebeb330:
+  latest_times bounds each HEPH line by the next date below (+2 d) or the file time, so the
+  newest never go; task briefs go only when finished > 7 d, removed briefs shelved to
+  archive/briefs/; dry runs write every item to STATE/tidy-preview.md; every guard hand-mutated
+  red (51 tests). Live copy: HEPH.md 1507 → 551.
+1. 📋 Fresh verify pass on ebeb330 (running); then update the PR body; Heph reviews again.
+2. 📋 After techne#394 merges: repin ci.yml's techne ref to its merge SHA, then #514.
 - Live dry run 11-20: HEPH.md 1476 → 429 lines; 175 stale briefs; archive entries; 2 queue lines.
 - Never `--apply heph` on the live file yourself; the orchestrator runs it after the dry run.
