@@ -10,10 +10,11 @@ Usage:
 
 Finished work is recorded once, in merged PRs, closed issues and git history, so:
   heph     HEPH.md keeps its head, its START HERE block, undated sections, standing rules and
-           every line it cannot prove older than HEPH_HOURS hours: a line goes only when an
-           explicit date below it (plus DATE_SLACK) is past the cutoff, and the lines below the
-           last date are bounded by the file's own time, so the newest never go. Dates that go
-           backwards, or a newer START HERE further down, refuse the tidy. What goes is copied
+           every line that has existed under HEPH_HOURS hours. A line's age is when a tidy or
+           the 6-hourly report first saw it (.heph-seen.tsv beside it), never a date written
+           in the log, which may name another day; with no record every line is new, so
+           nothing goes for HEPH_HOURS after the first run. A newer START HERE further down
+           refuses the tidy. What goes is copied
            to archive/ for KEEP_DAYS first (HEPH.md is in no repo). Refused while another
            process has it open or wrote it in the last WRITE_QUIET_S seconds. Its time is kept,
            since `fleet recover` reads AJ's messages since HEPH.md was last written. Writers
@@ -42,8 +43,10 @@ Briefing deletions are committed under the lock the briefing sync holds; git kee
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import fcntl
+import hashlib
 import importlib.util
 import json
 import logging
@@ -172,7 +175,6 @@ LINE_DATE = re.compile(r"^- (?:\*\*)?(?:(20\d\d)-)?(\d\d)-(\d\d)\b")
 LINE_TIME = re.compile(r"^- (?:\*\*)?(?:(?:20\d\d-)?\d\d-\d\d )?(\d{1,2}):(\d)(\d|x)\b")
 HEAD_TIME = re.compile(r"\b(\d{1,2}):(\d)(\d|x)\b")
 KEEP = dt.datetime.max  # the stamp of a line under an undated section: always kept
-DATE_SLACK = dt.timedelta(days=2)  # a date's own day, and the day it may slip back
 WINDOW_DAYS = 330  # a MM-DD further back than this is a future event named, not a date
 
 
@@ -199,7 +201,7 @@ def stamp_lines(
     comes from the nearest heading or dated line above, the time of day from the line's own
     `- HH:MM` (or the line above). A line under a `## ` heading that carries no date is
     stamped KEEP; None only before the first heading. These stamps date START HERE blocks and
-    mark undated sections; whether a log line goes is latest_times' bound, never a guess."""
+    mark undated sections; whether a log line goes is first_seen's record, never a date."""
     out: list[dt.datetime | None] = []
     marks: list[tuple[int, dt.date]] = []
     day: dt.date | None = None
@@ -258,30 +260,69 @@ STANDING = re.compile(
 )  # a rule AJ set to last
 
 
-def latest_times(
-    n: int, marks: list[tuple[int, dt.date]], written: dt.datetime
-) -> list[dt.datetime]:
-    """The latest each of N lines can have been written. The log only grows at its end, so a
-    line is no newer than the next explicit date below it (that day, plus the one day a date
-    may slip back), and the lines below the last date no newer than the file itself. A line
-    with no date of its own is never guessed old: a gap in the log cannot pull it back."""
-    at = dict(marks)
-    out: list[dt.datetime] = [written] * n
-    bound = written
-    for i in range(n - 1, -1, -1):
-        if i in at:
-            bound = min(bound, dt.datetime.combine(at[i], dt.time()) + DATE_SLACK)
-        out[i] = bound
+SEEN = ".heph-seen.tsv"  # each HEPH.md line's fingerprint and when a tidy first saw it
+
+
+def line_keys(lines: list[str]) -> list[str]:
+    """A key per line: a hash of its text and which copy of that text it is, so blank lines
+    and repeats each get their own."""
+    copies: dict[str, int] = {}
+    out = []
+    for ln in lines:
+        h = hashlib.blake2b(
+            ln.rstrip("\r\n").encode("utf-8", "surrogateescape"), digest_size=8
+        ).hexdigest()
+        k = copies.get(h, 0)
+        copies[h] = k + 1
+        out.append(f"{h}:{k}")
     return out
 
 
+def load_seen() -> dict[str, float]:
+    """The first-seen record; empty when it is missing or unreadable, so every line is new."""
+    try:
+        text = (STATE / SEEN).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    out: dict[str, float] = {}
+    for row in text.splitlines():
+        key, _, when = row.partition("\t")
+        try:
+            out[key] = min(float(when), NOW)
+        except ValueError:
+            continue
+    return out
+
+
+def save_seen(keys: list[str], times: list[float]) -> None:
+    """Write the record for these lines only, so it never outgrows HEPH.md."""
+    fd, tmp = tempfile.mkstemp(dir=STATE, prefix=".heph-seen.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.writelines(f"{k}\t{w:.0f}\n" for k, w in zip(keys, times))
+        os.replace(tmp, STATE / SEEN)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+
+def first_seen(lines: list[str]) -> list[float]:
+    """When a tidy (or the 6-hourly report) first saw each line, recording the new ones now.
+    Only this decides a line's age: a date written in the log may name another day."""
+    keys = line_keys(lines)
+    seen = load_seen()
+    times = [seen.get(k, NOW) for k in keys]
+    save_seen(keys, times)
+    return times
+
+
 def plan_heph(
-    text: str, now: dt.datetime, written: dt.datetime | None = None
+    text: str, now: dt.datetime, seen: list[float] | None = None
 ) -> tuple[list[str], dict]:
-    """The lines HEPH.md keeps, and a summary of what goes. A line goes only when the latest
-    it can have been written (latest_times; WRITTEN is the file's own time) is over HEPH_HOURS
-    ago. Raises ValueError when the log has no START HERE block, no date after it, or dates
-    out of order, so a misread never drops a line."""
+    """The lines HEPH.md keeps, and a summary of what goes. A log line goes only when SEEN
+    (first_seen, one time per line; None: all new) says it has existed over HEPH_HOURS; the
+    head, START HERE, undated sections and standing rules stay. Raises ValueError when there
+    is no START HERE block, or a newer one further down."""
     lines = text.splitlines(keepends=True)
     heads = [i for i, ln in enumerate(lines) if H2.match(ln)]
     if not heads:
@@ -291,19 +332,7 @@ def plan_heph(
         raise ValueError("HEPH.md has no ## START HERE block")
     s0 = starts[0]
     s1 = next((i for i in heads if i > s0), len(lines))
-    stamps, marks = stamp_lines(lines, now)
-    log_marks = [(n, d) for n, d in marks if n >= s1]
-    if not log_marks:
-        raise ValueError("no line after START HERE carries a date")
-    for (_, a), (n, b) in zip(log_marks, log_marks[1:]):
-        if b < a - dt.timedelta(days=1):
-            raise ValueError(
-                f"line {n + 1} dates to {b}, before {a} above it: the dates misread"
-            )
-    if log_marks[-1][1] > now.date() + dt.timedelta(days=1):
-        raise ValueError(
-            f"line {log_marks[-1][0] + 1} dates after today: the dates misread"
-        )
+    stamps, _ = stamp_lines(lines, now)
     for s in starts[1:]:
         a, b = stamps[s0], stamps[s]
         if not (
@@ -314,7 +343,8 @@ def plan_heph(
                 "merge it into the top one first"
             )
     cutoff = now - dt.timedelta(hours=HEPH_HOURS)
-    latest = latest_times(len(lines), marks, written or now)
+    old_before = cutoff.timestamp()
+    when = seen if seen is not None else [now.timestamp()] * len(lines)
     keep = set(range(heads[0])) | set(range(s0, s1))
     standing = 0
     losses: list[tuple[str, int]] = []
@@ -323,15 +353,21 @@ def plan_heph(
             continue
         end = heads[n + 1] if n + 1 < len(heads) else len(lines)
         body = range(h + 1, end)
-        recent = [i for i in body if stamps[i] == KEEP or latest[i] >= cutoff]
+        # A blank line keeps nothing alive; it stays with the section around it.
+        recent = [
+            i
+            for i in body
+            if lines[i].strip() and (stamps[i] == KEEP or when[i] >= old_before)
+        ]
         new = set(recent)
         marked = [i for i in body if i not in new and STANDING.search(lines[i])]
         standing += len(marked)
         recent += marked  # a standing rule stays until someone moves it to its home
-        if stamps[h] == KEEP or latest[h] >= cutoff or recent:
+        if stamps[h] == KEEP or when[h] >= old_before or recent:
             keep.add(h)
             keep.update(recent)
-            lost = len(body) - len(recent)
+            keep.update(i for i in body if not lines[i].strip())
+            lost = sum(1 for i in body if i not in keep)
             if lost:
                 losses.append((lines[h].strip(), lost))
     kept = [ln for i, ln in enumerate(lines) if i in keep]
@@ -346,6 +382,7 @@ def plan_heph(
         "dropped_lines": dropped_lines,
         "since": cutoff.strftime("%m-%d %H:%M"),
         "standing": standing,
+        "kept_index": sorted(keep),
     }
 
 
@@ -384,7 +421,8 @@ def tidy_heph(apply: bool) -> int:
     text = path.read_text(encoding="utf-8", errors="surrogateescape")
     now = dt.datetime.fromtimestamp(NOW)
     try:
-        kept, s = plan_heph(text, now, dt.datetime.fromtimestamp(st.st_mtime))
+        seen = first_seen(text.splitlines(keepends=True))
+        kept, s = plan_heph(text, now, seen)
     except ValueError as exc:
         print(f"heph: refused: {exc}; nothing dropped")
         return 1
@@ -446,6 +484,8 @@ def tidy_heph(apply: bool) -> int:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+    # Each kept line keeps its own first-seen time, under the keys the shorter file now has.
+    save_seen(line_keys(kept), [seen[i] for i in s["kept_index"]])
     event(
         logging.INFO,
         "HEPH.md tidied",
@@ -567,6 +607,7 @@ def stale_archive() -> list[Path]:
 
 
 PREVIEW: list[str] = []
+PREVIEW_FILE = "tidy-preview.md"
 
 
 def preview(part: str, items: list[str]) -> None:
@@ -580,8 +621,9 @@ def write_preview() -> str:
     """The dry run's full list, written to the state folder (or printed when it cannot be)."""
     if not PREVIEW:
         return "nothing would go"
-    out = STATE / "tidy-preview.md"
+    out = STATE / PREVIEW_FILE
     body = "# fleet tidy: everything the dry run would drop\n\n" + "".join(PREVIEW)
+    tmp = None
     try:
         # Only into the state folder; os.replace swaps a link itself, never its target.
         if not is_state_folder(STATE):
@@ -591,6 +633,9 @@ def write_preview() -> str:
             f.write(body)
         os.replace(tmp, out)
     except OSError:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
         sys.stdout.write(body)
         return "the full list is above"
     return f"the full list is in {out}"
@@ -1003,6 +1048,11 @@ def report(out: Path) -> int:
         except OSError:
             data["heph_bytes"] = 0
         if is_state_folder(STATE):
+            heph = STATE / "HEPH.md"
+            if (
+                heph.is_file() and not heph.is_symlink()
+            ):  # record first sight, every 6 h
+                first_seen(heph.read_text("utf-8", "surrogateescape").splitlines(True))
             data["briefs_stale"] = len(stale_briefs())
             data["archive_stale"] = len(stale_archive())
     except Exception as exc:  # the report is written whatever failed, naming it
@@ -1062,6 +1112,9 @@ def main(argv: list[str]) -> int:
             failed |= tidy_expired(a.apply, mod)
     if not a.apply:
         print(f"dry run: nothing changed; {write_preview()}; add --apply to do it")
+    elif state_parts and is_state_folder(STATE):
+        with contextlib.suppress(FileNotFoundError):  # its list is out of date now
+            (STATE / PREVIEW_FILE).unlink()
     return failed
 
 
