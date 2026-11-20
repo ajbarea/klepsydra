@@ -34,7 +34,7 @@
   padding-bottom: 8px;
 }
 
-.back-btn {
+.settings-view .back-btn {
   display: inline-grid;
   place-items: center;
   width: 38px;
@@ -49,7 +49,7 @@
   flex: none;
 }
 
-.back-btn:hover {
+.settings-view .back-btn:hover {
   background: var(--button-hover);
 }
 
@@ -71,14 +71,14 @@
   flex: 1;
 }
 
-.search-icon {
+.settings-view .search-icon {
   position: absolute;
   left: 12px;
   color: var(--text-dim);
   pointer-events: none;
 }
 
-.search-input {
+.settings-view .search-input {
   width: 100%;
   height: 38px;
   padding: 0 42px 0 38px;
@@ -93,16 +93,16 @@
   box-sizing: border-box;
 }
 
-.search-input:focus {
+.settings-view .search-input:focus {
   border-color: var(--card-focus);
   box-shadow: 0 0 0 1px var(--card-focus);
 }
 
-.search-input::-webkit-search-cancel-button {
+.settings-view .search-input::-webkit-search-cancel-button {
   display: none;
 }
 
-.search-kbd {
+.settings-view .search-kbd {
   position: absolute;
   right: 14px;
   display: inline-grid;
@@ -120,7 +120,7 @@
   pointer-events: none;
 }
 
-.search-clear {
+.settings-view .search-clear {
   position: absolute;
   right: 10px;
   display: inline-grid;
@@ -137,11 +137,11 @@
   cursor: pointer;
 }
 
-.search-clear:hover {
+.settings-view .search-clear:hover {
   color: var(--text);
 }
 
-.search-clear[hidden] {
+.settings-view .search-clear[hidden] {
   display: none !important;
 }
 
@@ -164,7 +164,7 @@
   display: none;
 }
 
-.nav-item {
+.settings-view .nav-item {
   display: inline-flex;
   align-items: center;
   padding: 6px 12px;
@@ -179,8 +179,8 @@
   transition: color 0.12s, background 0.12s, border-color 0.12s;
 }
 
-.nav-item:hover,
-.nav-item:focus-visible {
+.settings-view .nav-item:hover,
+.settings-view .nav-item:focus-visible {
   color: var(--text);
   background: var(--button-hover);
   border-color: var(--button-line);
@@ -250,10 +250,12 @@
   justify-content: flex-end;
 }
 
-/* ═══ Controls ═══ */
+/* ═══ Controls ═══
+   Each rule is scoped to .settings-view, which outranks wall.css's
+   button:hover, so a toggle just clicked shows its new state under the pointer. */
 
 /* Toggle Switch */
-.tog {
+.settings-view .tog {
   width: 44px;
   height: 24px;
   padding: 0;
@@ -267,7 +269,7 @@
   flex: none;
 }
 
-.tog i {
+.settings-view .tog i {
   position: absolute;
   top: 3px;
   left: 3px;
@@ -279,24 +281,24 @@
   pointer-events: none;
 }
 
-.tog[aria-checked="true"] {
+.settings-view .tog[aria-checked="true"] {
   background: var(--text);
   border-color: var(--text);
 }
 
-.tog[aria-checked="true"] i {
+.settings-view .tog[aria-checked="true"] i {
   transform: translateX(20px);
   background: var(--wall-bg);
 }
 
 /* Held (autostart under KLEPSYDRA_NO_AUTOSTART) or waiting on the app. */
-.tog[aria-disabled="true"],
-[aria-busy="true"] {
+.settings-view .tog[aria-disabled="true"],
+.settings-view [aria-busy="true"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
-[aria-busy="true"] {
+.settings-view [aria-busy="true"] {
   cursor: progress;
 }
 
@@ -312,7 +314,7 @@
 }
 
 /* Segmented Control */
-.seg {
+.settings-view .seg {
   display: inline-flex;
   padding: 3px;
   gap: 2px;
@@ -321,7 +323,7 @@
   box-shadow: inset 0 0 0 1px var(--card-line);
 }
 
-.seg button {
+.settings-view .seg button {
   border: 0;
   background: transparent;
   padding: 6px 12px;
@@ -335,11 +337,11 @@
   white-space: nowrap;
 }
 
-.seg button:hover {
+.settings-view .seg button:hover {
   color: var(--text);
 }
 
-.seg button[aria-checked="true"] {
+.settings-view .seg button[aria-checked="true"] {
   background: var(--button-hover);
   color: var(--text);
   font-weight: 650;
@@ -347,7 +349,7 @@
 }
 
 /* Dropdown Select */
-.sel-control {
+.settings-view .sel-control {
   font-family: var(--font);
   font-size: 13px;
   font-weight: 500;
@@ -361,12 +363,12 @@
   min-width: 160px;
 }
 
-.sel-control:focus-visible {
+.settings-view .sel-control:focus-visible {
   border-color: var(--card-focus);
 }
 
 /* Button Action */
-.btn-action {
+.settings-view .btn-action {
   font-family: var(--font);
   font-size: 12.5px;
   font-weight: 600;
@@ -380,11 +382,11 @@
   transition: background 0.12s, border-color 0.12s;
 }
 
-.btn-action:hover {
+.settings-view .btn-action:hover {
   background: var(--button-hover);
 }
 
-.btn-action:focus-visible {
+.settings-view .btn-action:focus-visible {
   outline: 2px solid var(--card-focus);
   outline-offset: 1px;
 }
@@ -421,7 +423,7 @@
 }
 
 .settings-empty[hidden],
-.nav-item[hidden] {
+.settings-view .nav-item[hidden] {
   display: none !important;
 }
 
@@ -476,7 +478,7 @@
     justify-content: flex-start;
   }
 
-  .seg {
+  .settings-view .seg {
     flex-wrap: wrap;
   }
 

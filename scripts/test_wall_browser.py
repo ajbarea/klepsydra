@@ -5741,8 +5741,9 @@ def settings_view(wall):
             seen[(width, scheme)] = st
             wall.check(st["open"] and len(st["rows"]) == 13 and st["nav"] == 7, f"{tag}: the page stands in the wall's place with 13 rows in 7 sections", st)
             wall.check(TRANSPARENT not in (st["knobOff"], st["fillOff"]), f"{tag}: an off toggle's knob and track are drawn", [st["knobOff"], st["fillOff"]])
+            # Measured with the pointer still over it: wall.css's button:hover must not hide the new state.
             page.click("#row-compact .tog")
-            page.wait_for_timeout(100)
+            page.wait_for_timeout(300)
             on = page.evaluate("""() => { const t = document.querySelector('#row-compact .tog');
               return { checked: t.getAttribute('aria-checked'), knob: getComputedStyle(t.querySelector('i')).backgroundColor, fill: getComputedStyle(t).backgroundColor }; }""")
             wall.check(
@@ -5805,7 +5806,8 @@ def settings_rows_show_answers(wall):
 
     def click(selector):
         page.evaluate("window.__calls = []")
-        page.click(selector)
+        # Forced: a held switch is aria-disabled on purpose, and must send nothing when clicked.
+        page.click(selector, force=True)
         page.wait_for_timeout(100)
         return page.evaluate("window.__calls.filter(([c]) => !['plugin:log|log'].includes(c))")
 
