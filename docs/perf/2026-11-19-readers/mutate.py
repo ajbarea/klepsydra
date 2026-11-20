@@ -1,0 +1,25 @@
+import subprocess, sys, shutil, os
+root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../src-tauri/fleet")
+M = [
+ ("kept value never served", "src/memo.rs", "                if stamp == listed {", "                if false && stamp == listed {"),
+ ("stamp not compared", "src/memo.rs", "                if stamp == listed {", "                if true || stamp == listed {"),
+ ("racy rule off", "src/memo.rs", ".is_ok_and(|d| d > RACY)", ".is_ok_and(|_| true)"),
+ ("listed vs held not compared", "src/memo.rs", "            if listed == held && still(&held) {", "            if still(&held) {"),
+ ("pass end keeps nothing", "src/memo.rs", "        self.memo.kept = std::mem::take(&mut self.memo.seen);", "        self.memo.seen.clear();"),
+ ("pass end forgets nothing", "src/memo.rs", "        self.memo.kept = std::mem::take(&mut self.memo.seen);", "        let s = std::mem::take(&mut self.memo.seen); self.memo.kept.extend(s);"),
+ ("reader rescans afresh", "src/watch.rs", "        let listing = self.scanner.scan(&self.fleet);", "        let listing = { self.scanner = Scanner::default(); self.scanner.scan(&self.fleet) };"),
+ ("usage reader made per read", "src/usage.rs", "        let now = SystemTime::now();\n        let mut pass = self.memo.pass();", "        let now = SystemTime::now();\n        self.memo = Memo::default();\n        let mut pass = self.memo.pass();"),
+ ("listing stamp follows links (dir type)", "src/memo.rs", "        if !meta.is_file() {\n            return None;", "        if meta.is_symlink() {\n            return None;"),
+]
+for name, f, old, new in M:
+    p = os.path.join(root, f); orig = open(p).read()
+    assert orig.count(old) == 1, (name, orig.count(old))
+    open(p, 'w').write(orig.replace(old, new))
+    try:
+        r = subprocess.run(['cargo', 'test', '-q', '--lib'], cwd=root, capture_output=True, text=True, timeout=600)
+        out = r.stdout + r.stderr
+        fails = [l.strip() for l in out.splitlines() if l.startswith('    ') and '::' in l and ' ' not in l.strip()]
+        verdict = 'KILLED' if r.returncode != 0 else 'SURVIVED'
+        print(f"{verdict}: {name} :: {', '.join(sorted(set(fails)))[:300]}", flush=True)
+    finally:
+        open(p, 'w').write(orig)
