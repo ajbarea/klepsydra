@@ -37,9 +37,13 @@ docs/mockups/2026-11-18/wall-header.html; shots fleet-briefing/shots/2026-11-18/
   main (2/0): check whether 3a causes it.
 
 ## Next (resume here)
-1. #504: `gh pr checks 504`; when green, report to Heph (fleet send, orchestrator.pane).
-2. Run `ledger_gives_auto_its_room` alone 3x here and on main (scratchpad detached worktree at origin/main);
-   if 3a fails it, find why (the dock's height or the 5 s repaint shifting the Ledger) and fix.
+1. ✅ #504 CI green on 370a729; reported to Heph via inbox/gauge-421.md (fleet send said not-pasted).
+2. `ledger_gives_auto_its_room`: main passed 2 of 2 (20:3x, 11-19) before the run was killed for low WSL
+   memory (8/9 GB); 3a not rerun yet. CI does not run the browser tests, so run it locally when memory allows,
+   3x on 3a. On 3a, Auto measured once during the drag (expected 0): the only writer of the observed title is
+   showDensity; the ResizeObserver skips while edge.resizing, so suspect a rAF queued just before pointerdown
+   (Ledger opening at 1440 re-wraps the header with the dock, a later settle wave) - check with a longer
+   settle before the drag, or cancel densityFrame on drag start (sidepanel pointerdown).
 3. Rebuild (`.live/live3a.sh stop` first; build under flock), restart `.live/live3a.sh start`, `openwall`,
    re-measure `flock -o /tmp/fleet-heavy.lock bash .live/cpu3a.sh`: the dock-on number after bc5936d.
 4. Shots README lines under 2026-11-19; PR: base fix/fade-guard-498 (main after #504), assignee ajbarea,
