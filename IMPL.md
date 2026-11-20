@@ -22,11 +22,23 @@ Because `eng_state` in `fleet/engines.sh` only checked the old footer strings, i
 - Step 3: Added tests in `fleet/test_delegate.sh` for idle, busy, quota, and 429 states on agy 1.5.12. Ran mutation check (reverting engines.sh to origin/main failed with `got: unknown` on both idle and busy tests).
 - Step 4: Added class guard in `fleet/doctor.sh` reporting `agy version` status and warning if installed version has no fixture. Added tests in `fleet/test_delegate.sh` verifying warning on missing fixture (fake version 99.99.99) and pass on present fixture (1.5.12).
 - Step 5: Shellcheck on changed files (`fleet/engines.sh`, `fleet/doctor.sh`, `fleet/test_delegate.sh`) passed clean. All 163 tests in `fleet/test_delegate.sh` passed.
+- Round 2 Review Fixes:
+  - Item 1 (Blocking): Recognized background task rows ending in `running` under input box as busy; debounced idle detection in `cmd_watch` by requiring 3 consecutive idle polls. Captured real screen `agy-1.5.13-bg-running.txt` and verified test reads busy.
+  - Item 2: Matched entire braille block U+2800-U+28FF (`[\x{2800}-\x{28ff}]`) and added `Loading...` to activity phrases. Tested `⢿ Loading...` reads busy.
+  - Item 3: Mapped agy folder-trust dialog (`enter Confirm` in tail -2) to `trust` state, answered with Enter. Captured real trust dialog `agy-1.5.13-trust.txt` and tested.
+  - Item 4: Added dedicated indicators fixtures (`agy-busy-spinner-only.txt`, `agy-busy-phrase-only.txt`, `agy-busy-task-only.txt`) so mutations dropping braille, phrases, or task rows fail. Ensured `eng_state` returns `$footer` when not idle, so reverted 1.5.12 footer check causes limit tests to fail.
+  - Item 5: Wrapped `agy --version` in `timeout "${FLEET_AGY_TIMEOUT_S:-5}"`, parsed version after "agy" or "CLI" or standalone dotted number, warned `agy version unreadable: <text>` on parse failure, removed non-existent `hooks/fixtures/` candidates, and added tests for timeout, unparseable version, and CLI parsing.
+  - Item 6: Renamed `agy-1.5.13-busy.txt` (which was a quota screen) to `agy-1.5.13-limit.txt`, captured a real 1.5.13 busy screen, and added explicit tests for every agy fixture file (12 total).
+  - NIT: Left the last 12 lines check as-is: reading busy when "Thinking..." or braille appears in the last 12 lines is the safe direction and avoids brittle AST parsing of ANSI terminal output.
 
 ## Next
-- Commit, push branch to origin, open PR referencing #488, wait for CI to be green, report to orchestrator.
+- Commit IMPL.md, push branch with explicit refspec, update PR #507 body with round 2 details, watch CI checks, and send report to orchestrator.
 
 ## Verify
-- `bash fleet/test_delegate.sh > /tmp/t488.log 2>&1; echo $? > /tmp/t488.exit` (163 passed, 0 failed)
-- `uvx --from shellcheck-py shellcheck -x fleet/engines.sh fleet/doctor.sh fleet/test_delegate.sh` (clean)
-- Mutation check: reverting engines.sh fails new idle/busy tests with `got: unknown`
+- `bash fleet/test_delegate.sh > /tmp/t488.log 2>&1; echo $? > /tmp/t488.exit` (179 passed, 0 failed)
+- `uvx --from shellcheck-py shellcheck -x fleet/engines.sh fleet/doctor.sh fleet/delegate.sh fleet/test_delegate.sh` (clean)
+- Mutation checks:
+  - Reverting 1.5.12 check: 1.5.12 limit test returns `unknown` instead of `limit`.
+  - Dropping braille regex: `agy-busy-spinner-only.txt` reads `idle` instead of `busy`.
+  - Dropping activity phrases regex: `agy-busy-phrase-only.txt` reads `idle` instead of `busy`.
+  - Dropping task row check: `agy-busy-task-only.txt` reads `idle` instead of `busy`.
