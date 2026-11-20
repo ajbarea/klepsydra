@@ -825,16 +825,31 @@ for e in "${ENGINES[@]}"; do
   fi
   if [[ $e == agy ]]; then
     bin=$(eng_bin agy)
-    ver=$("$bin" --version 2>/dev/null | grep -Eo '[0-9]+(\.[0-9]+)+' | head -1)
-    if [[ -n $ver ]]; then
-      fix_found=0
-      for candidate in "$here/fixtures/agy-$ver-idle.txt" "$here/fixtures/agy-idle-$ver.txt" "$here/../hooks/fixtures/agy-$ver-idle.txt" "$here/../hooks/fixtures/pane-idle-agy-$ver.txt"; do
-        if [[ -f $candidate ]]; then fix_found=1; break; fi
-      done
-      if (( fix_found )); then
-        report ok "agy version" "$ver (fixture present)"
+    timeout_s=${FLEET_AGY_TIMEOUT_S:-5}
+    raw_ver=$(timeout "$timeout_s" "$bin" --version 2>/dev/null)
+    rc=$?
+    if (( rc == 124 )); then
+      report warn "agy version" "timed out after ${timeout_s} s"
+    else
+      ver=""
+      if grep -Eqi '(agy|CLI)' <<<"$raw_ver"; then
+        ver=$(sed -nE 's/.*(agy|CLI|Agy|cli)[^0-9]*v?([0-9]+(\.[0-9]+)+).*/\2/p' <<<"$raw_ver" | head -1)
+      elif grep -Eq '^[[:space:]]*v?[0-9]+(\.[0-9]+)+[[:space:]]*$' <<<"$raw_ver"; then
+        ver=$(grep -Eo '[0-9]+(\.[0-9]+)+' <<<"$raw_ver" | head -1)
+      fi
+      if [[ -z $ver ]]; then
+        trimmed=$(head -1 <<<"$raw_ver" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        report warn "agy version" "unreadable: ${trimmed:-no output}"
       else
-        report warn "agy version" "$ver: no captured fixture in the repo"
+        fix_found=0
+        for candidate in "$here/fixtures/agy-$ver-idle.txt" "$here/fixtures/agy-idle-$ver.txt"; do
+          if [[ -f $candidate ]]; then fix_found=1; break; fi
+        done
+        if (( fix_found )); then
+          report ok "agy version" "$ver (fixture present)"
+        else
+          report warn "agy version" "$ver: no captured fixture in the repo"
+        fi
       fi
     fi
   fi

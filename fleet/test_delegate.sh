@@ -226,6 +226,30 @@ printf '#!/usr/bin/env bash\necho 1.5.12\n' >"$real_bin"
 chmod +x "$real_bin"
 doc_ok=$(FLEET_AGY="$real_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
 check "doctor: installed agy version with fixture passes ok" "$(grep -c '^ok *agy version: 1.5.12 (fixture present)' <<<"$doc_ok")" "1"
+
+timeout_bin="$work/fake_agy_timeout"
+printf '#!/usr/bin/env bash\nsleep 5\n' >"$timeout_bin"
+chmod +x "$timeout_bin"
+doc_timeout=$(FLEET_AGY="$timeout_bin" FLEET_AGY_TIMEOUT_S=1 FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: agy version timeout warns" "$(grep -c '^warn *agy version: timed out' <<<"$doc_timeout")" "1"
+
+unparse_bin="$work/fake_agy_unparse"
+printf '#!/usr/bin/env bash\necho "invalid version string"\n' >"$unparse_bin"
+chmod +x "$unparse_bin"
+doc_unparse=$(FLEET_AGY="$unparse_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: unparseable agy version warns" "$(grep -c '^warn *agy version: unreadable: invalid version string' <<<"$doc_unparse")" "1"
+
+cli_parse_bin="$work/fake_agy_cli_parse"
+printf '#!/usr/bin/env bash\necho "Antigravity CLI 1.5.12"\n' >"$cli_parse_bin"
+chmod +x "$cli_parse_bin"
+doc_cliparse=$(FLEET_AGY="$cli_parse_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: agy version parsed after CLI" "$(grep -c '^ok *agy version: 1.5.12 (fixture present)' <<<"$doc_cliparse")" "1"
+
+build_parse_bin="$work/fake_agy_build_parse"
+printf '#!/usr/bin/env bash\necho "v2.0 (CLI 1.5.12)"\n' >"$build_parse_bin"
+chmod +x "$build_parse_bin"
+doc_buildparse=$(FLEET_AGY="$build_parse_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: agy version parsed after CLI in v2.0 (CLI 1.5.12)" "$(grep -c '^ok *agy version: 1.5.12 (fixture present)' <<<"$doc_buildparse")" "1"
 check "agy: a short reply that is a quota message is a limit" "$(eng_state agy $'────\n> ask\n  You have exhausted your quota\n────\n>\n────\n? for shortcuts')" "limit"
 check "agy: a short answer about a 429 is a limit too (kept in answer.md and said to be maybe an answer)" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\n? for shortcuts')" "limit"
 longans=$(printf '  The API returns 429 when the rate limit is hit; details follow.\n'; printf '  %s\n' "$(head -c 500 /dev/zero | tr '\0' x)")
