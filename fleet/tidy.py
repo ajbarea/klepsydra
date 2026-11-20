@@ -273,6 +273,26 @@ def keep_lines(raw: str | None) -> int:
 HEPH_KEEP = keep_lines(os.environ.get("FLEET_HEPH_KEEP"))
 
 
+def heading_time(line: str, now: dt.datetime) -> dt.datetime | None:
+    """The date (and time, if given) a heading itself names, or None when it names none that
+    reads as a real date."""
+    m = FULL_DATE.search(line)
+    if m:
+        try:
+            day = dt.date(int(m[1]), int(m[2]), int(m[3]))
+        except ValueError:
+            day = None  # date-shaped, but no real date
+    else:
+        s = SHORT_DATE.search(line)
+        day = month_day(int(s[1]), int(s[2]), now) if s else None
+    if day is None:
+        return None
+    t = HEAD_TIME.search(line)
+    return dt.datetime.combine(day, dt.time()) + dt.timedelta(
+        minutes=minutes_of(t) if t else 0
+    )
+
+
 def plan_heph(
     text: str, now: dt.datetime, keep_last: int = 0
 ) -> tuple[list[str], dict]:
@@ -292,11 +312,12 @@ def plan_heph(
     s0 = starts[0]
     s1 = next((i for i in heads if i > s0), len(lines))
     stamps, _ = stamp_lines(lines, now)
+    a = heading_time(lines[s0], now)
     for s in starts[1:]:
-        a, b = stamps[s0], stamps[s]
-        if not (
-            isinstance(a, dt.datetime) and isinstance(b, dt.datetime) and b <= a < KEEP
-        ):
+        b = heading_time(
+            lines[s], now
+        )  # its own heading's date, never one borrowed above
+        if a is None or b is None or b > a:
             raise ValueError(
                 f"line {s + 1} is a START HERE block newer than the first, or undated: "
                 "merge it into the top one first"

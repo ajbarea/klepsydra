@@ -557,6 +557,14 @@ class ReviewRound1(unittest.TestCase):
             (" (11-10 08:00)", " (11-17 08:00, rotation)"),
             (" (11-10 08:00)", ""),
             ("", " (11-17 08:00)"),
+            (
+                " (11-10 08:00)",
+                " (2026-02-30 08:00)",
+            ),  # no real date: never one borrowed
+            (
+                " (11-10 08:00)",
+                " (11-25 08:00)",
+            ),  # an MM-DD days ahead reads as no date
         ):
             with self.assertRaisesRegex(
                 ValueError, "START HERE block newer than the first"
