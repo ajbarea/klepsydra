@@ -194,10 +194,20 @@ check "an unrecognised failure is an error (no fallback)" "$(eng_classify 2 '' '
 idle=$'  stub\n──────────\n>\n──────────\n? for shortcuts'
 check "agy's footer: idle" "$(eng_state agy "$idle")" "idle"
 check "agy's footer: busy" "$(eng_state agy "${idle/\? for shortcuts/esc to cancel}")" "busy"
+idle_leg=$(cat "$here/fixtures/agy-legacy-idle.txt")
+busy_leg=$(cat "$here/fixtures/agy-legacy-busy.txt")
+check "agy legacy fixture: idle" "$(eng_state agy "$idle_leg")" "idle"
+check "agy legacy fixture: busy" "$(eng_state agy "$busy_leg")" "busy"
 idle12=$(cat "$here/fixtures/agy-1.5.12-idle.txt")
 busy12=$(cat "$here/fixtures/agy-1.5.12-busy.txt")
 check "agy 1.5.12 real fixture: idle" "$(eng_state agy "$idle12")" "idle"
 check "agy 1.5.12 real fixture: busy" "$(eng_state agy "$busy12")" "busy"
+idle13=$(cat "$here/fixtures/agy-1.5.13-idle.txt")
+busy13=$(cat "$here/fixtures/agy-1.5.13-busy.txt")
+limit13=$(cat "$here/fixtures/agy-1.5.13-limit.txt")
+check "agy 1.5.13 real fixture: idle" "$(eng_state agy "$idle13")" "idle"
+check "agy 1.5.13 real fixture: busy" "$(eng_state agy "$busy13")" "busy"
+check "agy 1.5.13 real fixture: limit" "$(eng_state agy "$limit13")" "limit"
 bg_task=$(cat "$here/fixtures/agy-1.5.13-bg-running.txt")
 check "agy 1.5.13 real background task fixture reads busy" "$(eng_state agy "$bg_task")" "busy"
 loading_screen=$'────\n> ask\n  reply\n⢿  Loading...\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%'
