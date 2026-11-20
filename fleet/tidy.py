@@ -310,7 +310,7 @@ def plan_heph(
     heads = [i for i, ln in enumerate(lines) if H2.match(ln)]
     if not heads:
         raise ValueError("HEPH.md has no ## sections")
-    starts = [i for i in heads if lines[i].startswith("## START HERE")]
+    starts = [i for i in heads if lines[i][3:].upper().startswith("START HERE")]
     if not starts:
         raise ValueError("HEPH.md has no ## START HERE block")
     s0 = starts[0]
@@ -319,9 +319,9 @@ def plan_heph(
     a = heading_time(lines[s0], now)
     for s in starts[1:]:
         # Its own heading's date, never one borrowed above; older only if its latest
-        # possible moment is no later than the first block's earliest.
+        # possible moment is before the first block's earliest (a tie cannot be told).
         b = heading_time(lines[s], now)
-        if a is None or b is None or b[1] > a[0]:
+        if a is None or b is None or b[1] >= a[0]:
             raise ValueError(
                 f"line {s + 1} is a START HERE block newer than the first, or undated: "
                 "merge it into the top one first"

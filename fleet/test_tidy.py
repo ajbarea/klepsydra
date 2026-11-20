@@ -547,6 +547,15 @@ class ReviewRound1(unittest.TestCase):
         self.assertFalse((self.state / "fresh-gone.src").exists())
 
     def test_a_later_start_here_newer_than_the_first_is_refused(self):
+        newer_lower = (
+            "# H\n## START HERE (11-10 08:00)\n- top\n## 11-12 09:00 log\n- x\n"
+            "## Start here (11-17 08:00)\n- later\n## 11-20 09:00\n- y\n"
+        )
+        with self.assertRaisesRegex(
+            ValueError, "START HERE block newer than the first"
+        ):
+            self.plan(newer_lower)  # any case of the words counts
+
         def doc(top: str, later: str, mid: str = "") -> str:
             return (
                 f"# H\n## START HERE{top}\n- top\n## 11-12 09:00 log\n- 09:30 x\n"
@@ -568,6 +577,7 @@ class ReviewRound1(unittest.TestCase):
             # Same day and no time: unsure. A later 05:2x may be past 05:25. No clock time.
             (" (Fri 11-12, 05:2x)", " (11-12, Athena -> next)"),
             (" (11-12 05:25)", " (11-12 05:2x)"),
+            (" (11-12 05:20)", " (11-12 05:20)"),  # a tie cannot be told apart
             (" (11-19 52:0x)", " (11-21 03:00)"),
         ):
             with self.assertRaisesRegex(
