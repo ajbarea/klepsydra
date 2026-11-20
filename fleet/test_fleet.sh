@@ -25,7 +25,7 @@ cp -p -- "$real_keryx_config" "$real_keryx_copy" 2>/dev/null || :
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 # Never AJ's briefing: `fleet done` writes an undelivered report into this queue file (#445).
 export FLEET_QUEUE_MD="$work/queue.md"
-mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
+mkdir -p "$FLEET_STATE/log" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
 export FLEET_HEADLESS_CONFIG="$work/no-api" # never the real ~/.claude-api (#260)
@@ -427,6 +427,90 @@ state sent "{\"above\":[\"work\",\"❯ AJ: sent while limited\",\"$LIMIT\"],\"cl
 resume "$(( noon + 4330 ))"
 check "a line AJ already sent is not sent twice; the continue message follows it" "$(has "$(events sent)" "SUBMIT The usage limit has reset.") $(grep -c 'AJ: sent' "$work/sent.log")" "yes 0"
 t kill-window -t "$p"
+
+echo "resume: agy heartbeat on screen change (#416)"
+: >"$FLEET_LOG"
+AGY_SID=aaaaaaaa-4444-4111-8222-333333333333
+CLA_SID=bbbbbbbb-4444-4111-8222-333333333334
+p_agy=$(pane agybeat '{"above":["agy task running..."]}'); settle
+live "$p_agy" "$AGY_SID"
+printf '%s\tagy-worker\t%s\t%s\t/w\n' "$p_agy" "$work/agy.brief" "$AGY_SID" >>"$REGISTRY"
+
+p_cla=$(pane clabeat '{"above":["claude working..."]}'); settle
+live "$p_cla" "$CLA_SID"
+printf '%s\tclaude-worker\t%s\t%s\t/w\n' "$p_cla" "$work/claude.brief" "$CLA_SID" >>"$REGISTRY"
+
+# Pass 1 at noon: screen seen, initial beat written for agy (busy with spinner)
+state agybeat '{"above":["⠋ Thinking... (5s)", "agy task running..."]}'
+resume "$noon"
+b_agy1=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
+check "#416: agy initial beat written on screen seen" "$b_agy1" "agy-worker"$'\t'"$((noon / 10))"
+
+# Pass 2 at noon+60: busy with spinner, real progress made -> beat refreshes
+state agybeat '{"above":["⠙ Thinking... (15s)", "agy task running...", "tool executed: edits made"]}'
+resume "$(( noon + 60 ))"
+b_agy2=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
+check "#416 (busy with spinner): screen changes with progress, so the beat refreshes" "$b_agy2" "agy-worker"$'\t'"$(((noon + 60) / 10))"
+
+# Pass 3 at noon+160: frozen spinner >90 s (only spinner glyph and timer advance, no real progress)
+# Liveness must come from real progress, not redraw (B2). Beat is not rewritten, reads silent.
+state agybeat '{"above":["⠸ Thinking... (115s)", "agy task running...", "tool executed: edits made"]}'
+resume "$(( noon + 160 ))"
+b_agy3=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
+check "#416 (frozen spinner >90 s): beat not rewritten when only spinner/timer changes" "$b_agy3" "$b_agy2"
+beat_bucket=$(cut -f2 <<<"$b_agy3")
+beat_age=$(( (noon + 160) - beat_bucket * 10 ))
+check "#416 (frozen spinner >90 s): reads silent (beat age $beat_age > 90 s)" "$(( beat_age > 90 ))" "1"
+
+# Pass 4 at noon+180: idle at prompt after a summary -> transitions to done (AJ 11-24)
+jq -n --arg p "$p_agy" '{session_id: "aaaaaaaa-4444-4111-8222-333333333333", engine: "agy", state: "working", tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.json"
+state agybeat '{"above":["Done! Everything resolved."],"below":["? for shortcuts"]}'
+resume "$(( noon + 180 ))"
+check "#416 (idle at prompt after summary): agy session transitions to done" "$(jq -r '[.state, .reason] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "done,"
+
+# Pass 5 at noon+200: background task listed with no process running -> background cleared and done
+jq -n --arg p "$p_agy" '{session_id: "aaaaaaaa-4444-4111-8222-333333333333", engine: "agy", state: "working", reason: "background", background: [{id: "task1", kind: "task", at: 1000}], tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.json"
+state agybeat '{"above":["All background tasks completed."],"below":["? for shortcuts"]}'
+resume "$(( noon + 200 ))"
+check "#416 (background task listed with no process): background cleared and transitions to done" "$(jq -r '[.state, (.background | length)] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "done,0"
+
+# Pass 6 at noon+220: B1 numeric bucket is never accepted as session name
+printf '179235300\t179235300\n' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.beat"
+state agybeat '{"above":["new progress line..."]}'
+resume "$(( noon + 220 ))"
+b_b1=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
+check "#416 (B1): numeric bucket is not taken as session name" "$b_b1" "agy-worker"$'\t'"$(((noon + 220) / 10))"
+
+# Pass 7: a Claude pane with a fresh status-line beat is untouched
+printf 'claude-tab\t%s\n' "$(((noon + 220) / 10))" >"$KLEPSYDRA_DIR/fleet/$CLA_SID.beat"
+state clabeat '{"above":["claude working...", "new output"]}'
+resume "$(( noon + 230 ))"
+b_cla=$(cat "$KLEPSYDRA_DIR/fleet/$CLA_SID.beat" 2>/dev/null || echo none)
+check "#416: Claude pane with fresh status-line beat is untouched" "$b_cla" "claude-tab"$'\t'"$(((noon + 220) / 10))"
+
+# Pass 8 at noon+240: live child process under agy session -> WORKING (waiting on a task) (#416 Heph 11-24)
+fake_pid=78910
+fake_child=78911
+f_proc=${FLEET_PROC:-/proc}
+mkdir -p "$f_proc/$fake_pid/task/$fake_pid" "$f_proc/$fake_child"
+printf '%s (agy) S 1 1\n' "$fake_pid" >"$f_proc/$fake_pid/stat"
+printf 'agy\n' >"$f_proc/$fake_pid/comm"
+printf '%s (make) S %s 1\n' "$fake_child" "$fake_pid" >"$f_proc/$fake_child/stat"
+printf 'make\n' >"$f_proc/$fake_child/comm"
+printf 'make\0test-fleet\0' >"$f_proc/$fake_child/cmdline"
+printf '%s ' "$fake_child" >"$f_proc/$fake_pid/task/$fake_pid/children"
+
+jq -n --arg p "$p_agy" --argjson pid "$fake_pid" \
+  '{session_id: "aaaaaaaa-4444-4111-8222-333333333333", engine: "agy", state: "done", reason: null, claude: {pid: $pid}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.json"
+state agybeat '{"above":["Done! Everything resolved."],"below":["? for shortcuts"]}'
+resume "$(( noon + 240 ))"
+check "#416 (live child process under agy): reads working in background" "$(jq -r '[.state, .reason, .shells_live] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "working,background,1"
+rm -rf "$f_proc/$fake_pid" "$f_proc/$fake_child"
+
+t kill-window -t "$p_agy"
+t kill-window -t "$p_cla"
+rm -f "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" "$KLEPSYDRA_DIR/fleet/$AGY_SID.json" \
+      "$KLEPSYDRA_DIR/fleet/$CLA_SID.beat" "$KLEPSYDRA_DIR/fleet/$CLA_SID.json"
 
 echo "resume: review round 1 (S1, S2, S5, S6)"
 : >"$FLEET_LOG"

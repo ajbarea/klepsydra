@@ -1842,3 +1842,53 @@ heph_note() { # WHY SID HEPH DOING
 # call) before the resume service asks the worker to checkpoint and start
 # fresh (#515). The wall's ledger.js CONTEXT_BUDGET holds the same number.
 FLEET_CONTEXT_BUDGET=${FLEET_CONTEXT_BUDGET:-300000}
+
+# proc_stat PID: stat array from /proc/PID/stat (stat[0]=state, stat[1]=ppid, ...)
+proc_stat() { # pid
+  local text
+  stat=()
+  { IFS= read -r -d '' text <"${FLEET_PROC:-/proc}/$1/stat"; } 2>/dev/null || return 1
+  text=${text#*) }
+  read -r -a stat <<<"$text"
+}
+
+# live_shells PID ME: count live child tool/task calls under PID, excluding ME and MCP servers
+live_shells() { # pid me
+  local pid=$1 p=$2 f child comm n=0 listed=0 i own=${CLAUDE_CODE_SHELL:-}
+  local -a stat=() mine=()
+  [[ -n ${CLAUDE_CODE_SHELL_PREFIX:-} ]] && return 0
+  own=${own##*/}
+  [[ $own == sh || $own == dash ]] && own=""
+  for ((i = 0; i < 32; i++)); do
+    [[ $p == "$pid" ]] && break
+    mine+=("$p")
+    proc_stat "$p" || break
+    p=${stat[1]}
+    (( p >= 1 )) || break
+  done
+  local is_agy=0 comm_p=""
+  { IFS= read -r comm_p <"${FLEET_PROC:-/proc}/$pid/comm"; } 2>/dev/null
+  [[ $comm_p == agy || $comm_p == antigravity* ]] && is_agy=1
+  for f in "${FLEET_PROC:-/proc}/$pid"/task/*/children; do
+    [[ -r $f ]] || continue
+    listed=1
+    for child in $(<"$f"); do
+      [[ $child =~ ^[0-9]+$ ]] || continue
+      [[ " ${mine[*]} " == *" $child "* ]] && continue
+      proc_stat "$child" && [[ ${stat[0]} == Z ]] && continue
+      if (( is_agy )); then
+        local cmd="" word=""
+        while IFS= read -r -d '' word; do cmd+="$word "; done <"${FLEET_PROC:-/proc}/$child/cmdline" 2>/dev/null || true
+        # Exclude MCP servers and background helper daemons
+        [[ $cmd == *mcp* || $cmd == *".server"* || $cmd == *"mcp-server"* ]] && continue
+        n=$((n + 1))
+      else
+        comm=""
+        { IFS= read -r comm <"${FLEET_PROC:-/proc}/$child/comm"; } 2>/dev/null
+        # bwrap: a call in Claude Code's sandbox.
+        [[ $comm == bash || $comm == zsh || $comm == bwrap || (-n $own && $comm == "${own:0:15}") ]] && n=$((n + 1))
+      fi
+    done
+  done
+  (( listed )) && printf '%s' "$n"
+}

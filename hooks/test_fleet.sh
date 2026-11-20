@@ -620,6 +620,48 @@ check "an end for an unknown session writes nothing" "$([[ -e $file ]] && echo w
 fire session-start.json '.session_title = "fleet-plan"'
 check "a custom title names it" "$(field .name)" '"fleet-plan"'
 
+# Session name fallback: engine title > worktree branch > brief first line (Claude and agy)
+rm -f "$file"
+fire session-start.json
+check "worktree branch fallback names it" "$(field .name)" '"feat/fleet-visualizer"'
+
+mkdir -p "$work/briefs"
+printf '# Fix agy cards\nDo something\n' >"$work/briefs/brief.md"
+rm -f "$file"
+fire session-start.json ".cwd = \"$repos/klepsydra\""
+now=1792353510 fire user-prompt.json ".cwd = \"$repos/klepsydra\" | .prompt = \"Read your brief at $work/briefs/brief.md\""
+check "brief first line fallback names it" "$(field .name)" '"Fix agy cards"'
+
+rm -f "$file"
+fire session-start.json '.engine = "agy" | .session_title = "custom-agy"'
+check "agy engine title names it" "$(field .name)" '"custom-agy"'
+
+rm -f "$file"
+fire session-start.json '.engine = "agy"'
+check "agy worktree fallback names it" "$(field .name)" '"feat/fleet-visualizer"'
+
+rm -f "$file"
+fire session-start.json ".engine = \"agy\" | .cwd = \"$repos/klepsydra\""
+now=1792353520 fire user-prompt.json ".engine = \"agy\" | .cwd = \"$repos/klepsydra\" | .prompt = \"Read your brief at $work/briefs/brief.md\""
+check "agy brief first line fallback names it" "$(field .name)" '"Fix agy cards"'
+
+# agy child process counting: MCP servers ignored, tasks counted, live task keeps working state (#416)
+mkproc 680 1 agy 8717628 S agy
+mkproc 681 680 klepsydra-fleet 8717701 S bash "$hook"
+mkproc 682 680 npm 8717630 S npm exec @playwright/mcp@latest
+mkproc 683 680 make 8717631 S make test-fleet
+mkdir -p "$work/proc/680/task/680"
+printf '%s ' 682 683 >"$work/proc/680/task/680/children"
+rm -f "$file"
+fire session-start.json '.engine = "agy"' KLEPSYDRA_PID=681
+fire user-prompt.json '.engine = "agy"' KLEPSYDRA_PID=681
+fire stop.json '.engine = "agy" | del(.background_tasks)' KLEPSYDRA_PID=681
+check "agy with live task child stays working with background reason" "$(field '[.state, .reason, .shells_live]')" '["working","background",1]'
+printf '%s ' 682 >"$work/proc/680/task/680/children"
+fire stop.json '.engine = "agy" | del(.background_tasks)' KLEPSYDRA_PID=681
+check "agy with no live task child transitions to done" "$(field '[.state, .reason]')" '["done",null]'
+rm -rf "$work/proc/680" "$work/proc/681" "$work/proc/682" "$work/proc/683"
+
 echo "bad input"
 out=$(KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" bash "$hook" <"$fixtures/malformed.json"); rc=$?
 check "malformed: exit 0" "$rc" "0"
@@ -1670,7 +1712,8 @@ C5=aaaaaaaa-2222-4333-8444-555555555555
 C6=aaaaaaaa-2222-4333-8444-555555555556
 ( cfire session-start.json $C5 >/dev/null ) &
 hung=$!
-until [[ -s $tlog ]]; do read -r -t 0.05 <> <(:) || true; done # the first hook is inside tmux
+t_end=$(( SECONDS + 5 ))
+until [[ -s $tlog || SECONDS -ge t_end ]]; do read -r -t 0.05 <> <(:) || true; done # the first hook is inside tmux
 t0=$SECONDS
 fire session-start.json ".session_id = \"$C6\"" >/dev/null
 check "a hung tmux does not hold the lock: another session is written at once" \

@@ -409,10 +409,15 @@ impl SessionFile {
 
 /// The name in a `<session_id>.beat` line: the terminal tab's title, which the
 /// statusline writes before a tab and the 10 s bucket. None while it has none.
+/// A heartbeat/count value or numeric bucket is never accepted as a name (#416 B1).
 pub fn beat_name(text: &str) -> Option<String> {
     let line = text.lines().next()?;
-    let name = line.split('\t').next()?.trim();
-    (!name.is_empty()).then(|| name.to_string())
+    let (name, _bucket) = line.split_once('\t')?;
+    let name = name.trim();
+    if name.is_empty() || name.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 /// Whether `stem` is a Claude Code session id: a UUID, as the hook requires.
@@ -791,6 +796,8 @@ mod tests {
         );
         assert_eq!(beat_name("\t179235300\n"), None);
         assert_eq!(beat_name(""), None);
+        assert_eq!(beat_name("179235300\n"), None);
+        assert_eq!(beat_name("179235300\t179235300\n"), None);
     }
 
     #[test]
