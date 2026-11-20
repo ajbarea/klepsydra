@@ -99,71 +99,6 @@ above_raw() { head -n "$(above_rows "$1")" <<<"$1"; } # SCREEN
 above_rows() { # SCREEN
   plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }'
 }
-# ABOVE (above_raw's) as plain lines, trailing spaces trimmed and the slash-command menu that typing
-# /exit opens dropped. Blank rows stay: each is a row the menu can cover, so a transcript that
-# scrolls up under the menu cannot hide behind blank rows that scrolled off its top. Claude Code
-# 2.1.316 draws that menu just above the box, over the transcript's last rows: "  ❯ /exit" and its
-# description, then "    /name" rows whose descriptions start in the same column,
-# a description too long for the pane wrapping onto lines indented to exactly that column (an
-# 84-column pane wraps two of the three). Only such a block, running from the "❯ /exit" row to the
-# last line, is dropped; anything else in it keeps the whole block. Prints how many lines went, then
-# the rest.
-screen_lines() { # ABOVE
-  plain <<<"$1" | sed 's/[[:space:]]*$//' | awk '{ l[++n] = $0 } END {
-    k = 0
-    for (h = n; h >= 1; h--) if (l[h] ~ /^  ❯ \/exit( |$)/) break
-    if (h >= 1) {
-      t = l[h]; gsub(/❯/, "*", t)   # one column, whether awk counts bytes or characters
-      d = match(t, /^  \* \/exit +[^ ]/) ? RLENGTH - 1 : 0
-      ok = 1
-      for (i = h + 1; i <= n && ok; i++) {
-        if (match(l[i], /^    \/[^ ]+ +[^ ]/)) ok = d > 0 && RLENGTH - 1 == d
-        else if (l[i] ~ /^    \/[^ ]+ *$/) ok = 1
-        else ok = d > 0 && match(l[i], /^ +[^ ]/) && RLENGTH - 1 == d
-      }
-      if (ok) { k = n - h + 1; n = h - 1 }
-    }
-    print k; for (i = 1; i <= n; i++) print l[i] }'
-}
-# Whether AFTER (a screen with /exit typed) shows the transcript of REF (the screen read before
-# the quiet window) unchanged, row for row from the top: the menu is drawn over the transcript's
-# last rows (2.1.316, at 84 and 160 columns), so at most the rows it covers are missing, and only
-# from the end. A transcript that scrolled up under the menu (a prompt and its spinner arriving as
-# /exit went in) fails. One that fills a blank gap under the menu without moving a visible row
-# passes here; the session file's fingerprint, read again before Enter, is what sees that turn.
-# Rows are counted from the box's position, blank ones included. Fails with SAME_WHY set to the
-# counts and the first lines that differ, for the refusal's log.
-same_transcript() { # REF AFTER
-  local r a k n m
-  n=$(above_rows "$1")
-  r=$(screen_lines "$(above_raw "$1")" | tail -n +2)
-  a=$(screen_lines "$(above_raw "$2")")
-  k=$(head -1 <<<"$a"); a=$(tail -n +2 <<<"$a")
-  m=$(( $(above_rows "$2") - k ))
-  if (( m >= 1 && m <= n && n - m <= k )) && [[ $(head -n "$m" <<<"$r") == "$(head -n "$m" <<<"$a")" ]]; then
-    return 0
-  fi
-  SAME_WHY="menu lines dropped $k, transcript lines before $n, after $m; differs: $(excerpt "$r" "$a")"
-  return 1
-}
-# Whether a new turn could arrive wholly under the menu in AFTER without moving a row same_transcript
-# compares: REF's transcript ends at most one row above the last compared row, with at least 2 blank
-# rows under it before the box. A pane short of a screenful pins the box to the bottom, the gap
-# shrinking as the transcript grows (25 rows in a fresh one, 1 in ns477's full one): a prompt and its
-# spinner fill that gap in place. Claude Code draws a blank row above every block, so a turn's first
-# row that shows is the second under the transcript: when only the first is in view, it stays blank
-# and the turn lands under the menu. A gap of 1 is the box's own margin, so a turn scrolls the
-# compared rows; one whose second blank row stays in view shows the turn there. Prints the gap and
-# the menu's rows.
-menu_gap() { # REF AFTER
-  local n t k m
-  n=$(above_rows "$1")
-  t=$(plain <<<"$1" | head -n "$n" | awk 'NF { t = NR } END { print t + 0 }')
-  k=$(screen_lines "$(above_raw "$2")" | head -1)
-  m=$(( $(above_rows "$2") - k ))
-  (( n - t >= 2 && t + 1 >= m )) || return 1
-  printf '%s %s' "$(( n - t ))" "$k"
-}
 # The first lines that differ between OLD and NEW (plain text), at most 5, each cut to 120
 # characters and joined by " | ", then how many blank lines differ: what a refusal's log shows of a
 # screen that changed. Blank lines are counted, not quoted, so they cannot hide the line that moved.
@@ -207,7 +142,7 @@ exit_dialog() {
 }
 no_exit_dialog() { ! exit_dialog "$1"; }
 # Refuse the close for WHY (at_rest's or the screen's), found by CHECK (busy, input_box,
-# session_file, quiet_screen, fingerprint, transcript, menu_gap, input_text), saying so in one line that names
+# session_file, quiet_screen, fingerprint, transcript, input_text), saying so in one line that names
 # the check; the log line adds what differed (KEY=VALUE...). Returns 10 to 12.
 refuse() { # NAME PANE CHECK WHY [KEY=VALUE...]
   local c=$3 w=$4 more
@@ -222,10 +157,9 @@ refuse() { # NAME PANE CHECK WHY [KEY=VALUE...]
   esac
 }
 # The last look before Enter, from close_now (it sets close_now's box, and check, why and more when
-# it fails): no spinner shows (where the menu leaves its row in view; at 84 columns it covers it,
-# and the fingerprint is the guard), the screen above the box is still SREF (the settle window's),
-# and the box still holds just our /exit.
-last_look() { # PANE SREF SETTLE
+# it fails): no spinner shows, the screen above the box is still REF, and the box still holds just
+# our /exit.
+last_look() { # PANE REF SETTLE
   local s
   s=$(screen "$1"); box=$(input_text "$s")
   if busy "$s"; then
@@ -244,12 +178,14 @@ last_look() { # PANE SREF SETTLE
 # turn between them. A finished agent may work again (a follow-up message, a phone prompt, the
 # wrap-up's checkpoint): /exit would end the turn or kill its shells with the pane. So the pane must
 # look idle with an empty box, its session file be at rest, and then both stay unchanged for
-# FLEET_CLOSE_QUIET s (the hook writes the file async, up to a second after a prompt). /exit is
-# typed, both are read once more, and again after FLEET_CLOSE_SETTLE s (2: past the hook's write,
-# since the menu /exit opens covers the rows a new turn's spinner would show in), and only then is
-# Enter pressed. The pane is never killed: one that does not go is left open and said so.
+# FLEET_CLOSE_QUIET s (the hook writes the file async, up to a second after a prompt). "/exit " is
+# typed with a trailing space, which keeps Claude Code's command menu shut (2.1.316: "/exit" alone
+# opens it over the transcript's last rows, where it would hide a new turn); Enter on it still
+# exits. Both are read once more, and again after FLEET_CLOSE_SETTLE s (2: past the hook's write),
+# the screen above the box byte for byte as before the quiet window, and only then is Enter
+# pressed. The pane is never killed: one that does not go is left open and said so.
 close_now() { # PANE NAME SID
-  local s s0 ref sref gap fp why box q=${FLEET_CLOSE_QUIET:-6} g=${FLEET_CLOSE_SETTLE:-2}
+  local s ref fp why box q=${FLEET_CLOSE_QUIET:-6} g=${FLEET_CLOSE_SETTLE:-2}
   [[ $q =~ ^[0-9]+([.][0-9]+)?$ ]] || q=6
   [[ $g =~ ^[0-9]+([.][0-9]+)?$ ]] || g=2
   s=$(screen "$1")
@@ -261,13 +197,13 @@ close_now() { # PANE NAME SID
     return
   fi
   fp=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$fp" session="$(session_brief "$3")"; return; }
-  ref=$(above_raw "$s") s0=$s
+  ref=$(above_raw "$s")
   steady "$1" "$q" "$ref" || { refuse "$2" "$1" quiet_screen "working (its screen changed within ${q} s)" \
     busy="$(busy "$STEADY_SCREEN" && echo yes || echo no)" differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$STEADY_SCREEN" | plain)")"; return; }
   why=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$why" session="$(session_brief "$3")"; return; }
   [[ $why == "$fp" ]] || { refuse "$2" "$1" fingerprint "working (its session file was written within ${q} s)" \
     fp_before="$fp" fp_after="$why" session="$(session_brief "$3")"; return; }
-  type_exactly "$1" "/exit" || { flog WARN "close: /exit would not go in; left open" name="$2" pane="$1" check=typing; return 13; }
+  type_exactly "$1" "/exit " || { flog WARN "close: /exit would not go in; left open" name="$2" pane="$1" check=typing; return 13; }
   why=$(at_rest "$1" "$3")
   s=$(screen "$1")
   box=$(input_text "$s")
@@ -282,16 +218,14 @@ close_now() { # PANE NAME SID
     fi
   elif busy "$s"; then
     check=busy why="working (a turn started as /exit went in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
-  elif ! same_transcript "$s0" "$s"; then
-    check=transcript why="working (its screen changed as /exit went in)" more=(differs="$SAME_WHY")
-  elif gap=$(menu_gap "$s0" "$s"); then
-    check=menu_gap why="unconfirmed its transcript ends ${gap%% *} blank rows above the box, under the ${gap##* }-row /exit menu, where a new turn would not show; refused until the transcript grows, so close it by hand (/exit) once it is idle"
-    more=(gap="${gap%% *}" menu_rows="${gap##* }")
+  elif [[ $(above_raw "$s") != "$ref" ]]; then
+    check=transcript why="working (its screen changed as /exit went in)"
+    more=(differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$s" | plain)")")
   elif [[ $box != /exit ]]; then
     check=input_text why="working (its box changed as /exit went in)" more=(text="$(clip 80 <<<"$box")")
-  elif sref=$(above_raw "$s"); ! steady "$1" "$g" "$sref"; then
+  elif ! steady "$1" "$g" "$ref"; then
     check=quiet_screen why="working (its screen changed within ${g} s of /exit going in)" box=$(input_text "$STEADY_SCREEN")
-    more=(differs="$(excerpt "$(above_raw "$s" | plain)" "$(above_raw "$STEADY_SCREEN" | plain)")")
+    more=(differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$STEADY_SCREEN" | plain)")")
   elif why=$(at_rest "$1" "$3"); [[ $why != "$fp" ]]; then
     if [[ $why =~ ^[0-9]+\ [0-9]+$ ]]; then
       check=fingerprint more=(fp_before="$fp" fp_after="$why" session="$(session_brief "$3")")
@@ -300,12 +234,12 @@ close_now() { # PANE NAME SID
       check=session_file more=(session="$(session_brief "$3")")
     fi
     box=$(input_text "$(screen "$1")")
-  elif ! last_look "$1" "$sref" "$g"; then
+  elif ! last_look "$1" "$ref" "$g"; then
     :
   fi
   if [[ -n $check ]]; then
     # Back out only our own /exit: text typed after it stays, and so does the close's refusal.
-    [[ $box == /exit ]] && t send-keys -t "$1" -N 5 BSpace
+    [[ $box == /exit ]] && t send-keys -t "$1" -N 6 BSpace
     refuse "$2" "$1" "$check" "$why" "${more[@]}"
     return
   fi
