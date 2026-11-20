@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
-use crate::memo::{Memo, Stamp};
+use crate::memo::{list, Kind, Memo, Stamp};
 use crate::session::{beat_name, is_session_id, parse, SessionFile};
 use crate::speaking::FILE as SPEAKING;
 use crate::view::Entry;
@@ -42,7 +42,7 @@ fn stamped(mut file: File) -> std::io::Result<(String, i64, Option<Stamp>)> {
         .duration_since(UNIX_EPOCH)
         .map_err(std::io::Error::other)?;
     let secs = i64::try_from(t.as_secs()).map_err(std::io::Error::other)?;
-    Ok((text, secs, Stamp::of(&meta)))
+    Ok((text, secs, Stamp::of_file(&file)))
 }
 
 // Files this thread's scans have read, whichever scanner read them.
@@ -91,7 +91,7 @@ impl Scanner {
     /// would block); symlinks are not followed.
     pub fn scan(&mut self, fleet: &Path) -> Listing {
         let mut out = Listing::default();
-        let dir = match std::fs::read_dir(fleet) {
+        let dir = match list(fleet) {
             Ok(dir) => dir,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return out,
             Err(e) => {
@@ -103,13 +103,13 @@ impl Scanner {
                 return out;
             }
         };
-        let now = SystemTime::now();
+        let now = crate::memo::now();
         let mut sessions = self.sessions.pass();
         let mut beat_pass = self.beats.pass();
         let mut files = Vec::new();
         let mut beats: HashMap<String, Beat> = HashMap::new();
-        for item in dir.flatten() {
-            let name = item.file_name().to_string_lossy().into_owned();
+        for item in dir {
+            let name = item.name.to_string_lossy().into_owned();
             if name == SPEAKING {
                 continue; // keryx's, read on its own by `speaking::read`
             }
@@ -119,11 +119,11 @@ impl Scanner {
             if !is_session_id(stem) || !matches!(ext, "json" | "beat") {
                 continue;
             }
-            if !item.file_type().is_ok_and(|t| t.is_file()) {
+            if item.kind != Kind::File {
                 continue;
             }
-            let path = item.path();
-            let listed = Stamp::of_entry(&item);
+            let path = fleet.join(&item.name);
+            let listed = item.stamp;
             // `None`: the file went between the listing and the open.
             let open = || match File::open(&path).and_then(stamped) {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(None),
@@ -318,21 +318,16 @@ pub(crate) mod tests {
     }
 
     // A copy that keeps its source's time written in place (`cp -p` over
-    // the file): same inode, length and time; only the change time moves.
-    #[cfg(unix)]
+    // the file): the same file id, length and modification time; only the
+    // change time moves (NTFS `ChangeTime` on Windows).
     #[test]
     fn an_in_place_rewrite_with_the_same_length_and_time_is_read() {
-        use std::os::unix::fs::MetadataExt;
         let dir = Scratch::new("in-place");
         let name = format!("{A}.json");
         dir.write(&name, &session(A, "error"));
         age(&dir, &name, 1_700_000_000);
-        let ino = || std::fs::metadata(dir.0.join(&name)).unwrap().ino();
-        let ctime = || {
-            let m = std::fs::metadata(dir.0.join(&name)).unwrap();
-            (m.ctime(), m.ctime_nsec())
-        };
-        let before = (ino(), ctime());
+        let stamp = || Stamp::of_file(&File::open(dir.0.join(&name)).unwrap()).unwrap();
+        let before = stamp();
         let mut s = Scanner::default();
         s.scan(&dir.0);
         // Rewrite until the change time moves: before multigrain timestamps
@@ -340,12 +335,17 @@ pub(crate) mod tests {
         loop {
             std::fs::write(dir.0.join(&name), session(A, "ended")).unwrap();
             age(&dir, &name, 1_700_000_000);
-            if ctime() != before.1 {
+            if stamp().changed != before.changed {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        assert_eq!(ino(), before.0, "the same inode");
+        let after = stamp();
+        assert_eq!(
+            (after.id, after.len, after.modified),
+            (before.id, before.len, before.modified),
+            "only the change time differs"
+        );
         assert_eq!(
             s.scan(&dir.0).entries[0].file.state,
             crate::session::State::Ended
@@ -368,19 +368,14 @@ pub(crate) mod tests {
             s.scan(&dir.0).entries[0].file.state,
             crate::session::State::Ended
         );
-        // With no pass between. Unix only: NTFS tunnelling gives a name made
-        // again within 15 s its old creation time, so there the 2 s rule and
-        // a fresh time (every klepsydra writer gives one) are what catch it.
-        #[cfg(unix)]
-        {
-            std::fs::remove_file(dir.0.join(&name)).unwrap();
-            dir.write(&name, &session(A, "error"));
-            age(&dir, &name, 1_700_000_000);
-            assert_eq!(
-                s.scan(&dir.0).entries[0].file.state,
-                crate::session::State::Error
-            );
-        }
+        // With no pass between: a new file id and change time.
+        std::fs::remove_file(dir.0.join(&name)).unwrap();
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Error
+        );
     }
 
     #[cfg(unix)]
@@ -443,9 +438,8 @@ pub(crate) mod tests {
     }
 
     // A copy that keeps its source's time (`cp -p`, `touch -r`, a restore)
-    // renamed over the path: same length and time, a new inode and change
-    // time. Unix only: NTFS tunnelling may carry the old creation time over.
-    #[cfg(unix)]
+    // renamed over the path: same length and time, a new file id and change
+    // time.
     #[test]
     fn a_replace_with_the_same_length_and_time_is_read() {
         let dir = Scratch::new("same-len-time");
@@ -466,6 +460,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_file_written_just_now_is_read_on_every_pass() {
+        crate::memo::REAL_CLOCK.with(|c| c.set(true));
         let dir = Scratch::new("racy");
         let name = format!("{A}.json");
         dir.write(&name, &session(A, "error"));

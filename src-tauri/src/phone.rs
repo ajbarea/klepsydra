@@ -57,13 +57,8 @@ pub fn set(app: &AppHandle, on: bool) -> bool {
     let dir = crate::klepsydra_dir(app);
     let clips: Clips = Arc::new(move |id: &str| klepsydra_fleet::reply::read(dir.as_deref()?, id));
     let dirs = crate::usage_dirs(app);
-    let reader = app.state::<crate::UsageReader>().0.clone();
-    let usage: Usage = Arc::new(move || {
-        let mut r = reader
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        r.read(&dirs)
-    });
+    let reader = app.state::<crate::UsageReader>().inner().clone();
+    let usage: Usage = Arc::new(move || reader.read(&dirs));
     match Server::spawn(ADDR, assets, clips, Some(usage)) {
         Ok(server) => {
             server.set_theme(crate::theme::saved(app));

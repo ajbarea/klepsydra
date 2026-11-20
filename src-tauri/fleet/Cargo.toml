@@ -24,7 +24,8 @@ socket2 = "0.6"
 jiff = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }
+# memo.rs lists a folder with every entry's change time and file id.
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 # examples/readcost.rs reads the process's I/O counters.
 [target.'cfg(windows)'.dev-dependencies]

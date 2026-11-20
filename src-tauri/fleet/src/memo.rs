@@ -1,71 +1,310 @@
 //! Reading a folder every tick without re-reading its unchanged files. A
-//! file's value is kept against the length and modification time its
-//! directory entry shows, so a pass over the folder opens only the files
-//! written since the last one. Listing a folder already carries those two
-//! fields on Windows (no call per file); on Unix each costs one `fstatat`
-//! in place of an open, a read and a close.
+//! file's value is kept against the stamp its directory entry shows (length,
+//! modification and change times, file id), so a pass over the folder opens
+//! only the files written since the last one. On Windows one directory query
+//! returns every entry's stamp (no call per file); on Unix each costs one
+//! `fstatat` in place of an open, a read and a close.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-/// How long after its last write a file is read again on every pass. Two
+/// How long after its last change a file is read again on every pass. Two
 /// writes closer together than the file system's timestamp granularity can
-/// leave the length and time as they were (git's "racily clean" entries),
-/// so a value is kept only once its file has been still for longer than any
-/// granularity it may have: FAT keeps times to 2 s.
+/// leave the stamp as it was (git's "racily clean" entries), so a value is
+/// kept only once its file has been still for longer than any granularity it
+/// may have: FAT keeps times to 2 s. It assumes the writer and the reader
+/// share a clock, as they do on one machine.
 pub const RACY: Duration = Duration::from_secs(2);
 
-/// A regular file's length and modification time, and what tells a file
-/// replaced under the same length and time (`cp -p`, `touch -r`, a restore).
+/// The time a pass compares stamps against. Tests read it `RACY` plus a
+/// second ahead: writing a file sets its change time to now, so a file a
+/// test has just written or aged counts as still, as it would 3 s later.
+/// A test of the racy rule on real files sets `REAL_CLOCK` on its thread.
+pub fn now() -> SystemTime {
+    let now = SystemTime::now();
+    #[cfg(test)]
+    if !REAL_CLOCK.with(std::cell::Cell::get) {
+        return now + RACY + Duration::from_secs(1);
+    }
+    now
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static REAL_CLOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A regular file's length, modification time, change time and id. The
+/// change time is what tells a file rewritten under the same length and
+/// modification time (`cp -p`, `touch -r`, a restore): writing the data or
+/// setting the times moves it, and only a backup tool sets it back. The id
+/// tells a file replaced by rename. Unix: `st_ctime` and the inode, as git's
+/// index keeps them. Windows: NTFS `ChangeTime` and the 64-bit file id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stamp {
     pub len: u64,
     pub modified: SystemTime,
-    pub change: Change,
-}
-
-/// On Unix the inode and change time, as git's index keeps them: no tool sets
-/// a change time back. A Windows listing carries no change time; its creation
-/// time stands in, though NTFS tunnelling can carry a name's old creation
-/// time over to a file renamed onto it within 15 s.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Change(pub [i64; 3]);
-
-impl Change {
-    #[cfg(unix)]
-    fn of(meta: &std::fs::Metadata) -> Self {
-        use std::os::unix::fs::MetadataExt;
-        Change([meta.ino() as i64, meta.ctime(), meta.ctime_nsec()])
-    }
-    #[cfg(windows)]
-    fn of(meta: &std::fs::Metadata) -> Self {
-        use std::os::windows::fs::MetadataExt;
-        Change([meta.creation_time() as i64, 0, 0])
-    }
-    #[cfg(not(any(unix, windows)))]
-    fn of(_: &std::fs::Metadata) -> Self {
-        Change::default()
-    }
+    pub changed: SystemTime,
+    pub id: u64,
 }
 
 impl Stamp {
+    /// When the file last changed by either time.
+    fn last(&self) -> SystemTime {
+        self.modified.max(self.changed)
+    }
+
     /// The stamp in `meta`, `None` for anything but a regular file (a
     /// symlink's own metadata included).
+    #[cfg(unix)]
     pub fn of(meta: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
         if !meta.is_file() {
             return None;
         }
+        let changed = u64::try_from(meta.ctime())
+            .ok()
+            .and_then(|s| {
+                let n = u32::try_from(meta.ctime_nsec()).ok()?;
+                SystemTime::UNIX_EPOCH.checked_add(Duration::new(s, n))
+            })
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         Some(Stamp {
             len: meta.len(),
             modified: meta.modified().ok()?,
-            change: Change::of(meta),
+            changed,
+            id: meta.ino(),
         })
     }
 
-    /// A directory entry's stamp, without following a symlink.
-    pub fn of_entry(entry: &std::fs::DirEntry) -> Option<Self> {
-        Stamp::of(&entry.metadata().ok()?)
+    /// The stamp of the open file `file` (a regular file), as its directory
+    /// entry would show it once nothing writes to it.
+    #[cfg(unix)]
+    pub fn of_file(file: &std::fs::File) -> Option<Self> {
+        Stamp::of(&file.metadata().ok()?)
+    }
+
+    #[cfg(windows)]
+    pub fn of_file(file: &std::fs::File) -> Option<Self> {
+        win::stamp_of(file)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    pub fn of_file(file: &std::fs::File) -> Option<Self> {
+        let meta = file.metadata().ok()?;
+        let modified = meta.modified().ok()?;
+        meta.is_file().then_some(Stamp {
+            len: meta.len(),
+            modified,
+            changed: modified,
+            id: 0,
+        })
+    }
+}
+
+/// What a directory entry is, never following a link.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    File,
+    Dir,
+    /// A symlink, junction, FIFO, socket or device.
+    Other,
+}
+
+/// One entry of a folder listing: its name, kind, modification time (for a
+/// file or folder), and stamp when it is a regular file whose stamp the
+/// listing gave.
+#[derive(Clone, Debug)]
+pub struct Listed {
+    pub name: OsString,
+    pub kind: Kind,
+    pub modified: Option<SystemTime>,
+    pub stamp: Option<Stamp>,
+}
+
+/// Every entry of `dir` but `.` and `..`, with the stamps a pass compares.
+/// An entry whose type cannot be read is left out.
+#[cfg(windows)]
+pub fn list(dir: &Path) -> std::io::Result<Vec<Listed>> {
+    win::list(dir)
+}
+
+#[cfg(not(windows))]
+pub fn list(dir: &Path) -> std::io::Result<Vec<Listed>> {
+    list_std(dir)
+}
+
+/// `list` through std's `read_dir`. On Unix each file or folder costs one
+/// `fstatat` (not following a link); elsewhere entries carry no stamp, so
+/// every pass reads them.
+fn list_std(dir: &Path) -> std::io::Result<Vec<Listed>> {
+    Ok(std::fs::read_dir(dir)?
+        .flatten()
+        .filter_map(|e| {
+            let t = e.file_type().ok()?;
+            let kind = if t.is_file() {
+                Kind::File
+            } else if t.is_dir() {
+                Kind::Dir
+            } else {
+                Kind::Other
+            };
+            // One fstatat on Unix, not following a link.
+            let meta = (kind != Kind::Other).then(|| e.metadata().ok()).flatten();
+            #[cfg(unix)]
+            let stamp = (kind == Kind::File)
+                .then(|| meta.as_ref().and_then(Stamp::of))
+                .flatten();
+            #[cfg(not(unix))]
+            let stamp = None;
+            Some(Listed {
+                name: e.file_name(),
+                kind,
+                modified: meta.and_then(|m| m.modified().ok()),
+                stamp,
+            })
+        })
+        .collect())
+}
+
+#[cfg(windows)]
+mod win {
+    use super::{Kind, Listed, Stamp};
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+    use std::time::{Duration, SystemTime};
+    use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileBasicInfo, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, BY_HANDLE_FILE_INFORMATION,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_BOTH_DIR_INFO,
+    };
+
+    /// A FILETIME (100 ns ticks since 1601) as a SystemTime.
+    fn time(t: i64) -> SystemTime {
+        const TO_UNIX: i64 = 116_444_736_000_000_000;
+        let ticks = t.saturating_sub(TO_UNIX);
+        let at = |d: Duration, after: bool| {
+            if after {
+                SystemTime::UNIX_EPOCH.checked_add(d)
+            } else {
+                SystemTime::UNIX_EPOCH.checked_sub(d)
+            }
+        };
+        let d = Duration::from_nanos(ticks.unsigned_abs().saturating_mul(100));
+        at(d, ticks >= 0).unwrap_or(SystemTime::UNIX_EPOCH)
+    }
+
+    /// A reparse point that names another file (a symlink or junction), as
+    /// std's `FileType::is_symlink` reads it; other tags (cloud or dedup
+    /// placeholders) are the file itself.
+    fn is_link(attributes: u32, tag: u32) -> bool {
+        attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && tag & 0x2000_0000 != 0
+    }
+
+    pub(super) fn stamp_of(file: &std::fs::File) -> Option<Stamp> {
+        let h = file.as_raw_handle() as HANDLE;
+        let mut by: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: `h` is an open handle owned by `file`; `by` is a correctly
+        // sized out-parameter.
+        if unsafe { GetFileInformationByHandle(h, &mut by) } == 0 {
+            return None;
+        }
+        let mut basic = FILE_BASIC_INFO::default();
+        // SAFETY: as above; the size passed is `basic`'s own.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                h,
+                FileBasicInfo,
+                (&raw mut basic).cast(),
+                std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        };
+        if ok == 0 || by.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+            return None;
+        }
+        Some(Stamp {
+            len: (u64::from(by.nFileSizeHigh) << 32) | u64::from(by.nFileSizeLow),
+            modified: time(basic.LastWriteTime),
+            changed: time(basic.ChangeTime),
+            id: (u64::from(by.nFileIndexHigh) << 32) | u64::from(by.nFileIndexLow),
+        })
+    }
+
+    pub(super) fn list(dir: &Path) -> std::io::Result<Vec<Listed>> {
+        // Backup semantics opens a folder; read access includes listing it.
+        let handle = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)?;
+        let h = handle.as_raw_handle() as HANDLE;
+        // u64 cells keep the buffer 8-byte aligned, as the entries need.
+        let mut buf = vec![0u64; 8 * 1024];
+        let bytes = (buf.len() * 8) as u32;
+        let mut out = Vec::new();
+        let mut class = FileIdBothDirectoryRestartInfo;
+        loop {
+            // SAFETY: `h` is an open folder handle; `buf` is `bytes` long.
+            let ok =
+                unsafe { GetFileInformationByHandleEx(h, class, buf.as_mut_ptr().cast(), bytes) };
+            if ok == 0 {
+                let e = std::io::Error::last_os_error();
+                if e.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+                    return Ok(out);
+                }
+                // A file system without the query (FAT, some shares): std's
+                // listing, unstamped, so every pass reads.
+                if class == FileIdBothDirectoryRestartInfo
+                    && e.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32)
+                {
+                    return super::list_std(dir);
+                }
+                return Err(e);
+            }
+            class = FileIdBothDirectoryInfo;
+            let base = buf.as_ptr().cast::<u8>();
+            let mut at = 0usize;
+            loop {
+                // SAFETY: the call filled `buf` with a chain of entries, each
+                // starting at an 8-byte-aligned offset inside it.
+                let e = unsafe { &*base.add(at).cast::<FILE_ID_BOTH_DIR_INFO>() };
+                let units = e.FileNameLength as usize / 2;
+                // SAFETY: FileName runs FileNameLength bytes from its field.
+                let name = unsafe { std::slice::from_raw_parts(e.FileName.as_ptr(), units) };
+                if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
+                    // EaSize holds the reparse tag for a reparse point.
+                    let kind = if is_link(e.FileAttributes, e.EaSize) {
+                        Kind::Other
+                    } else if e.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                        Kind::Dir
+                    } else {
+                        Kind::File
+                    };
+                    let stamp = (kind == Kind::File).then(|| Stamp {
+                        len: e.EndOfFile as u64,
+                        modified: time(e.LastWriteTime),
+                        changed: time(e.ChangeTime),
+                        id: e.FileId as u64,
+                    });
+                    out.push(Listed {
+                        name: OsString::from_wide(name),
+                        kind,
+                        modified: (kind != Kind::Other).then(|| time(e.LastWriteTime)),
+                        stamp,
+                    });
+                }
+                if e.NextEntryOffset == 0 {
+                    break;
+                }
+                at += e.NextEntryOffset as usize;
+            }
+        }
     }
 }
 
@@ -119,7 +358,8 @@ impl<T: Clone> Pass<'_, T> {
     /// `read` runs, returning the value and the stamp of the handle it read
     /// through. That value is kept only when both stamps agree (the entry
     /// listed is the file read) and the file had been still for `RACY` at
-    /// `now`. An error is returned and never kept, so the next pass reads
+    /// `now` by both its times. An error is returned and never kept, so the
+    /// next pass reads
     /// again.
     pub fn get<E>(
         &mut self,
@@ -146,7 +386,7 @@ impl<T: Clone> Pass<'_, T> {
         }
         memo.reads += 1;
         let (value, held) = read()?;
-        let still = |s: &Stamp| now.duration_since(s.modified).is_ok_and(|d| d > RACY);
+        let still = |s: &Stamp| now.duration_since(s.last()).is_ok_and(|d| d > RACY);
         if let (Some(listed), Some(held)) = (listed, held) {
             if listed == held && still(&held) {
                 memo.seen.insert(path.to_path_buf(), (held, value.clone()));
@@ -169,8 +409,9 @@ mod tests {
     fn stamp(len: u64, secs: u64) -> Stamp {
         Stamp {
             len,
-            modified: SystemTime::UNIX_EPOCH + Duration::from_secs(secs),
-            change: Change::default(),
+            modified: at(secs),
+            changed: at(secs),
+            id: 1,
         }
     }
 
@@ -297,21 +538,73 @@ mod tests {
     }
 
     #[test]
-    fn a_symlink_or_folder_has_no_stamp() {
-        let dir = crate::scan::tests::Scratch::new("memo-stamp");
-        dir.write("f", "x");
-        let f = std::fs::symlink_metadata(dir.0.join("f")).unwrap();
-        assert_eq!(Stamp::of(&f).map(|s| s.len), Some(1));
-        assert_eq!(Stamp::of(&std::fs::symlink_metadata(&dir.0).unwrap()), None);
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(dir.0.join("f"), dir.0.join("l")).unwrap();
-            let l = std::fs::read_dir(&dir.0)
-                .unwrap()
-                .flatten()
-                .find(|e| e.file_name() == "l")
-                .unwrap();
-            assert_eq!(Stamp::of_entry(&l), None);
+    fn a_change_time_newer_than_the_write_time_keeps_it_racy() {
+        // `cp -p` or `touch -r` just now: the write time is old, the change
+        // time is not, so the file is read every pass until both are still.
+        let mut m = Memo::default();
+        let restored = Stamp {
+            changed: at(NOW - 1),
+            ..stamp(10, NOW - 600)
+        };
+        let files = [("a", restored, 1)];
+        assert_eq!(pass(&mut m, &files, NOW).1, 1);
+        assert_eq!(pass(&mut m, &files, NOW + 2).1, 1);
+        assert_eq!(pass(&mut m, &files, NOW + 3).1, 0);
+    }
+
+    #[test]
+    fn each_part_of_the_stamp_is_compared() {
+        let base = stamp(10, NOW - 600);
+        let others = [
+            Stamp { len: 11, ..base },
+            Stamp {
+                modified: at(NOW - 601),
+                ..base
+            },
+            Stamp {
+                changed: at(NOW - 601),
+                ..base
+            },
+            Stamp { id: 2, ..base },
+        ];
+        for (i, other) in others.into_iter().enumerate() {
+            let mut m = Memo::default();
+            pass(&mut m, &[("a", base, 1)], NOW);
+            assert_eq!(
+                pass(&mut m, &[("a", other, 2)], NOW),
+                (vec![2], 1),
+                "part {i}"
+            );
         }
+    }
+
+    #[test]
+    fn a_listing_stamps_regular_files_alone_and_matches_their_handles() {
+        let dir = crate::scan::tests::Scratch::new("memo-stamp");
+        dir.write("f", "xyz");
+        std::fs::create_dir(dir.0.join("d")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.0.join("f"), dir.0.join("l")).unwrap();
+        let mut l = list(&dir.0).unwrap();
+        l.sort_by(|a, b| a.name.cmp(&b.name));
+        let names: Vec<_> = l
+            .iter()
+            .map(|e| (e.name.to_str().unwrap(), e.kind))
+            .collect();
+        let mut want = vec![("d", Kind::Dir), ("f", Kind::File)];
+        #[cfg(unix)]
+        want.push(("l", Kind::Other));
+        assert_eq!(names, want);
+        let f = l.iter().find(|e| e.name == "f").unwrap();
+        assert_eq!(f.stamp.map(|s| s.len), Some(3));
+        assert!(l
+            .iter()
+            .filter(|e| e.name != "f")
+            .all(|e| e.stamp.is_none()));
+        // The handle's stamp is the listing's, or no value would ever be kept.
+        let held = Stamp::of_file(&std::fs::File::open(dir.0.join("f")).unwrap());
+        assert_eq!(held, f.stamp);
+        #[cfg(unix)]
+        assert_eq!(Stamp::of_file(&std::fs::File::open(&dir.0).unwrap()), None);
     }
 }

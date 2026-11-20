@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use serde_json::{Map, Value};
 
 use crate::bounded::read_text_stamped;
-use crate::memo::{Memo, Stamp};
+use crate::memo::{list, Kind, Memo, Stamp};
 
 /// The most a reading file may hold: one is under 1 KiB.
 pub const MAX_BYTES: u64 = 64 * 1024;
@@ -23,25 +23,22 @@ fn account_name(name: &str) -> bool {
         && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-/// The entries of `dir` that `keep` admits by name and type (never following
+/// The entries of `dir` that `keep` admits by name and kind (never following
 /// a symlink), newest first, at most `max`, each with its stamp when it is a
 /// regular file.
 fn newest(
     dir: &Path,
     max: usize,
-    keep: impl Fn(&str, &std::fs::FileType) -> bool,
+    keep: impl Fn(&str, Kind) -> bool,
 ) -> Vec<(PathBuf, Option<Stamp>)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = list(dir) else {
         return Vec::new();
     };
     let mut found: Vec<(SystemTime, PathBuf, Option<Stamp>)> = entries
-        .flatten()
+        .into_iter()
         .filter_map(|e| {
-            let kind = e.file_type().ok()?;
-            let name = e.file_name();
-            keep(name.to_str()?, &kind).then_some(())?;
-            let meta = e.metadata().ok()?;
-            Some((meta.modified().ok()?, e.path(), Stamp::of(&meta)))
+            keep(e.name.to_str()?, e.kind).then_some(())?;
+            Some((e.modified?, dir.join(&e.name), e.stamp))
         })
         .collect();
     found.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
@@ -89,7 +86,7 @@ impl Reader {
         max_accounts: usize,
         max_sessions: usize,
     ) -> Vec<Value> {
-        let now = SystemTime::now();
+        let now = crate::memo::now();
         let mut pass = self.memo.pass();
         let mut out = Vec::new();
         for dir in dirs {
@@ -98,7 +95,7 @@ impl Reader {
                 continue;
             }
             for (account, _) in newest(&accounts, max_accounts, |name, kind| {
-                kind.is_dir() && account_name(name)
+                kind == Kind::Dir && account_name(name)
             }) {
                 for (file, listed) in
                     newest(&account, max_sessions, |name, _| name.ends_with(".json"))

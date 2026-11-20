@@ -51,14 +51,26 @@ M = [
     (
         "usage reader made per read",
         "src/usage.rs",
-        "        let now = SystemTime::now();\n        let mut pass = self.memo.pass();",
-        "        let now = SystemTime::now();\n        self.memo = Memo::default();\n        let mut pass = self.memo.pass();",
+        "        let now = crate::memo::now();\n        let mut pass = self.memo.pass();",
+        "        let now = crate::memo::now();\n        self.memo = Memo::default();\n        let mut pass = self.memo.pass();",
     ),
     (
-        "change marker ignored",
+        "change time not stamped",
         "src/memo.rs",
-        "        Change([meta.ino() as i64, meta.ctime(), meta.ctime_nsec()])",
-        "        let _ = meta.ino();\n        Change::default()",
+        "            changed,\n            id: meta.ino(),",
+        "            changed: SystemTime::UNIX_EPOCH,\n            id: meta.ino(),",
+    ),
+    (
+        "file id not stamped",
+        "src/memo.rs",
+        "            id: meta.ino(),",
+        "            id: 0,",
+    ),
+    (
+        "still by the write time alone",
+        "src/memo.rs",
+        "        self.modified.max(self.changed)",
+        "        self.modified",
     ),
     (
         "second ask in a pass reads again",
@@ -73,16 +85,16 @@ M = [
         "        if meta.is_symlink() {\n            return None;",
     ),
     (
-        "usage: listed stamp dropped (always None)",
-        "src/usage.rs",
-        "            Some((meta.modified().ok()?, e.path(), Stamp::of(&meta)))",
-        "            Some((meta.modified().ok()?, e.path(), None))",
+        "listing gives no stamps",
+        "src/memo.rs",
+        "            let stamp = (kind == Kind::File)\n                .then(|| meta.as_ref().and_then(Stamp::of))\n                .flatten();",
+        "            let stamp: Option<Stamp> = None;\n            let _ = &meta;",
     ),
     (
-        "ctime dropped, ino kept",
-        "src/memo.rs",
-        "        Change([meta.ino() as i64, meta.ctime(), meta.ctime_nsec()])",
-        "        Change([meta.ino() as i64, 0, 0])",
+        "usage: listed stamp dropped (always None)",
+        "src/usage.rs",
+        "            Some((e.modified?, dir.join(&e.name), e.stamp))",
+        "            Some((e.modified?, dir.join(&e.name), None))",
     ),
 ]
 
