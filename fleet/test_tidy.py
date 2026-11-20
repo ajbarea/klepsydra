@@ -737,10 +737,10 @@ class ReviewRound1(unittest.TestCase):
     def test_a_record_loads_only_whole_and_sane(self):
         mod = load_tidy(self.state, self.brief)
         rec = self.state / ".heph-seen.tsv"
-        good = f"k\t{NOW + 10 * DAY:.0f}\nj\t{NOW - DAY:.0f}\nk\t{NOW - 2 * DAY:.0f}\n"
+        good = f"k\t{NOW - 60:.0f}\nj\t{NOW - DAY:.0f}\nk\t{NOW - 2 * DAY:.0f}\n"
         rec.write_text(good + "#end\t3\n")
         self.assertEqual(
-            mod.load_seen(), {"k": [NOW + 10 * DAY, NOW - 2 * DAY], "j": [NOW - DAY]}
+            mod.load_seen(), {"k": [NOW - 60, NOW - 2 * DAY], "j": [NOW - DAY]}
         )
         for bad in (
             good,  # cut off before its end row
@@ -752,7 +752,7 @@ class ReviewRound1(unittest.TestCase):
             "k\tinf\n#end\t1\n",
             "k\t0\n#end\t1\n",
             "k\t-5\n#end\t1\n",
-            f"k\t{NOW + 31 * DAY:.0f}\n#end\t1\n",
+            f"k\t{NOW + 3651 * DAY:.0f}\n#end\t1\n",  # no clock reads that
             "k\n#end\t1\n",
             f"\t{NOW:.0f}\n#end\t1\n",
             "",
@@ -760,24 +760,41 @@ class ReviewRound1(unittest.TestCase):
             with self.subTest(bad=bad[-30:]):
                 rec.write_text(bad)
                 self.assertEqual(mod.load_seen(), {})
+        rec.write_text(f"k\t{NOW + 1800:.0f}\n#end\t1\n")  # within the clock's slack
+        self.assertEqual(mod.load_seen(), {"k": [NOW + 1800]})
+        rec.write_text(f"k\t{NOW + 31 * DAY:.0f}\n#end\t1\n")
+        with self.assertRaises(mod.ClockBehind):
+            mod.load_seen()
 
     def test_a_clock_stepped_back_never_ages_a_line(self):
-        """Heph's review r2, S1: a stored time is never moved earlier, and a line first seen
-        while the clock runs behind is stamped no earlier than any time already held."""
+        """Heph's review r2, S1, and its verify pass: a stored time is never moved earlier.
+        Within the clock's slack a new line takes the latest stored time; past it the tidy
+        refuses and the report records nothing, so a step back of any size loses nothing."""
         mod = load_tidy(self.state, self.brief)
         a = ["# H\n", "## START HERE\n", "- now\n", "## 2026-11-01 log\n", "- a\n"]
-        mod.NOW = NOW - 3600
+        mod.NOW = NOW - 600
         mod.first_seen(a)
-        mod.NOW = NOW - 3 * DAY  # the clock steps back three days
-        seen = mod.first_seen(a + ["- b\n"])
-        self.assertEqual(seen[4:], [NOW - 3600, NOW - 3600])
-        mod.NOW = NOW  # and is set right
-        seen = mod.first_seen(a + ["- b\n"])
-        kept, _ = mod.plan_heph(
-            "".join(a) + "- b\n", dt.datetime.fromtimestamp(NOW), seen
-        )
-        self.assertIn("- a\n", kept)
-        self.assertIn("- b\n", kept)
+        mod.NOW = NOW - 1200  # back ten minutes: within the slack
+        self.assertEqual(mod.first_seen(a + ["- b\n"])[4:], [NOW - 600, NOW - 600])
+        mod.NOW = NOW
+        text = "".join(a) + "- b\n"
+        p = self.heph(text, old=set())
+        rec = self.state / ".heph-seen.tsv"
+        for step in (3 * DAY, 31 * DAY, 60 * DAY):
+            with self.subTest(step=step):
+                before = rec.read_bytes()
+                r = self.tidy("heph", now=NOW - step)
+                self.assertIn("later than the clock", r.stdout)
+                r = self.tidy("--report", str(self.tmp / "r.json"), now=NOW - step)
+                self.assertEqual(
+                    rec.read_bytes(), before, "nothing recorded while early"
+                )
+                got = json.loads((self.tmp / "r.json").read_text())
+                self.assertTrue(got.get("heph_clock_behind"), got)
+                self.assertIsNone(got.get("error"), got)
+                r = self.tidy("--apply", "heph", now=NOW + 3600)  # the clock set right
+                self.assertEqual(r.returncode, 0, r.stdout)
+                self.assertEqual(p.read_text(), text)
 
     def test_a_truncated_record_drops_nothing(self):
         """Heph's review r2, S2: a record cut off mid-write is no record."""
@@ -1078,6 +1095,48 @@ class ReviewRound1(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertFalse((s / "fresh-a.src").exists() or (s / "fresh-b.src").exists())
 
+    def test_the_saved_list_round_trips_any_line(self):
+        import random
+
+        mod = load_tidy(self.state, self.brief)
+        rng = random.Random(5141)
+        alphabet = [
+            "a",
+            " ",
+            "#",
+            "## x (3)",
+            "\r",
+            "\u2028",
+            "\x0c",
+            "\x85",
+            "\x1c",
+            "\v",
+            "é",
+            "\udcff",
+        ]
+        for _ in range(200):
+            items = [
+                "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 6)))
+                for _ in range(rng.randint(1, 6))
+            ]
+            mod.PREVIEW.clear()
+            mod.PREVIEW["heph"] = items
+            mod.write_preview(["heph"])
+            self.assertEqual(mod.read_preview(), {"heph": items}, items)
+
+    def test_the_queue_list_holds_every_line_it_drops(self):
+        q = (
+            "# Queue\n\n## Done since 11-09\n- ✅ **Sun 11-15:** last week\n"
+            "  LESSON: keep the continuation\n- ✅ **Fri 11-20:** this week\n"
+        )
+        (self.brief / "queue.md").write_text(q)
+        git(self.brief, "add", "-A")
+        git(self.brief, "commit", "-qm", "q")
+        r = self.tidy("queue")
+        self.assertIn("would drop 1 Done items (2 lines)", r.stdout)
+        listed = (self.state / "tidy-preview.md").read_text()
+        self.assertIn("  LESSON: keep the continuation\n", listed)
+
     def test_the_saved_list_reads_blank_and_heading_items(self):
         mod = load_tidy(self.state, self.brief)
         mod.PREVIEW["heph"] = ["## 10-28 00:40", "", "- 00:41 old work"]
@@ -1089,6 +1148,17 @@ class ReviewRound1(unittest.TestCase):
             mod.PREVIEW_HEAD + "## heph (5)\nx\n"
         )
         self.assertEqual(mod.read_preview(), {}, "a list cut short is no list")
+
+    def test_a_refused_apply_keeps_its_list(self):
+        p = self.heph()
+        self.tidy("heph")
+        age(p, 30)  # written just now: the apply waits
+        r = self.tidy("--apply", "heph", dry_first=False)
+        self.assertIn("was written 30 s ago", r.stdout)
+        self.assertIn("## heph", (self.state / "tidy-preview.md").read_text())
+        age(p, 3600)
+        r = self.tidy("--apply", "heph", dry_first=False)
+        self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_a_second_tidy_is_refused(self):
         self.heph()

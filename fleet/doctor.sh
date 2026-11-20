@@ -547,10 +547,10 @@ elif ! cl=$(jq -r --argjson now "$now" --argjson hk "$heph_max_kb" '
       (if .error then "the cleanup report run failed (\(.error | gsub("\\s+"; " ") | .[0:120])): read log/tidy.log, then fleet tidy --report again" else empty end),
       (if has("briefing") and .briefing == null then "the briefing folder was not there, so it was not checked: is C: mounted?" else empty end),
       (if .techne == null then "techne cleanup.py not found, so the briefing expiry and queue checks did not run: set TECHNE_CLEANUP or install techne" else empty end),
-      (if n("done_files") > 0 then "done/ holds \(n("done_files")) retired week files: harvest lessons, then fleet tidy --apply done" else empty end),
-      (if ((.stale // []) | length) > 0 then "\(.stale | length) briefing owners past their date or missing a field (\(.stale[0] | gsub("\\s+"; " ") | .[0:80])): harvest an expired one into its repo, then fleet tidy --apply expired; fix the frontmatter of the rest" else empty end),
+      (if n("done_files") > 0 then "done/ holds \(n("done_files")) retired week files: harvest lessons from fleet tidy done (it lists them), then --apply" else empty end),
+      (if ((.stale // []) | length) > 0 then "\(.stale | length) briefing owners past their date or missing a field (\(.stale[0] | gsub("\\s+"; " ") | .[0:80])): harvest an expired one into its repo, then fleet tidy expired lists them and --apply removes them; fix the frontmatter of the rest" else empty end),
       (if ((.unowned // []) | length) > 0 then "\(.unowned | length) briefing paths with no owner + expires (\(.unowned[0:3] | join(", "))): add the frontmatter, or harvest and delete them" else empty end),
-      (if n("queue_old") > 0 then "\(n("queue_old")) Done lines in queue.md predate this week: harvest lessons, then fleet tidy --apply queue" else empty end),
+      (if n("queue_old") > 0 then "\(n("queue_old")) Done lines in queue.md predate this week: harvest lessons from fleet tidy queue (it lists them), then --apply" else empty end),
       (if n("heph_bytes") > $hk * 1024 then "HEPH.md is \(n("heph_bytes") / 1024 | floor) KB, past \($hk) KB: the orchestrator runs fleet tidy heph (dry run first)" else empty end),
       (if (n("briefs_stale") + n("archive_stale")) > 0 then "\(n("briefs_stale")) stale briefs and \(n("archive_stale")) old archive entries: fleet tidy briefs archive lists them all, then --apply" else empty end)
     ] | join("; ")' "$cleanup_report" 2>/dev/null); then

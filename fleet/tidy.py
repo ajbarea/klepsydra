@@ -289,13 +289,19 @@ SEEN_END = (
     "#end"  # the record's last row: "#end<TAB><rows>", so a cut-off record is no record
 )
 SEEN_MIN = 1.7e9  # 2023-11: a time before this is no time this tool wrote
-SEEN_AHEAD = 30 * 86400  # a time this far past now is no clock skew either
+SEEN_AHEAD = 3650 * 86400  # a time this far past now is no clock at all: garbage
+CLOCK_SLACK = 3600  # a recorded time further ahead than this: the clock reads early now
+
+
+class ClockBehind(Exception):
+    """The record holds a time later than now: the clock was stepped back."""
 
 
 def load_seen() -> dict[str, list[float]]:
     """The first-seen record, every time kept per key. A record that is missing, unreadable,
     cut off (no end row naming its row count) or holding one row that is no plausible time
-    is no record: every line is then new. A stored time is never moved earlier."""
+    is no record: every line is then new. A stored time is never moved earlier, and one
+    later than now raises ClockBehind: the tidy then waits for the clock, never resets."""
     try:
         text = (STATE / SEEN).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -313,6 +319,9 @@ def load_seen() -> dict[str, list[float]]:
         if not (tab and key and math.isfinite(w) and SEEN_MIN <= w <= NOW + SEEN_AHEAD):
             return {}
         out.setdefault(key, []).append(w)
+    ahead = max((w for ws in out.values() for w in ws), default=0.0)
+    if ahead > NOW + CLOCK_SLACK:
+        raise ClockBehind(ahead)
     return out
 
 
@@ -460,6 +469,13 @@ def tidy_heph(apply: bool) -> int:
     try:
         seen = first_seen(text.splitlines(keepends=True))
         kept, s = plan_heph(text, now, seen)
+    except ClockBehind as exc:
+        when = dt.datetime.fromtimestamp(exc.args[0])
+        print(
+            f"heph: refused: the record holds {when:%m-%d %H:%M}, later than the clock "
+            f"({now:%m-%d %H:%M}): set the clock right; nothing dropped"
+        )
+        return 1
     except ValueError as exc:
         print(f"heph: refused: {exc}; nothing dropped")
         return 1
@@ -655,12 +671,16 @@ def read_preview() -> dict[str, list[str]]:
     """The saved dry-run list, by part. Each section names its item count, so an item that
     is blank or looks like a heading is still read as an item. Missing or garbled: empty."""
     try:
-        rows = (STATE / PREVIEW_FILE).read_text(
-            encoding="utf-8", errors="surrogateescape"
-        )
+        # newline="": no \r is turned into a line break
+        with open(
+            STATE / PREVIEW_FILE, encoding="utf-8", errors="surrogateescape", newline=""
+        ) as f:
+            rows = f.read()
     except OSError:
         return {}
-    lines = rows.splitlines()
+    lines = rows.split("\n")  # only \n: an item may hold any other line break
+    if lines and lines[-1] == "":
+        lines.pop()
     out: dict[str, list[str]] = {}
     i = 2 if lines[:2] == PREVIEW_HEAD.splitlines() else len(lines)
     while i < len(lines):
@@ -708,7 +728,9 @@ def save_preview(sections: dict[str, list[str]]) -> Path:
     )
     fd, tmp = tempfile.mkstemp(dir=STATE, prefix=".tidy-preview.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:
+        with os.fdopen(
+            fd, "w", encoding="utf-8", errors="surrogateescape", newline=""
+        ) as f:
             f.write(body)
         os.replace(tmp, out)
     except OSError:
@@ -888,8 +910,8 @@ def week_start(now: dt.datetime) -> dt.date:
 def plan_queue(
     text: str, now: dt.datetime, done_sections
 ) -> tuple[str, list[str], int]:
-    """(new text, dropped lines, undated lines kept) for queue.md: each Done section's list
-    items dated before this week's Monday go, with their continuation lines."""
+    """(new text, every dropped line, undated items kept) for queue.md: each Done section's
+    list items dated before this week's Monday go, with their continuation lines."""
     lines = text.splitlines(keepends=True)
     monday = week_start(now)
     drop: set[int] = set()
@@ -917,7 +939,7 @@ def plan_queue(
             elif day < monday:
                 drop.update(range(i, j))
             i = j
-    dropped = [lines[i].rstrip("\n") for i in sorted(drop) if lines[i].startswith("- ")]
+    dropped = [lines[i].rstrip("\r\n") for i in sorted(drop)]
     if drop:
         for h in heads:
             lines[h] = re.sub(
@@ -925,6 +947,10 @@ def plan_queue(
             )
     new = "".join(ln for i, ln in enumerate(lines) if i not in drop)
     return new, dropped, undated
+
+
+def done_items(dropped: list[str]) -> int:
+    return sum(1 for ln in dropped if ln.startswith("- "))
 
 
 def tidy_queue(apply: bool, mod) -> int:
@@ -940,13 +966,14 @@ def tidy_queue(apply: bool, mod) -> int:
     now = dt.datetime.fromtimestamp(NOW)
     new, dropped, undated = plan_queue(text, now, mod.done_sections)
     print(
-        f"queue: {'drops' if apply else 'would drop'} {len(dropped)} Done lines dated before "
+        f"queue: {'drops' if apply else 'would drop'} {done_items(dropped)} Done items "
+        f"({len(dropped)} lines) dated before "
         f"{week_start(now):%a %m-%d} (harvest lessons from them first; GitHub holds the rest)"
         + (f"; {undated} undated lines stay" if undated else "")
     )
     for ln in dropped:
         print(f"  {ln[:140]}")
-    if not preview("queue", [ln.rstrip("\r\n") for ln in dropped], apply):
+    if not preview("queue", dropped, apply):
         return 1
     if not apply or not dropped:
         return 0
@@ -1147,7 +1174,7 @@ def report(out: Path) -> int:
             data["stale"] = sorted(f"{g}: {why}" for g, why in status.stale.items())
             try:
                 text = (BRIEFING / "queue.md").read_text(encoding="utf-8")
-                data["queue_old"] = len(
+                data["queue_old"] = done_items(
                     plan_queue(text, dt.datetime.fromtimestamp(NOW), mod.done_sections)[
                         1
                     ]
@@ -1164,9 +1191,12 @@ def report(out: Path) -> int:
             # First sight every 6 h, but never in the middle of a tidy's rewrite.
             with FileLock(STATE / ".tidy.lock", 0) as free:
                 if free and heph.is_file() and not heph.is_symlink():
-                    first_seen(
-                        heph.read_text("utf-8", "surrogateescape").splitlines(True)
-                    )
+                    try:
+                        first_seen(
+                            heph.read_text("utf-8", "surrogateescape").splitlines(True)
+                        )
+                    except ClockBehind:  # the clock reads early: record nothing yet
+                        data["heph_clock_behind"] = True
             data["briefs_stale"] = len(stale_briefs())
             data["archive_stale"] = len(stale_archive())
     except Exception as exc:  # the report is written whatever failed, naming it
@@ -1213,21 +1243,25 @@ def main(argv: list[str]) -> int:
             return 1
     mod = techne_cleanup() if {"queue", "expired"} & set(parts) else None
     failed = 0
+    done: list[str] = []
     for part in parts:
         if part == "heph":
-            failed |= tidy_heph(a.apply)
+            rc = tidy_heph(a.apply)
         elif part in ("briefs", "archive"):
-            failed |= tidy_files(part, a.apply)
+            rc = tidy_files(part, a.apply)
         elif part == "queue":
-            failed |= tidy_queue(a.apply, mod)
+            rc = tidy_queue(a.apply, mod)
         elif part == "done":
-            failed |= tidy_done(a.apply)
-        elif part == "expired":
-            failed |= tidy_expired(a.apply, mod)
+            rc = tidy_done(a.apply)
+        else:
+            rc = tidy_expired(a.apply, mod)
+        failed |= rc
+        if rc == 0:
+            done.append(part)
     if not a.apply:
         print(f"dry run: nothing changed; {write_preview(parts)}; add --apply to do it")
     elif is_state_folder(STATE):
-        forget_preview(parts)
+        forget_preview(done)  # a refused part keeps its list for the next try
     return failed
 
 
