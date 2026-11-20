@@ -36,20 +36,17 @@ docs/mockups/2026-11-18/wall-header.html; shots fleet-briefing/shots/2026-11-18/
   ledger_gives_auto_its_room ("a drag of the Ledger's separator ... measures Auto once"), passed once on
   main (2/0): check whether 3a causes it.
 
-## Next (resume here) - stopped 11-19 night for capacity (Athena); #504 comes first
-0. #504 round 1 fixes pushed (502c6fb); its own IMPL lists what is left there (local browser run, mutation
-   matrix, report). Finish that before 3a.
-1. `ledger_gives_auto_its_room` on 3a (before the fix): 1 fail, 2 pass of 3 (fail: measures 1 during the drag);
-   main 2/2. Fix committed, NOT yet run in a browser: the ResizeObserver's frame checks edge.resizing again when
-   it runs (`densityCheck`), since the dock's 5 s reads can resize the wall and queue a frame just before
-   pointerdown; the release still measures via onResized. Node 590/590, lint clean. Verify: the case 5x under
-   flock, all pass; then the whole wall suite once.
-2. Rebuild (`.live/live3a.sh stop` first; build under flock), restart `.live/live3a.sh start`, `openwall`,
-   re-measure `flock -o /tmp/fleet-heavy.lock bash .live/cpu3a.sh`: the dock-on number after bc5936d.
-3. Shots README lines under 2026-11-19; PR: base fix/fade-guard-498 (main after #504), assignee ajbarea,
-   label enhancement, "Part of #421"; short top + details (live vs tested, CPU before/after, #505, the
-   390 wrap, the separator race); follow-up: one Rust usage hub feeding strip, wall and phone. Report to Heph;
-   do not merge.
+## Next (resume here) - Argos replacement, 11-20
+0. #504: round 1 reported 01:38 (CI green dff1ee9); waiting on Heph's round 2. Its IMPL is on fix/fade-guard-498.
+1. ✅ `ledger_gives_auto_its_room` with e94e6b1: 5 of 5 pass (drag measures 0, release 1). 📋 whole wall suite
+   once (scratchpad wall-full.log), then rebuild stage klepsydra-build-gauge421.
+2. 📋 `.live/live3a.sh start`, `openwall`, `flock -o /tmp/fleet-heavy.lock bash .live/cpu3a.sh`: dock-on number
+   after bc5936d vs the before numbers above.
+3. 📋 PR: base fix/fade-guard-498 (main after #504), assignee ajbarea, label enhancement, "Part of #421"; short
+   top + details (live vs tested, CPU before/after, #505, the 390 wrap, the separator race). Shots README lines
+   under 2026-11-19 with the PR link. Report to Heph; do not merge.
+4. Then 3b (new branch off this one), per the Plan.
+- Harvested the merged worktrees' live harnesses into .live/prev/ (live_opacity.py, ring_contrast.py, live_app.sh).
 
 ## Verify
 - `node --test src/*.test.js` (590 pass); `npm run lint`; `(cd src-tauri && cargo fmt --all --check && cargo test -p klepsydra-fleet)`.
