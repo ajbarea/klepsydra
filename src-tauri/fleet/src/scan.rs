@@ -332,12 +332,17 @@ pub(crate) mod tests {
         s.scan(&dir.0);
         // Rewrite until the change time moves: before multigrain timestamps
         // (Linux 6.13) it moves once per tick, not on every write.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             std::fs::write(dir.0.join(&name), session(A, "ended")).unwrap();
             age(&dir, &name, 1_700_000_000);
             if stamp().changed != before.changed {
                 break;
             }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the change time never moved"
+            );
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         let after = stamp();

@@ -25,6 +25,7 @@ Push only: `git push -u origin perf/readers:perf/readers`. Never push to main. D
    fix "Checked live" and the NTFS-lag line (it can serve the old value while a writer holds the file open;
    no klepsydra writer does). Fresh Opus self-review, CI green, report to Athena.
 5. Then #423 (heavy lock as a slot pool sized from the machine; Heph 11-20, design in the issue's latest comment).
+6. Then #515 (context budget: relaunch fresh past a token threshold, live ledger alert, one PR per brief; Heph 11-20).
 
 ## Verify
 - see Next 1-3. Data copy: C:\Users\ajbar\klepsydra-perf\data-1119 (delete when the PR merges).
