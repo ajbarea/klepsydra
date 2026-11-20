@@ -59,9 +59,18 @@ HERE = Path(__file__).resolve().parent
 HEPH_HOURS = 48
 KEEP_DAYS = 7
 WRITE_QUIET_S = 120
-REGISTRY_WAIT_S = float(
-    os.environ.get("FLEET_REGISTRY_WAIT", "60")
-)  # as lib.sh with_registry
+
+
+def wait_seconds(raw: str | None) -> float:
+    """FLEET_REGISTRY_WAIT as lib.sh's with_registry reads it: empty or unreadable is 60."""
+    try:
+        v = float(raw or "60")
+    except ValueError:
+        return 60.0
+    return v if 0 <= v < 86400 else 60.0  # also rejects nan and inf
+
+
+REGISTRY_WAIT_S = wait_seconds(os.environ.get("FLEET_REGISTRY_WAIT"))
 PARTS = ("heph", "briefs", "archive", "queue", "done", "expired")
 # The briefing's permanent files, and what other tools own: everything else is transient.
 BRIEFING_KEEP = [
@@ -241,7 +250,9 @@ def stamp_lines(
     return out, marks
 
 
-STANDING = re.compile(r"\b(?:STANDING|PERMANENT|binding)\b")
+STANDING = re.compile(
+    r"\b(?:standing|permanent|binding)\b", re.I
+)  # a rule AJ set to last
 
 
 def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
@@ -289,7 +300,8 @@ def plan_heph(text: str, now: dt.datetime) -> tuple[list[str], dict]:
         end = heads[n + 1] if n + 1 < len(heads) else len(lines)
         body = range(h + 1, end)
         recent = [i for i in body if stamps[i] is not None and stamps[i] >= cutoff]
-        marked = [i for i in body if i not in recent and STANDING.search(lines[i])]
+        new = set(recent)
+        marked = [i for i in body if i not in new and STANDING.search(lines[i])]
         standing += len(marked)
         recent += marked  # a standing rule stays until someone moves it to its home
         if (stamps[h] is not None and stamps[h] >= cutoff) or recent:

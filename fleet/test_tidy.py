@@ -515,18 +515,47 @@ class ReviewRound1(unittest.TestCase):
         self.assertNotIn("- later\n", kept)
 
     def test_standing_rules_in_old_sections_stay(self):
+        # Shapes from the live HEPH.md, in every case it uses.
+        rules = [
+            "- 10:00 AJ (STANDING ROUTING): free capacity first",
+            "- 10:05 AJ GRANT (10-28, standing until he says otherwise)",
+            "- 10:10 AJ RULE (11-01, permanent): the two orchestrators are equal",
+            "- 10:15 AJ standing rule: perf #1",
+            "- 10:20 (standing for MSR Stage 1)",
+            "- 10:25 AJ (BINDING): trust order",
+            "- 10:30 binding from 10-28",
+        ]
+        noise = [
+            "- 09:00 old work",
+            "- 11:00 a standingdesk note",
+            "- 11:05 two outstanding PRs",
+        ]
         text = (
-            "# H\n## START HERE\n- now\n## 2026-11-10 day\n- 09:00 old work\n"
-            "- 10:00 AJ (STANDING): free capacity first\n- 11:00 a PERMANENT rule\n"
-            "- 12:00 binding from 10-28\n- 13:00 a standingdesk note\n## 2026-11-20 day\n- 09:00 x\n"
+            "# H\n## START HERE\n- now\n## 2026-11-10 day\n"
+            + "".join(f"{ln}\n" for ln in noise[:1] + rules + noise[1:])
+            + "## 2026-11-20 day\n- 09:00 x\n"
         )
         kept, s = self.plan(text)
-        for line in ("STANDING", "PERMANENT", "binding from"):
-            self.assertTrue(any(line in k for k in kept), line)
+        for ln in rules:
+            self.assertIn(ln + "\n", kept)
+        for ln in noise:
+            self.assertNotIn(ln + "\n", kept)
         self.assertIn("## 2026-11-10 day\n", kept)
-        self.assertNotIn("- 09:00 old work\n", kept)
-        self.assertNotIn("- 13:00 a standingdesk note\n", kept)
-        self.assertEqual(s["standing"], 3)
+        self.assertEqual(s["standing"], len(rules))
+
+    def test_the_registry_wait_reads_like_lib_sh(self):
+        mod = load_tidy(self.state, self.brief)
+        for raw, want in (
+            (None, 60.0),
+            ("", 60.0),
+            ("x", 60.0),
+            ("nan", 60.0),
+            ("inf", 60.0),
+            ("-1", 60.0),
+            ("0", 0.0),
+            ("2.5", 2.5),
+        ):
+            self.assertEqual(mod.wait_seconds(raw), want, raw)
 
     def test_shapes_that_must_never_lose_recent_lines(self):
         cases = {
