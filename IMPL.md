@@ -18,19 +18,16 @@ when it rebases on this.
 - CI runs that browser case (setup-uv v10.3.3, playwright 1.65.2); AGENTS.md says so.
 - Strip ink tokens are set only in style.css (no runtime setter), so the theme-JSON nit does not reach it.
 
-## Next (resume here) - stopped 11-19 night for capacity (Athena)
-Review round 1 (~/.local/state/fleet-orchestrator/reports/guards-504-r1.md, 3 Should-fix) is fixed in code and
-pushed; CI's new browser step runs the clean case. Not yet done:
-1. Local clean browser run after the filter-parser fix (the first clean run failed only on the parser counting
-   rgb()/rgba() inside the halo drop-shadow; fixed with topFunctions, unit-checked in node, not yet in a browser).
-2. Mutation matrix: `flock -o /tmp/fleet-heavy.lock bash <scratchpad>/mut504.sh` (13 bypasses: the 6 from #498
-   plus mix-blend-mode, filter: brightness(), mask-image, 8- and 4-digit hex, / 50.5%, an --x-fade token under
-   full ink). Node verdicts: node passes clean; mutations not yet run. Record each node/browser verdict here
-   and in the PR's details. The script is in the session scratchpad; if it is gone, append each rule to
-   src/style.css, run node --test src/opacity.test.js and the browser case, restore.
-3. PR body: drop the overclaim ("every ... ink token is opaque" -> what the node guard reads as CSS text, and
-   that CI now runs the browser case), add the matrix table.
-4. CI green -> report to Heph (`fleet send`, else inbox/gauge-421.md); fresh round 2 is Heph's/Athena's.
+## Round 1 verified (11-20)
+- Clean: node passes; browser case `strip_words_keep_their_ink` 70 passed, 0 failed (after the filter-parser fix).
+- Bypass matrix, each rule appended to src/style.css: all 13 (the 6 from #498 and round 1's 7: mix-blend-mode,
+  filter: brightness(), mask-image, 8- and 4-digit hex, / 50.5%, --x-fade under full ink) turn node AND browser red.
+- PR body records the matrix; reported to Heph for a fresh round 2.
+
+## Next (resume here)
+1. Wait for round 2 (Heph/Athena). Fix any finding here, push, rerun the matrix: append each rule to
+   src/style.css, `node --test src/opacity.test.js`, the browser case, restore.
+2. After #504 merges: 3a (feat/gauge-header-421) rebases with `git rebase --onto origin/main 632baba`.
 
 ## Verify
 - `node --test src/*.test.js`; `npm run lint`; `uvx ruff check scripts/test_wall_browser.py`.
