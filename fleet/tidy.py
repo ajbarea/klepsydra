@@ -218,13 +218,15 @@ def stamp_lines(
             else:
                 m = SHORT_DATE.search(line)
                 new_day = month_day(int(m[1]), int(m[2]), now) if m else None
+            if line.startswith("## "):
+                # Undated: the heading holds no date-shaped text (a regex, never a clock).
+                # Only a ## heading opens or ends such a section, never a ### inside it.
+                undated = not (FULL_DATE.search(line) or SHORT_DATE.search(line))
             if new_day is not None:
-                day, undated = new_day, False
+                day = new_day
                 t = HEAD_TIME.search(line)
                 minutes = minutes_of(t) if t else None
                 marks.append((n, new_day))
-            elif line.startswith("## "):
-                undated = True  # an undated section is kept whole
         else:
             m = LINE_DATE.match(line)
             got = None
@@ -299,7 +301,7 @@ def plan_heph(
                 f"line {s + 1} is a START HERE block newer than the first, or undated: "
                 "merge it into the top one first"
             )
-    cut = max(s1, len(lines) - keep_last)  # every line from here down stays
+    cut = max(0, len(lines) - keep_last)  # every line from here down stays
     keep = set(range(heads[0])) | set(range(s0, s1)) | set(range(cut, len(lines)))
     standing = 0
     losses: list[tuple[str, int]] = []
@@ -399,7 +401,9 @@ def tidy_heph(apply: bool) -> int:
     # The clock reads behind the file: no telling whether it is being written.
     if st.st_mtime > NOW:
         print(
-            "heph: refused: HEPH.md's time is later than the clock; run it again later"
+            f"heph: refused: HEPH.md's time ({dt.datetime.fromtimestamp(st.st_mtime):%Y-%m-%d %H:%M}) "
+            f"is later than the clock ({now:%Y-%m-%d %H:%M}); if the clock is right, "
+            "`touch` HEPH.md and run it again"
         )
         return 1
     if NOW - st.st_mtime < WRITE_QUIET_S:

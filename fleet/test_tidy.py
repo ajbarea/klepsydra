@@ -162,7 +162,7 @@ class Tidy(unittest.TestCase):
         age(p, written)
         return p
 
-    def test_heph_keeps_the_head_start_here_and_the_last_48_hours(self):
+    def test_heph_keeps_the_head_start_here_and_its_last_lines(self):
         p = self.heph()
         before = p.stat().st_mtime_ns
         r = self.tidy("--apply", "heph")
@@ -632,6 +632,32 @@ class ReviewRound1(unittest.TestCase):
             "".join(kept), "# H\n## START HERE\n- now\n## 2026-11-01 log\n- b\n- c\n"
         )
 
+    def test_the_last_lines_stay_even_above_start_here(self):
+        text = "# H\n## 2026-11-20 09:00 note above\n- AJ: newest order\n## START HERE\n- now\n"
+        kept, _ = self.plan(text, keep_last=600)
+        self.assertEqual("".join(kept), text)
+
+    def test_an_undated_section_is_read_from_its_heading_alone(self):
+        """Only a ## heading opens or ends a kept-whole section, by its text, never a clock."""
+        mod = load_tidy(self.state, self.brief)
+        text = (
+            "# H\n## START HERE\n- now\n## Rules\n- r1\n### 11-15 additions\n- r2\n"
+            "## Limits: at most 10-12 PRs\n- l1\n## Typo 2026-02-30 notes\n- t1\n## 2026-11-19 log\n- x\n"
+        )
+        for when in ("2026-11-20 12:00", "2027-11-01 12:00"):
+            now = dt.datetime.strptime(when, "%Y-%m-%d %H:%M")
+            kept, _ = mod.plan_heph(text, now, 1)
+            got = "".join(kept)
+            self.assertIn("- r1\n### 11-15 additions\n- r2\n", got, when)
+            self.assertNotIn("- l1\n", got, when)  # a date-shaped heading: by position
+            self.assertNotIn("- t1\n", got, when)  # even one that is no real date
+
+    def test_an_empty_heading_just_below_the_cut_stays(self):
+        text = "# H\n## START HERE\n- now\n## 2026-11-17 old\n- 09:00 x\n## 2026-11-20 just opened\n"
+        kept, _ = self.plan(text, keep_last=1)
+        self.assertIn("## 2026-11-20 just opened\n", kept)
+        self.assertNotIn("- 09:00 x\n", kept)
+
     def test_no_clock_can_drop_the_newest_line(self):
         """Heph's review r3: position alone decides. Whatever FLEET_NOW reads, the last lines
         stay and only lines with that many newer ones below them go."""
@@ -645,7 +671,8 @@ class ReviewRound1(unittest.TestCase):
                 r = self.tidy("--apply", "heph", now=now, FLEET_HEPH_KEEP="2")
                 self.assertIn("STOP merging #601", p.read_text())
                 if now < NOW:  # the clock behind the file's time: refused, nothing lost
-                    self.assertIn("HEPH.md's time is later than the clock", r.stdout)
+                    self.assertIn("is later than the clock (2025-", r.stdout)
+                    self.assertIn("`touch` HEPH.md and run it again", r.stdout)
                     continue
                 self.assertEqual(r.returncode, 0, r.stdout)
                 self.assertIn("07:30 Heph", p.read_text())
