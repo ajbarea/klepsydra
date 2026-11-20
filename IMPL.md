@@ -1,41 +1,59 @@
-# IMPL: klepsydra#492, perf class (a): one process per batch in the fleet's shell loops
+# IMPL: klepsydra#423, the heavy lock as a pool sized from the machine it runs on
 
-Branch perf/shell-forks (worktree .claude/worktrees/perf-shell-forks), cut `--no-track` from origin/main 958dbb2.
-Push only: `git push -u origin perf/shell-forks:perf/shell-forks`. Never push to main.
-Role (Athena 11-19): perf-k measures and specifies; agy workers implement slices from the specs; perf-k
-verifies each PR against before.md. perf-k codes a slice only when it is too subtle for Flash.
+Branch perf/heavylock (worktree .claude/worktrees/perf-heavylock, from origin/main). No PR yet.
+Push only: `git push -u origin perf/heavylock:perf/heavylock`. Never push to main. Athena reviews and merges.
+Spec: the issue body plus AJ's 11-20 comment (size from the enclosing cgroup's memory.max/cpu.max, the
+affinity CPUs, PSI admission, per-target weights from memory.peak; no constant tuned to this PC).
 
-## Slices (specs in ~/.local/state/fleet-orchestrator/briefs-free/perf-shell-forks-N-*.md)
-1. sessions: one jq for every session file (hook's fleet_rows block shared into lib.sh). agy, first.
-2. panes: live_panes_load once + pane_live. agy, after 1.
-3. lib-load: lib.sh load 16-19 -> 1 fork, flog +8 -> +5, hook mkdir. agy, after 1.
-4. screen parse (THIS BRANCH, perf-k): one awk per capture; armed_at; stopped_at via printf.
-5. paths: basename/dirname -> parameter expansion + lint. agy, after 1 and 3.
+## Facts found (11-20, perf-k)
+- `fleet/heavy.sh` (80 lines) is one global flock on /tmp/fleet-heavy.lock, with holder detection, the
+  caller-holds refusal, the process-group timeout kill and signal forwarding. Tests: fleet/test_heavy_lock.sh,
+  doctor's holder check (doctor.sh:546).
+- Nearly every heavy run bypasses heavy.sh: `fleet/brief-tail.md` tells agents to run raw
+  `flock -o /tmp/fleet-heavy.lock CMD`; headless-rules.md says `-w 420`. So the pool must treat
+  /tmp/fleet-heavy.lock as slot 0 (raw callers keep working, serialised among themselves), and the brief
+  must move to the pool command, or the pool never fills.
+- lib.sh already walks the cgroup chain for pids.max (`fleet_tasks_max`), has `to_mib`, `mem_total_mib`,
+  `cgroup_kept_mib`, `proc_cgroup`; but lib.sh forks at source time (FLEET_HEPH_ACCOUNTS), so heavy.sh must
+  not source it. Put the probe in a small builtin-only file (`fleet/capacity.sh`) that heavy.sh, doctor and
+  lib.sh all source (DRY: move the chain walk there, fleet_tasks_max uses it).
+- Constants AJ named: MEM_MAX=5G, MEM_SWAP=1G (launch.sh), FLEET_MIN_AVAIL_MB=3000 (delegate.sh:534),
+  FLEET_SLICE_BASE_MB=847 (lib.sh:821, measured once on this PC). Deriving those is a second PR, same probe.
 
-## Done
-- Baseline 06df2c2: docs/perf/2026-11-19-shell-forks/before.md, harness scripts/perf/forks/.
-- Slice 4 7662892: resume pass 772 -> 472, watch tick (3 panes) 152 -> 39, doctor 1645 -> 1479.
-  Differential test 22227 checks (368 screens x gawk+mawk, both orders) + stopped_at DST; Opus review
-  round 1: no divergence; should-fix (failed parse cached, cache transitions untested, 4 helpers
-  missing) fixed. Mutations: 7 of 9 killed and confirmed, keep-failed + no-idle-order rerunning.
-- Specs 1-3, 5 written, SOTA guard policy folded in (gate on counts, wall time reported only).
-- Reported to Athena 16:42 (fleet send).
+## Design (research: sources at the end)
+1. Probe, builtins only, once per heavy.sh call: own cgroup from /proc/self/cgroup; walk every ancestor to
+   the root and take the tightest memory.max (limit) and the least `memory.max - memory.current` (room); at
+   the root, MemTotal / MemAvailable. CPUs = min(Cpus_allowed_list count, ceil(quota/period) of every
+   cpu.max on the chain). PSI from the tightest level's memory.pressure / cpu.pressure, else /proc/pressure.
+2. Slots: lock files slot 0 = /tmp/fleet-heavy.lock, slot i = /tmp/fleet-heavy.lock.i. A gate lock
+   (/tmp/fleet-heavy.lock.gate) queues waiters in order; the gate holder takes the first free slot whose
+   admission passes, starts the run, releases the gate. Admission: room >= weight(target) + margin, and
+   memory and CPU PSI some avg10 under a ratio threshold. No slot count constant: slots are bounded by
+   floor(limit / smallest known weight) and CPUs.
+3. Weight: each run in its own transient scope under fleet.slice (`systemd-run --user --scope
+   --slice=fleet-heavy.slice`, still under the fleet cap) so its memory.peak is its own; record
+   "target peak_mb waited_s ran_s rc" per run in $FLEET_STATE/heavy.log (target = the command's words up to
+   the first path). Weight = max of the last N peaks of that target; unknown target = the largest known.
+   No systemd (Slurm nodes): run in place, weight from history only.
+4. Keep every existing guarantee (issue body list) and the doctor holder check, extended to N slots.
+5. Brief: `fleet/brief-tail.md` and headless-rules.md move to the pool command (`fleet heavy CMD`).
 
 ## Next
-1. #500: round 2 (fresh Opus) CLEAN; its nits (armed_at takes its own screen, harness hook rows run with the read-only
-   tmux shim) committed with this IMPL. test_forks_screen.sh 26069 passed (strace 6.8). Report to Athena; do not merge.
-2. #510 (perf/readers, Closes #501): verify pass CLEAN; should-fix (ctime part of the change marker untested) fixed
-   on that branch. Do not merge.
-3. #497 (agy slice 1): re-verified 11-20 01:50 on 96777d2, both should-fix fixed (PR comment). #497 and #500 conflict
-   (test-forks target, CI step, lib.sh): second to merge rebases.
-4. Slices 2, 3, 5 (specs in briefs-free) start after #497 merges; agy implements unless Athena hands them to perf-k.
-5. Class c (frontend P1-P3, P12, A1) after the gauge header PR (feat/gauge-header-421) merges.
-- Checked and left: statusLine 6 processes / 2 jq per 30 s refresh per session (fixture run, strace).
-- Lesson: while a PR's CI runs, commit IMPL locally and push it with the next code change (a lone IMPL push cancels the run).
+1. ✅ Before data (11-20, 1 h, live fleet, `sample.sh` -> before.csv, `summary.py`): 333 samples; lock held
+   78%; a waiter present 38%; in all 127 waiting samples room (min of slice headroom, MemAvailable) was
+   >= 2,048 MiB (median 2,878) and memory PSI some10 was 0.00; cpu PSI some10 median 2.79, max 18.84.
+   So a second slot would have been admitted every time someone waited.
+2. Web-search the PSI admission threshold (systemd-oomd defaults, Meta's oomd/senpai guidance) and the
+   systemd-run --scope cost; settle thresholds from before.csv, with citations.
+3. Open the PR (label performance, assignee ajbarea, Closes #423) when the first code lands.
+4. Guards: fake cgroup tree (8 GB node, 64 GB node, Slurm-style 4 GB memory.max inside a 512 GB node),
+   slot counts each gives; a mutation reading /proc/meminfo instead fails the Slurm case; fork budget:
+   the probe starts no process (strace, fleet/test_forks_*.sh pattern, strace 6.8 now installed).
+5. After data: same sampler with the pool live.
 
-## Verify
-- `bash fleet/test_forks_screen.sh` (STRACE=, mawk on PATH; ~2.5 min); `make test-forks`. strace here: `apt-get download strace && dpkg -x strace_*.deb root`, then STRACE=root/usr/bin/strace.
-- BEFORE/AFTER: detached worktree at origin/main + `SANDBOX_SEED=<copy> bash scripts/perf/forks/run.sh OUT %59 %60 %63`
-  for each checkout, under `flock -o /tmp/fleet-heavy.lock`.
-- strace/hyperfine/mawk without root: `apt-get download X && dpkg -x X_*.deb root`.
-- Never pkill -f a pattern that appears in your own command line (it kills your shell: exit 144).
+## Sources
+- Kernel PSI (per-cgroup pressure files, triggers): https://docs.kernel.org/accounting/psi.html
+- systemd PRESSURE (MemoryPressureWatch): https://systemd.io/PRESSURE
+- Nested cgroup limits must be walked up the chain (JVM read only one level): https://bugs.openjdk.org/browse/JDK-8322420
+- cgroup v2 interface files: https://docs.kernel.org/admin-guide/cgroup-v2.html
+- GNU make job slots (token pool): https://www.gnu.org/software/make/manual/html_node/Job-Slots.html
