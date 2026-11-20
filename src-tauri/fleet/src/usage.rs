@@ -1,11 +1,13 @@
 //! The statusLine hook's readings, `accounts/<account>/<session>.json`, as
 //! the gauge reads them (`read_usage`) and the phone wall serves them.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde_json::{Map, Value};
 
-use crate::bounded::read_text;
+use crate::bounded::read_text_stamped;
+use crate::memo::{list, Kind, Memo, Stamp};
 
 /// The most a reading file may hold: one is under 1 KiB.
 pub const MAX_BYTES: u64 = 64 * 1024;
@@ -21,67 +23,108 @@ fn account_name(name: &str) -> bool {
         && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-/// The entries of `dir` that `keep` admits by name and type (never following
-/// a symlink), newest first, at most `max`.
+/// The entries of `dir` that `keep` admits by name and kind (never following
+/// a symlink), newest first, at most `max`, each with its stamp when it is a
+/// regular file.
 fn newest(
     dir: &Path,
     max: usize,
-    keep: impl Fn(&str, &std::fs::FileType) -> bool,
-) -> Vec<std::path::PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    keep: impl Fn(&str, Kind) -> bool,
+) -> Vec<(PathBuf, Option<Stamp>)> {
+    let Ok(entries) = list(dir) else {
         return Vec::new();
     };
-    let mut found: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
-        .flatten()
+    let mut found: Vec<(SystemTime, PathBuf, Option<Stamp>)> = entries
+        .into_iter()
         .filter_map(|e| {
-            let kind = e.file_type().ok()?;
-            let name = e.file_name();
-            keep(name.to_str()?, &kind).then_some(())?;
-            let at = e.metadata().and_then(|m| m.modified()).ok()?;
-            Some((at, e.path()))
+            keep(e.name.to_str()?, e.kind).then_some(())?;
+            Some((e.modified?, dir.join(&e.name), e.stamp))
         })
         .collect();
-    found.sort_by(|a, b| b.cmp(a));
-    found.into_iter().take(max).map(|(_, p)| p).collect()
+    found.sort_by(|a, b| (b.0, &b.1).cmp(&(a.0, &a.1)));
+    found
+        .into_iter()
+        .take(max)
+        .map(|(_, p, stamp)| (p, stamp))
+        .collect()
 }
 
-/// Every reading under each of `dirs`' `accounts`, one per Claude Code
-/// session, as the hook leaves them: an account folder holding `.json`
-/// files. A symlink, FIFO or other non-regular file, a file over
-/// `MAX_BYTES`, or one that is not JSON is skipped, as is a stale
-/// pre-per-session file in place of an account's folder. Sessions disagree
-/// routinely; reconciling them is the frontend's job.
+/// Every reading under each of `dirs`' `accounts`, read afresh. Tests only:
+/// the app's pollers share one `Reader`, so no caller re-reads every file.
+#[cfg(test)]
 pub fn read<P: AsRef<Path>>(dirs: impl IntoIterator<Item = P>) -> Vec<Value> {
-    read_capped(dirs, MAX_BYTES, MAX_ACCOUNTS, MAX_SESSIONS)
+    Reader::default().read(dirs)
 }
 
+/// Reads the readings tick after tick, opening only the files written since
+/// the last read (`memo`).
+#[derive(Debug, Default)]
+pub struct Reader {
+    memo: Memo<Value>,
+}
+
+impl Reader {
+    /// Files opened since this reader was made.
+    pub fn reads(&self) -> u64 {
+        self.memo.reads()
+    }
+
+    /// Every reading under each of `dirs`' `accounts`, one per Claude Code
+    /// session, as the hook leaves them: an account folder holding `.json`
+    /// files. A symlink, FIFO or other non-regular file, a file over
+    /// `MAX_BYTES`, or one that is not JSON is skipped, as is a stale
+    /// pre-per-session file in place of an account's folder. Sessions
+    /// disagree routinely; reconciling them is the frontend's job.
+    pub fn read<P: AsRef<Path>>(&mut self, dirs: impl IntoIterator<Item = P>) -> Vec<Value> {
+        self.read_capped(dirs, MAX_BYTES, MAX_ACCOUNTS, MAX_SESSIONS)
+    }
+
+    fn read_capped<P: AsRef<Path>>(
+        &mut self,
+        dirs: impl IntoIterator<Item = P>,
+        max_bytes: u64,
+        max_accounts: usize,
+        max_sessions: usize,
+    ) -> Vec<Value> {
+        let now = crate::memo::now();
+        let mut pass = self.memo.pass();
+        let mut out = Vec::new();
+        for dir in dirs {
+            let accounts = dir.as_ref().join("accounts");
+            if !std::fs::symlink_metadata(&accounts).is_ok_and(|m| m.is_dir()) {
+                continue;
+            }
+            for (account, _) in newest(&accounts, max_accounts, |name, kind| {
+                kind == Kind::Dir && account_name(name)
+            }) {
+                for (file, listed) in
+                    newest(&account, max_sessions, |name, _| name.ends_with(".json"))
+                {
+                    // read_text refuses a symlink, a FIFO or any other non-file;
+                    // a file that is not JSON is read again next time, as before.
+                    let value = pass.get(&file, listed, now, || {
+                        let (text, held) = read_text_stamped(&file, max_bytes).map_err(|_| ())?;
+                        let value = serde_json::from_str::<Value>(&text).map_err(|_| ())?;
+                        Ok::<_, ()>((value, held))
+                    });
+                    if let Ok(value) = value {
+                        out.push(value);
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
 fn read_capped<P: AsRef<Path>>(
     dirs: impl IntoIterator<Item = P>,
     max_bytes: u64,
     max_accounts: usize,
     max_sessions: usize,
 ) -> Vec<Value> {
-    let mut out = Vec::new();
-    for dir in dirs {
-        let accounts = dir.as_ref().join("accounts");
-        if !std::fs::symlink_metadata(&accounts).is_ok_and(|m| m.is_dir()) {
-            continue;
-        }
-        for account in newest(&accounts, max_accounts, |name, kind| {
-            kind.is_dir() && account_name(name)
-        }) {
-            // read_text refuses a symlink, a FIFO or any other non-file.
-            for file in newest(&account, max_sessions, |name, _| name.ends_with(".json")) {
-                let Ok(text) = read_text(&file, max_bytes) else {
-                    continue;
-                };
-                if let Ok(value) = serde_json::from_str::<Value>(&text) {
-                    out.push(value);
-                }
-            }
-        }
-    }
-    out
+    Reader::default().read_capped(dirs, max_bytes, max_accounts, max_sessions)
 }
 
 type Object = Map<String, Value>;
@@ -548,6 +591,67 @@ mod tests {
             .unwrap()
             .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
             .unwrap();
+    }
+
+    #[test]
+    fn a_read_of_unchanged_readings_opens_no_file() {
+        let d = Scratch::new("usage-still");
+        let file = |n: &str| {
+            d.0.join("accounts")
+                .join(PERSONAL)
+                .join(format!("{n}.json"))
+        };
+        for (i, n) in ["a", "b", "c"].into_iter().enumerate() {
+            ok(&d.0, PERSONAL, n);
+            touch(&file(n), 1_700_000_000 + i as u64);
+        }
+        let mut r = Reader::default();
+        let first = r.read([&d.0]);
+        assert_eq!(
+            (sessions(&first), r.reads()),
+            (vec!["a".into(), "b".into(), "c".into()], 3)
+        );
+        assert_eq!(
+            r.read([&d.0]),
+            first,
+            "the same readings, in the same order"
+        );
+        assert_eq!(r.reads(), 3, "an unchanged reading was opened again");
+        // One reading rewritten: that file alone is opened, and its new value read.
+        put(
+            &d.0,
+            PERSONAL,
+            "b.json",
+            &reading(PERSONAL, "Personal", "b", 77).to_string(),
+        );
+        touch(&file("b"), 1_700_000_100);
+        let third = r.read([&d.0]);
+        assert_eq!(r.reads(), 4);
+        assert!(third
+            .iter()
+            .any(|v| v["session"] == "b" && v.to_string().contains("77")));
+        // A reading that is not JSON is read again each time, never kept.
+        put(&d.0, PERSONAL, "bad.json", "{");
+        touch(&file("bad"), 1_700_000_000);
+        r.read([&d.0]);
+        r.read([&d.0]);
+        assert_eq!(r.reads(), 6);
+    }
+
+    #[test]
+    fn one_folder_named_twice_is_read_once() {
+        let d = Scratch::new("usage-twice");
+        ok(&d.0, PERSONAL, "a");
+        touch(
+            &d.0.join("accounts").join(PERSONAL).join("a.json"),
+            1_700_000_000,
+        );
+        let mut r = Reader::default();
+        let first = r.read([&d.0, &d.0]);
+        assert_eq!(sessions(&first), vec!["a".to_string(), "a".to_string()]);
+        r.read([&d.0, &d.0]);
+        r.read([&d.0, &d.0]);
+        assert_eq!(r.reads(), 1, "a second name for the folder read it again");
     }
 
     #[test]
