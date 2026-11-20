@@ -56,4 +56,5 @@ Do not merge: Heph reviews and merges.
 1. ✅ PR #496 open (Fixes #483). 11-19 evening: CI went red on shellcheck SC2030/SC2031 after the main merge
    (the scroll replay loop's `b` shadowed the pane's `b`); renamed to `fn` in 3de0833, both replay checks
    re-run standalone (5 same, 10 differs).
-2. 📋 CI green, then report to Heph via `fleet send` and `fleet done`. Do not merge.
+2. ✅ CI green on dd0e926; reported to Heph 11-19 19:43. Do not merge.
+3. 📋 `fleet done` once #502 (klepsydra CI) and techne#386 are through (their IMPL.md files on ci/best-practice).
