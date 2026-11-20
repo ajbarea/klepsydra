@@ -42,6 +42,10 @@ thread_local! {
 /// setting the times moves it, and only a backup tool sets it back. The id
 /// tells a file replaced by rename. Unix: `st_ctime` and the inode, as git's
 /// index keeps them. Windows: NTFS `ChangeTime` and the 64-bit file id.
+/// NTFS copies a file's length and times into its directory entry only when
+/// the file's last handle closes, so a file written in place through a handle
+/// still open lists its old stamp until then; every klepsydra writer writes a
+/// temp file and renames it, which lists the new stamp at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stamp {
     pub len: u64,
@@ -591,9 +595,8 @@ mod tests {
             .iter()
             .map(|e| (e.name.to_str().unwrap(), e.kind))
             .collect();
-        let mut want = vec![("d", Kind::Dir), ("f", Kind::File)];
-        #[cfg(unix)]
-        want.push(("l", Kind::Other));
+        let want = [("d", Kind::Dir), ("f", Kind::File), ("l", Kind::Other)];
+        let want = &want[..if cfg!(unix) { 3 } else { 2 }];
         assert_eq!(names, want);
         let f = l.iter().find(|e| e.name == "f").unwrap();
         assert_eq!(f.stamp.map(|s| s.len), Some(3));
@@ -606,5 +609,26 @@ mod tests {
         assert_eq!(held, f.stamp);
         #[cfg(unix)]
         assert_eq!(Stamp::of_file(&std::fs::File::open(&dir.0).unwrap()), None);
+    }
+
+    #[test]
+    fn a_file_written_in_place_lists_its_new_stamp_once_its_writer_closes() {
+        use std::io::Write;
+        let dir = crate::scan::tests::Scratch::new("memo-held");
+        dir.write("f", "abc");
+        let stamp_of = |d: &Path| list(d).unwrap().into_iter().find(|e| e.name == "f")?.stamp;
+        let before = stamp_of(&dir.0);
+        let mut w = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.0.join("f"))
+            .unwrap();
+        w.write_all(b"def").unwrap();
+        w.sync_all().unwrap();
+        drop(w);
+        let after = stamp_of(&dir.0);
+        assert_ne!(after, before);
+        assert_eq!(after.map(|s| s.len), Some(6));
+        let held = Stamp::of_file(&std::fs::File::open(dir.0.join("f")).unwrap());
+        assert_eq!(held, after);
     }
 }
