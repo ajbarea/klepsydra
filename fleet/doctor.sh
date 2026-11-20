@@ -552,6 +552,7 @@ elif ! cl=$(jq -r --argjson now "$now" '
       (if n("queue_old") > 0 then "\(n("queue_old")) Done lines in queue.md predate this week: harvest lessons from fleet tidy queue (it lists them), then --apply" else empty end),
       (if .heph_due then "HEPH.md has \(n("heph_drop")) lines a tidy would drop: the orchestrator runs fleet tidy heph (it lists them), then --apply" else empty end),
       (if .heph_refused then "HEPH.md cannot be tidied: \(.heph_refused)" else empty end),
+      (if .queue_refused then "queue.md cannot be tidied: \(.queue_refused)" else empty end),
       (if (n("briefs_stale") + n("archive_stale")) > 0 then "\(n("briefs_stale")) stale briefs and \(n("archive_stale")) old archive entries: fleet tidy briefs archive lists them all, then --apply" else empty end)
     ] | join("; ")' "$cleanup_report" 2>/dev/null); then
   report warn "cleanup" "could not read $(tilde "$cleanup_report"): fleet tidy --report rewrites it"

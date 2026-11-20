@@ -241,9 +241,13 @@ class Tidy(unittest.TestCase):
         real = self.tmp / "real.md"
         real.write_text(HEPH)
         (self.state / "HEPH.md").symlink_to(real)
-        r = self.tidy("--apply", "heph")
+        r = self.tidy(
+            "--apply", "heph"
+        )  # its dry run first, so the list gate is passed
         self.assertEqual(r.returncode, 1)
+        self.assertIn("heph: refused: HEPH.md is not a regular file", r.stdout)
         self.assertEqual(real.read_text(), HEPH)
+        self.assertTrue((self.state / "HEPH.md").is_symlink())
 
     def test_nothing_happens_outside_the_state_folder(self):
         (self.state / "panes.tsv").unlink()
@@ -567,12 +571,13 @@ class ReviewRound1(unittest.TestCase):
             ValueError, "START HERE block just above the kept lines"
         ):
             mod.plan_heph(doc(20), 5)
-        # doc(g) puts the later START HERE g + 3 lines above the cut: the margin's far edge.
+        # doc(g)'s later block (heading, one line) ends g + 1 lines above the cut: the
+        # margin's far edge is where that end first reaches into the START_MARGIN lines.
         with self.assertRaisesRegex(
             ValueError, "START HERE block just above the kept lines"
         ):
-            mod.plan_heph(doc(mod.START_MARGIN - 3), 5)
-        mod.plan_heph(doc(mod.START_MARGIN - 2), 5)  # one line further up: no refusal
+            mod.plan_heph(doc(mod.START_MARGIN - 2), 5)
+        mod.plan_heph(doc(mod.START_MARGIN - 1), 5)  # one line further up: no refusal
         kept, _ = mod.plan_heph(doc(20), 40)  # among the kept lines: it stays
         self.assertIn("- later\n", kept)
         kept, _ = mod.plan_heph(doc(20), 28)  # it is the first kept line: no refusal
@@ -715,6 +720,16 @@ class ReviewRound1(unittest.TestCase):
                 self.assertEqual(got["heph_drop"], extra, got)
                 self.assertIs(got["heph_due"], due, got)
 
+    def test_the_report_names_a_margin_refusal_only_when_a_batch_is_due(self):
+        head = "# H\n## START HERE (11-20)\n- top\n## START HERE (11-10)\n- later\n## 2026-11-01 log\n"
+        for extra, due in ((3, False), (30, True)):
+            with self.subTest(extra=extra):
+                self.heph(head + "".join(f"- l{k}\n" for k in range(extra + 20)))
+                self.tidy("--report", str(self.tmp / "r.json"), FLEET_HEPH_KEEP="20")
+                got = json.loads((self.tmp / "r.json").read_text())
+                self.assertIs(got["heph_due"], due, got)
+                self.assertEqual("heph_refused" in got, due, got)
+
     def test_the_report_names_why_a_tidy_would_refuse(self):
         self.heph("# H\n## Notes\n- x\n")
         self.tidy("--report", str(self.tmp / "r.json"))
@@ -726,6 +741,43 @@ class ReviewRound1(unittest.TestCase):
         kept, _ = self.plan(text, keep_last=1)
         self.assertIn("## 2026-11-20 just opened\n", kept)
         self.assertNotIn("- 09:00 x\n", kept)
+
+    def test_start_here_is_found_in_any_case(self):
+        """Heph's review r5, S1: the words count in any case, at the top and lower down."""
+        for top in ("## Start Here", "## start here", "## START HERE"):
+            with self.subTest(top=top):
+                kept, _ = self.plan(
+                    f"# H\n{top}\n- now\n## 2026-11-01 log\n- a\n- b\n", 1
+                )
+                self.assertIn("- now\n", kept)
+
+    def test_a_dated_start_here_block_reaching_the_margin_refuses(self):
+        """Heph's review r5, N1: the whole block counts, not only its heading."""
+        mod = load_tidy(self.state, self.brief)
+        body = "".join(f"- old {k}\n" for k in range(200))
+        text = (
+            "# H\n## START HERE (11-20)\n- top\n## START HERE (11-10)\n"
+            + body
+            + "".join(f"- new {k}\n" for k in range(50))
+        )
+        cut = len(text.split("\n")) - 1 - 120  # keep 120: the block straddles the cut
+        self.assertLess(
+            3, cut - mod.START_MARGIN
+        )  # its heading is far above the margin
+        with self.assertRaisesRegex(ValueError, "line 4 is a START HERE block"):
+            mod.plan_heph(text, 120)
+
+    def test_heph_with_bytes_that_are_no_utf8_plans(self):
+        p = self.state / "HEPH.md"
+        p.write_bytes(HEPH.encode() + b"- a stray \xff\xfe byte\n")
+        age(p, 3600)
+        r = self.tidy("heph")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("would drop", r.stdout)
+        self.tidy("--report", str(self.tmp / "r.json"))
+        got = json.loads((self.tmp / "r.json").read_text())
+        self.assertIsNone(got.get("error"), got)
+        self.assertGreater(got["heph_drop"], 0, got)
 
     def test_no_clock_can_drop_the_newest_line(self):
         """Heph's review r3: position alone decides. Whatever FLEET_NOW reads, the last lines
@@ -1060,6 +1112,7 @@ class ReviewRound1(unittest.TestCase):
         got = json.loads((self.tmp / "r.json").read_text())
         self.assertEqual(got.get("queue_old"), 0, got)
         self.assertIsNone(got.get("error"), got)
+        self.assertIn("holds a line break other than", got.get("queue_refused", ""))
 
     def test_an_ignored_untracked_path_is_never_removed(self):
         mod = load_tidy(self.state, self.brief)

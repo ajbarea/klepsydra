@@ -1223,12 +1223,12 @@ printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"
 check "#511: a clean, fresh report is ok" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^ok   cleanup: nothing finished or expired is kept outside git and GitHub')" "1"
 printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":160000,"heph_drop":5,"heph_due":false,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$cr"
 check "#511: a few lines past the cut is no tidy due yet" "$(FLEET_CLEANUP_REPORT="$cr" doctor | grep -c '^ok   cleanup: nothing finished or expired')" "1"
-printf '{"ts":%s,"shots_rc":3,"shots_said":"gh\\ndown","techne":null,"unowned":["review/"],"stale":["review/a.md: expired 2026-11-01 (owner heph)"],"queue_old":2,"done_files":4,"heph_bytes":300000,"heph_drop":12,"heph_due":true,"heph_refused":"line 9 is a START HERE block just above the kept lines","briefs_stale":5,"archive_stale":1}\n' "$(( $(date +%s) - 86400 ))" >"$cr"
+printf '{"ts":%s,"shots_rc":3,"shots_said":"gh\\ndown","techne":null,"unowned":["review/"],"stale":["review/a.md: expired 2026-11-01 (owner heph)"],"queue_old":2,"done_files":4,"heph_bytes":300000,"heph_drop":12,"heph_due":true,"heph_refused":"line 9 is a START HERE block just above the kept lines","queue_refused":"queue.md holds a line break other than","briefs_stale":5,"archive_stale":1}\n' "$(( $(date +%s) - 86400 ))" >"$cr"
 got=$(FLEET_CLEANUP_REPORT="$cr" doctor | grep '^warn cleanup')
 for want in "the cleanup timer last ran 24 h ago" "fleet shots --apply failed (gh down)" "techne cleanup.py not found" \
   "done/ holds 4 retired week files: harvest lessons from fleet tidy done (it lists them), then --apply" "fleet tidy expired lists them and --apply removes them" \
   "1 briefing paths with no owner + expires (review/)" "2 Done lines in queue.md predate this week" \
-  "HEPH.md has 12 lines a tidy would drop: the orchestrator runs fleet tidy heph (it lists them), then --apply" "HEPH.md cannot be tidied: line 9 is a START HERE block" "5 stale briefs and 1 old archive entries: fleet tidy briefs archive lists them all, then --apply"; do
+  "HEPH.md has 12 lines a tidy would drop: the orchestrator runs fleet tidy heph (it lists them), then --apply" "HEPH.md cannot be tidied: line 9 is a START HERE block" "queue.md cannot be tidied: queue.md holds a line break" "5 stale briefs and 1 old archive entries: fleet tidy briefs archive lists them all, then --apply"; do
   check "#511: a report with work left names: $want" "$(grep -cF -- "$want" <<<"$got")" "1"
 done
 printf 'not json' >"$cr"

@@ -14,8 +14,8 @@ Finished work is recorded once, in merged PRs, closed issues and git history, so
   heph     HEPH.md keeps its head, its START HERE block, undated sections, standing rules and
            its last HEPH_KEEP lines (FLEET_HEPH_KEEP, 600 by default): position alone decides,
            so a line goes only once that many newer lines sit below it, whatever any clock
-           says. A later START HERE within START_MARGIN lines above the cut refuses the tidy. What goes is copied
-           to archive/ for KEEP_DAYS first (HEPH.md is in no repo). Refused while another
+           says. A dated later START HERE block reaching within START_MARGIN lines of the cut
+           refuses the tidy. What goes is copied to archive/ for KEEP_DAYS first (HEPH.md is in no repo). Refused while another
            process has it open or wrote it in the last WRITE_QUIET_S seconds. Its time is kept,
            since `fleet recover` reads AJ's messages since HEPH.md was last written. Writers
            take no lock, so a write between the last check and the swap is lost, and the kept
@@ -173,6 +173,7 @@ SHORT_DATE = re.compile(r"(?<![\d-])(\d\d)-(\d\d)(?![\d-])")
 WINDOW_DAYS = 330  # a MM-DD further back than this is a future event named, not a date
 
 
+# The queue alone reads dates (its Done lines, against this week's Monday); HEPH.md never does.
 def month_day(month: int, day: int, now: dt.datetime) -> dt.date | None:
     """MM-DD as the latest date at or before tomorrow, or None when that is over WINDOW_DAYS
     old: "- 11-25 RIT resets", written on 11-20, names a future day, not last year's."""
@@ -218,7 +219,9 @@ HEPH_KEEP = keep_lines(os.environ.get("FLEET_HEPH_KEEP"))
 START_MARGIN = 100  # a later START HERE this close above the cut refuses the tidy
 
 
-def plan_heph(text: str, keep_last: int = 0) -> tuple[list[str], dict]:
+def plan_heph(
+    text: str, keep_last: int = 0, guard: bool = True
+) -> tuple[list[str], dict]:
     """The lines HEPH.md keeps, and a summary of what goes. Position alone decides, never a
     clock or a date: the last KEEP_LAST lines (HEPH_KEEP) stay, so a line goes only once that
     many newer lines sit below it; above that cut the head, the first START HERE block,
@@ -236,9 +239,11 @@ def plan_heph(text: str, keep_last: int = 0) -> tuple[list[str], dict]:
     s0 = starts[0]
     s1 = next((i for i in heads if i > s0), len(lines))
     cut = max(0, len(lines) - keep_last)  # every line from here down stays
-    for s in starts[1:]:
-        # An undated START HERE is kept whole anyway, so only a dated one can be lost.
-        if cut - START_MARGIN <= s < cut and not undated(lines[s]):
+    for s in starts[1:] if guard else []:
+        # A dated block (an undated one is kept whole anyway) that reaches into the margin
+        # above the cut, by any of its lines, may be a recent handoff: refuse.
+        end = next((h for h in heads if h > s), len(lines))
+        if s < cut and end > cut - START_MARGIN and not undated(lines[s]):
             raise ValueError(
                 f"line {s + 1} is a START HERE block just above the kept lines: merge it into "
                 "the top one, or keep more lines (FLEET_HEPH_KEEP)"
@@ -275,8 +280,8 @@ def plan_heph(text: str, keep_last: int = 0) -> tuple[list[str], dict]:
     return kept, {
         "lines": len(lines),
         "kept": len(kept),
-        "bytes": len(text.encode()),
-        "kept_bytes": len("".join(kept).encode()),
+        "bytes": len(text.encode("utf-8", "surrogateescape")),
+        "kept_bytes": len("".join(kept).encode("utf-8", "surrogateescape")),
         "sections_dropped": [lines[h].strip() for h in heads if h not in keep],
         "losses": losses,
         "dropped_lines": dropped_lines,
@@ -361,8 +366,8 @@ def tidy_heph(apply: bool) -> int:
     if pids:
         print(f"heph: refused: HEPH.md is open in pid {', '.join(map(str, pids))}")
         return 1
-    # What goes is kept for KEEP_DAYS in archive/, which the archive part then expires, so a
-    # misread date is recoverable for a week (HEPH.md is in no repo).
+    # What goes is kept for KEEP_DAYS in archive/, which the archive part then expires, so
+    # anything dropped is recoverable for a week (HEPH.md is in no repo).
     arc = safe_archive(STATE / "archive")
     if arc is None:
         print(
@@ -815,7 +820,7 @@ def plan_queue(
 
 def read_exact(path: Path) -> str:
     """PATH's text with every line ending as written (no \r\n turned into \n)."""
-    with open(path, encoding="utf-8", newline="") as f:
+    with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
         return f.read()
 
 
@@ -1055,8 +1060,11 @@ def report(out: Path) -> int:
                         1
                     ]
                 )
-            except (OSError, ValueError):
+            except OSError:
                 data["queue_old"] = 0
+            except ValueError as exc:
+                data["queue_old"] = 0
+                data["queue_refused"] = str(exc)[:200]
         data["done_files"] = len(done_files()) if data["briefing"] else 0
         try:
             data["heph_bytes"] = (STATE / "HEPH.md").stat().st_size
@@ -1065,14 +1073,22 @@ def report(out: Path) -> int:
         if is_state_folder(STATE):
             heph = STATE / "HEPH.md"
             if heph.is_file() and not heph.is_symlink():
+                text = read_exact(heph)
                 try:
-                    _, s = plan_heph(read_exact(heph))
+                    plan_heph(text)
+                    why = None
+                except ValueError as exc:  # doctor names why a tidy would refuse
+                    why = str(exc)[:200]
+                try:
+                    _, s = plan_heph(text, guard=False)  # what a tidy would drop
                     data["heph_drop"] = s["lines"] - s["kept"]
                     # A tidy is due once a batch of half the kept lines would go, so the
                     # warning does not come back with every line appended after a tidy.
                     data["heph_due"] = data["heph_drop"] >= max(1, HEPH_KEEP // 2)
-                except ValueError as exc:  # doctor names why a tidy would refuse
-                    data["heph_refused"] = str(exc)[:200]
+                    if why and data["heph_due"]:
+                        data["heph_refused"] = why
+                except ValueError:  # no START HERE at all: nothing can be planned
+                    data["heph_refused"] = why
             data["briefs_stale"] = len(stale_briefs())
             data["archive_stale"] = len(stale_archive())
     except Exception as exc:  # the report is written whatever failed, naming it
