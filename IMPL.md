@@ -14,7 +14,7 @@ Do not merge (Athena merges).
   from tables.py (ab.txt, appab.txt).
 
 ## Next
-1. CI green on the last push, then `fleet send` the report to Athena (orchestrator.pane) and update queue.md.
+1. ✅ CI green on fc57a8b; reported to Athena 11-20 15:37 (fleet send, `sent`). Waiting on her round 2. On a finding: fix here, rerun the lints CI runs (ruff 0.17.3 check, npm run lint, node --test src/guards.test.js, cargo fmt/clippy), push.
 2. Then #423 (heavy lock as a slot pool sized from the machine; Heph 11-20, design in the issue's latest comment),
    in its own worktree `perf-heavylock` from origin/main.
 3. Then #515 (context budget: relaunch fresh past a token threshold, live ledger alert, one PR per brief).
