@@ -1,0 +1,7 @@
+{"build":"before","round":1,"pid":24252,"seconds":60,"reads":8032,"other":16818,"bytes":1479832,"cpu_ms":594}
+{"build":"after","round":1,"pid":4944,"seconds":60,"reads":118,"other":1506,"bytes":6112,"cpu_ms":125}
+{"build":"before","round":2,"pid":7352,"seconds":60,"reads":8040,"other":16818,"bytes":1480728,"cpu_ms":500}
+{"build":"after","round":2,"pid":20044,"seconds":60,"reads":118,"other":1506,"bytes":6112,"cpu_ms":328}
+{"build":"before","round":3,"pid":21976,"seconds":60,"reads":8036,"other":16818,"bytes":1480280,"cpu_ms":484}
+{"build":"after","round":3,"pid":13208,"seconds":60,"reads":112,"other":1506,"bytes":5440,"cpu_ms":281}
+{"login_entry_unchanged":true,"window_state_restored":true}

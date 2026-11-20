@@ -1,24 +1,24 @@
 == before run 1
-scan: reads/call=234 other/call=711 bytes/call=100355 median_us=9398 min_us=8841 max_us=12431
-usage: reads/call=426 other/call=593 bytes/call=22511 median_us=8248 min_us=8039 max_us=10938
-reader step: reads/call=234 other/call=768 bytes/call=100355 median_us=10241 min_us=9324 max_us=13157
+scan: reads/call=234 other/call=711 bytes/call=100355 median_us=9157 min_us=8759 max_us=13133
+usage: reads/call=426 other/call=593 bytes/call=22511 median_us=8463 min_us=7968 max_us=11582
+reader step: reads/call=234 other/call=768 bytes/call=100355 median_us=9563 min_us=9147 max_us=11359
 == after run 1
-scan: reads/call=0 other/call=9 bytes/call=0 median_us=630 min_us=570 max_us=825
-usage: reads/call=0 other/call=25 bytes/call=0 median_us=569 min_us=512 max_us=1247
-reader step: reads/call=0 other/call=66 bytes/call=0 median_us=1265 min_us=1205 max_us=1688
+scan: reads/call=0 other/call=4 bytes/call=0 median_us=682 min_us=630 max_us=902
+usage: reads/call=0 other/call=20 bytes/call=0 median_us=732 min_us=604 max_us=1115
+reader step: reads/call=0 other/call=61 bytes/call=0 median_us=1589 min_us=1232 max_us=2604
 == before run 2
-scan: reads/call=234 other/call=711 bytes/call=100355 median_us=10078 min_us=9230 max_us=12918
-usage: reads/call=426 other/call=593 bytes/call=22511 median_us=9664 min_us=8544 max_us=13402
-reader step: reads/call=234 other/call=768 bytes/call=100355 median_us=10586 min_us=9457 max_us=13106
+scan: reads/call=234 other/call=711 bytes/call=100355 median_us=9159 min_us=8897 max_us=14413
+usage: reads/call=426 other/call=593 bytes/call=22511 median_us=8467 min_us=8187 max_us=10333
+reader step: reads/call=234 other/call=768 bytes/call=100355 median_us=9332 min_us=8943 max_us=14038
 == after run 2
-scan: reads/call=0 other/call=9 bytes/call=0 median_us=618 min_us=580 max_us=789
-usage: reads/call=0 other/call=25 bytes/call=0 median_us=564 min_us=517 max_us=642
-reader step: reads/call=0 other/call=66 bytes/call=0 median_us=1292 min_us=1213 max_us=1876
+scan: reads/call=0 other/call=4 bytes/call=0 median_us=669 min_us=618 max_us=874
+usage: reads/call=0 other/call=20 bytes/call=0 median_us=652 min_us=521 max_us=1088
+reader step: reads/call=0 other/call=61 bytes/call=0 median_us=1263 min_us=1224 max_us=1653
 == before run 3
-scan: reads/call=234 other/call=711 bytes/call=100355 median_us=9042 min_us=8761 max_us=10576
-usage: reads/call=426 other/call=593 bytes/call=22511 median_us=8458 min_us=8033 max_us=11350
-reader step: reads/call=234 other/call=768 bytes/call=100355 median_us=9528 min_us=9135 max_us=12849
+scan: reads/call=234 other/call=711 bytes/call=100355 median_us=9178 min_us=8919 max_us=13448
+usage: reads/call=426 other/call=593 bytes/call=22511 median_us=8510 min_us=8219 max_us=12544
+reader step: reads/call=234 other/call=768 bytes/call=100355 median_us=9858 min_us=9541 max_us=12217
 == after run 3
-scan: reads/call=0 other/call=9 bytes/call=0 median_us=677 min_us=600 max_us=1098
-usage: reads/call=0 other/call=25 bytes/call=0 median_us=593 min_us=520 max_us=865
-reader step: reads/call=0 other/call=66 bytes/call=0 median_us=1424 min_us=1270 max_us=1979
+scan: reads/call=0 other/call=4 bytes/call=0 median_us=719 min_us=633 max_us=911
+usage: reads/call=0 other/call=20 bytes/call=0 median_us=557 min_us=528 max_us=933
+reader step: reads/call=0 other/call=61 bytes/call=0 median_us=1351 min_us=1239 max_us=1889
