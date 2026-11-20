@@ -191,9 +191,10 @@ function rustCode(src) {
         else i++;
       } while (depth > 0 && i < src.length);
       out += " ";
-    } else if (c === "r" && /^r#*"/.test(src.slice(i, i + 260)) && !/\w/.test(src[i - 1] ?? "")) {
-      const hashes = src.slice(i + 1).match(/^#*/)[0];
-      const close = src.indexOf(`"${hashes}`, i + hashes.length + 2);
+    } else if (/^[bc]?r#*"/.test(src.slice(i, i + 260)) && !/\w/.test(src[i - 1] ?? "")) {
+      const start = src.indexOf("r", i) + 1; // raw, byte raw (br) or C raw (cr)
+      const hashes = src.slice(start).match(/^#*/)[0];
+      const close = src.indexOf(`"${hashes}`, start + hashes.length + 1);
       out += '""';
       i = close < 0 ? src.length : close + 1 + hashes.length;
     } else if (c === '"') {
@@ -202,7 +203,7 @@ function rustCode(src) {
       out += '""';
       i++;
     } else if (c === "'" && (next === "\\" || src[i + 2] === "'")) {
-      const close = src.indexOf("'", i + 2);
+      const close = src.indexOf("'", next === "\\" ? i + 3 : i + 2);
       out += "' '";
       i = close < 0 ? src.length : close + 1;
     } else {
@@ -234,6 +235,26 @@ function attrsBefore(code, at) {
 /** Whether an attribute can switch its item off on some system: cfg, or cfg_attr naming a cfg. */
 const gates = (attr) => /\bcfg\s*\(/.test(attr);
 
+/** The inner attributes (`#![...]`) that open `code` (from rustCode) and apply to the whole file. */
+function innerAttrs(code) {
+  const attrs = [];
+  let s = code.trimStart();
+  while (s.startsWith("#![")) {
+    let depth = 0;
+    let j = 2;
+    for (; j < s.length; j++) {
+      if (s[j] === "[") depth++;
+      else if (s[j] === "]" && --depth === 0) break;
+    }
+    attrs.push(s.slice(0, j + 1));
+    s = s.slice(j + 1).trimStart();
+  }
+  return attrs;
+}
+
+/** How many blocks are open at index `at` of `code` (from rustCode). */
+const depthAt = (code, at) => [...code.slice(0, at)].reduce((d, ch) => d + (ch === "{") - (ch === "}"), 0);
+
 /**
  * Why `fn name` in `src` is not a command every system builds, or null: its attributes must
  * hold #[tauri::command] and none may gate it.
@@ -242,6 +263,8 @@ function commandProblem(src, name) {
   const code = rustCode(src);
   const m = new RegExp(`(?<!\\w)(?:pub(?:\\s*\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\b`).exec(code);
   if (!m) return `no fn ${name}`;
+  if (innerAttrs(code).some(gates)) return `fn ${name} is cfg-gated (its file is)`;
+  if (depthAt(code, m.index) !== 0) return `fn ${name} is inside a block, which may be gated`;
   const attrs = attrsBefore(code, m.index);
   if (!attrs.some((a) => /^#\[\s*tauri\s*::\s*command\s*[\]\(]/.test(a))) return `fn ${name} is not a #[tauri::command]`;
   if (attrs.some(gates)) return `fn ${name} is cfg-gated`;
@@ -274,8 +297,13 @@ test("the command check catches a missing, unmarked or gated fn, whatever sits b
     '#[cfg(windows)]\n#[doc = "see [x]"]\n#[tauri::command]\nfn hi() {}\n',
     "#[cfg_attr(not(windows), cfg(any()))]\n#[tauri::command]\nfn hi() {}\n",
     "#[cfg(any(\n    windows,\n    target_os = \"macos\",\n))]\n#[tauri::command]\npub async fn hi() {}\n",
+    "//! A Windows-only module.\n#![cfg(windows)]\n#![allow(x)]\n#[tauri::command]\nfn hi() {}\n",
   ])
     assert.match(commandProblem(gated, "hi"), /cfg-gated/, gated);
+  assert.match(commandProblem("#[cfg(windows)]\nmod win32 {\n    #[tauri::command]\n    pub fn hi() {}\n}\n", "hi"), /inside a block/);
+  // Raw strings with a b or c prefix and an escaped quote char are strings, not code.
+  for (const lit of ['br"C:\\"', 'cr#"a"b"#', "'\\''", "['\\'','\"']"])
+    assert.equal(commandProblem(`const S: () = ${lit};\n#[tauri::command]\nfn hi() {}\n`, "hi"), null, lit);
   const main = 'mod a;\n#[cfg(windows)]\nmod ping;\n#[cfg(test)] pub mod t;\n#[cfg(windows)]\n/// Docs.\n#[allow(x)]\nmod w;\n#[doc = "cfg(x)"]\nmod d;\n';
   assert.deepEqual(gatedModules(main), ["ping", "t", "w"]);
 });
