@@ -22,6 +22,11 @@ pub fn saved(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the server is running now.
+pub fn serving(app: &AppHandle) -> bool {
+    app.state::<Phone>().0.lock().is_ok_and(|slot| slot.is_some())
+}
+
 /// Turn the server on or off and return whether it is on now: a port in
 /// use leaves it off and says so in the log. Off closes the port and
 /// every phone's stream before it returns.

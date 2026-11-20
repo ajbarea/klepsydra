@@ -16,7 +16,7 @@ use klepsydra_fleet::scan::Problem;
 use klepsydra_fleet::watch::{unix_now, Reader, POLL};
 use serde_json::Value;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// The card wall's window label.
 // The window guard reads the builder's label as a literal, so it repeats this.
@@ -162,7 +162,7 @@ fn queue_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// The queue file, who keeps it and their voice: `queue.json`'s in the data
 /// folder, else the pref's or the Desktop's, kept by no one.
-pub fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
+fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
     match queue::kept(crate::klepsydra_dir(app).as_deref()) {
         Some(kept) => (kept.path, kept.by, kept.voice),
         None => (queue_path(app), None, None),
@@ -172,8 +172,15 @@ pub fn queue_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>
 /// The Needs you file, who keeps it and their voice: `needs.json`'s in the
 /// data folder, else `needs-you.md` beside the queue file, kept by no one;
 /// never the queue file itself.
-pub fn needs_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
-    let queue = queue_source(app).0;
+fn needs_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
+    needs_beside(app, queue_source(app).0)
+}
+
+/// [`needs_source`] for the queue file `queue` already read.
+fn needs_beside(
+    app: &AppHandle,
+    queue: Result<PathBuf, String>,
+) -> (Result<PathBuf, String>, Option<String>, Option<String>) {
     let (path, by, voice) =
         match queue::kept_in(crate::klepsydra_dir(app).as_deref(), queue::List::Needs) {
             Some(kept) => (kept.path, kept.by, kept.voice),
@@ -182,22 +189,51 @@ pub fn needs_source(app: &AppHandle) -> (Result<PathBuf, String>, Option<String>
     (queue::not_the_queue(path, &queue), by, voice)
 }
 
-/// The tray's "Choose queue file...": the file picked goes to `queue.json`,
-/// kept by no session, starting in the current file's folder.
-pub fn choose_queue(app: &AppHandle) {
-    choose_list(app, queue::List::Queue);
+/// The queue file and the Needs you file the wall follows now, as the
+/// settings page shows them; an empty path where one cannot be told.
+#[derive(serde::Serialize)]
+pub struct FleetFiles {
+    queue: String,
+    needs: String,
 }
 
-/// The tray's "Choose Needs you file...": the same, to `needs.json`.
-pub fn choose_needs(app: &AppHandle) {
-    choose_list(app, queue::List::Needs);
-}
-
-fn choose_list(app: &AppHandle, list: queue::List) {
-    use tauri_plugin_dialog::DialogExt;
-    let Some(dir) = crate::klepsydra_dir(app) else {
-        return;
+fn fleet_files(app: &AppHandle) -> FleetFiles {
+    let shown = |p: &Result<PathBuf, String>| {
+        p.as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
     };
+    let queue = queue_source(app).0;
+    let needs = needs_beside(app, queue.clone()).0;
+    FleetFiles {
+        queue: shown(&queue),
+        needs: shown(&needs),
+    }
+}
+
+/// Both list files, read once for the settings page.
+#[tauri::command]
+pub fn get_fleet_files(app: AppHandle) -> FleetFiles {
+    fleet_files(&app)
+}
+
+/// Settings' "Queue file": the file picked goes to `queue.json`, kept by no
+/// session, starting in the current file's folder. Returns both files as
+/// they stand once the picker closes (unchanged when it was cancelled).
+#[tauri::command]
+pub async fn choose_queue_file(app: AppHandle) -> Result<FleetFiles, String> {
+    choose_list(app, queue::List::Queue).await
+}
+
+/// Settings' "Needs you file": the same, to `needs.json`.
+#[tauri::command]
+pub async fn choose_needs_file(app: AppHandle) -> Result<FleetFiles, String> {
+    choose_list(app, queue::List::Needs).await
+}
+
+async fn choose_list(app: AppHandle, list: queue::List) -> Result<FleetFiles, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let dir = crate::klepsydra_dir(&app).ok_or("klepsydra has no data folder.")?;
     let mut pick = app
         .dialog()
         .file()
@@ -207,26 +243,30 @@ fn choose_list(app: &AppHandle, list: queue::List) {
         })
         .add_filter("Markdown", &["md", "markdown"]);
     let source = match list {
-        queue::List::Queue => queue_source(app),
-        queue::List::Needs => needs_source(app),
+        queue::List::Queue => queue_source(&app),
+        queue::List::Needs => needs_source(&app),
     };
     if let Some(folder) = source.0.ok().and_then(|p| Some(p.parent()?.to_path_buf())) {
         pick = pick.set_directory(folder);
     }
-    pick.pick_file(move |file| {
-        if let Some(path) = file.and_then(|f| f.into_path().ok()) {
-            if let Err(e) = queue::keep_in(&dir, &path, None, list) {
-                // The user's own file, by name only: it may sit under their home.
-                let name = path
-                    .file_name()
-                    .map_or_else(Default::default, |n| n.to_string_lossy());
-                log::error!(
-                    "the list file choice {name} was not saved to {}: {e}",
-                    list.keeper()
-                );
-            }
+    // The dialog waits on the user: off the async runtime's workers.
+    let file = tauri::async_runtime::spawn_blocking(move || pick.blocking_pick_file())
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(path) = file.and_then(|f| f.into_path().ok()) {
+        if let Err(e) = queue::keep_in(&dir, &path, None, list) {
+            // The user's own file, by name only: it may sit under their home.
+            let name = path
+                .file_name()
+                .map_or_else(Default::default, |n| n.to_string_lossy());
+            log::error!(
+                "the list file choice {name} was not saved to {}: {e}",
+                list.keeper()
+            );
+            return Err(format!("{name} was not saved: {e}"));
         }
-    });
+    }
+    Ok(fleet_files(&app))
 }
 
 /// Follow the queue file and the Needs you file for as long as the app runs,
@@ -422,14 +462,32 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
 /// deadlocks on Windows, and after that only hidden and shown, never closed.
 #[tauri::command]
 pub async fn open_wall(app: AppHandle, focus: String) -> Result<(), String> {
-    app.state::<Fleet>().focus(WALL, &focus);
+    show_wall(&app, &focus, false)
+}
+
+/// Show the wall on its settings page (the tray's "Settings..."). A wall made
+/// now loads `wall.html#settings`, which wall.js reads as it starts; a wall
+/// already loaded gets the same hash, which its hashchange handler follows.
+/// An event would be lost on a wall whose script is not listening yet.
+#[tauri::command]
+pub async fn open_settings(app: AppHandle) -> Result<(), String> {
+    show_wall(&app, "", true)
+}
+
+fn show_wall(app: &AppHandle, focus: &str, settings: bool) -> Result<(), String> {
+    app.state::<Fleet>().focus(WALL, focus);
     if let Some(wall) = app.get_webview_window(WALL) {
+        if settings {
+            wall.eval("location.hash = '#settings'")
+                .map_err(|e| e.to_string())?;
+        }
         wall.show().map_err(|e| e.to_string())?;
         let _ = wall.unminimize();
         let _ = wall.set_focus();
         return Ok(());
     }
-    let wall = WebviewWindowBuilder::new(&app, "wall", WebviewUrl::App("wall.html".into()))
+    let page = if settings { "wall.html#settings" } else { "wall.html" };
+    let wall = WebviewWindowBuilder::new(app, "wall", WebviewUrl::App(page.into()))
         .title("klepsydra fleet")
         .inner_size(1280.0, 800.0)
         .min_inner_size(420.0, 320.0)
@@ -442,16 +500,6 @@ pub async fn open_wall(app: AppHandle, focus: String) -> Result<(), String> {
             let _ = handle.hide();
         }
     });
-    Ok(())
-}
-
-/// Open the settings view on the wall window.
-#[tauri::command]
-pub async fn open_settings(app: AppHandle) -> Result<(), String> {
-    open_wall(app.clone(), String::new()).await?;
-    if let Some(wall) = app.get_webview_window(WALL) {
-        let _ = wall.emit("open-settings", ());
-    }
     Ok(())
 }
 

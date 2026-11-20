@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod choice;
 mod fleet;
 mod folder;
 mod geometry;
@@ -220,8 +219,8 @@ fn layout_subscribe(
         .subscribe(window.label(), fleet::Webview(on_message));
 }
 
-/// Save a layout chosen in the tray and send the gauge the layout now saved,
-/// so the gauge, the menu and the next start agree even if the save failed.
+/// Save a layout chosen in settings and send the gauge the layout now saved,
+/// so the gauge, the page and the next start agree even if the save failed.
 /// True when that layout is compact.
 fn set_layout(app: &tauri::AppHandle, compact: bool) -> bool {
     let want = if compact { "compact" } else { "full" };
@@ -231,62 +230,108 @@ fn set_layout(app: &tauri::AppHandle, compact: bool) -> bool {
     saved == "compact"
 }
 
+/// Whether the gauge is compact now, for the settings page.
 #[tauri::command]
-fn get_layout(app: tauri::AppHandle) -> String {
-    layout_of(&app).to_string()
+fn get_layout(app: tauri::AppHandle) -> bool {
+    layout_of(&app) == "compact"
 }
 
+/// Settings' "Compact layout": what [`set_layout`] saved and sent the gauge.
 #[tauri::command]
 fn set_layout_mode(app: tauri::AppHandle, compact: bool) -> bool {
     set_layout(&app, compact)
 }
 
-#[tauri::command]
-fn get_autostart(app: tauri::AppHandle) -> bool {
-    app.autolaunch().is_enabled().unwrap_or(false)
+/// Start at login as the system has it, whether `KLEPSYDRA_NO_AUTOSTART`
+/// holds it as it is, and the row's name on this system.
+#[derive(serde::Serialize)]
+struct Autostart {
+    on: bool,
+    held: bool,
+    label: &'static str,
 }
 
-#[tauri::command]
-fn set_autostart(app: tauri::AppHandle, enabled: bool) -> bool {
-    if autostart_held() {
-        return app.autolaunch().is_enabled().unwrap_or(false);
+fn autostart_now(app: &tauri::AppHandle) -> Autostart {
+    Autostart {
+        on: app.autolaunch().is_enabled().unwrap_or(false),
+        held: autostart_held(),
+        label: if cfg!(windows) {
+            "Start with Windows"
+        } else {
+            "Start at login"
+        },
     }
-    let mgr = app.autolaunch();
-    let _ = if enabled { mgr.enable() } else { mgr.disable() };
-    mgr.is_enabled().unwrap_or(enabled)
 }
 
 #[tauri::command]
-fn get_ping(app: tauri::AppHandle) -> bool {
-    read_prefs(&app)
+fn get_autostart(app: tauri::AppHandle) -> Autostart {
+    autostart_now(&app)
+}
+
+/// Settings' "Start with Windows": set the login entry unless held, then
+/// return what the system has, which is what the row shows.
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Autostart {
+    if !autostart_held() {
+        let mgr = app.autolaunch();
+        let done = if enabled { mgr.enable() } else { mgr.disable() };
+        if let Err(e) = done {
+            log::error!(enabled; "autostart: the login entry did not change: {e}");
+        }
+    }
+    autostart_now(&app)
+}
+
+/// Ping's saved state. Ping plays only on Windows; elsewhere the settings
+/// page hides the row, as the tray had no Ping item there.
+#[tauri::command]
+fn get_ping(app: tauri::AppHandle) -> Result<bool, String> {
+    if !cfg!(windows) {
+        return Err("Ping plays on Windows only.".into());
+    }
+    Ok(ping_saved(&app))
+}
+
+fn ping_saved(app: &tauri::AppHandle) -> bool {
+    read_prefs(app)
         .and_then(|p| p.get("ping")?.as_bool())
         .unwrap_or(false)
 }
 
+/// Settings' "Ping": save it, play the chime it turns on, and return the
+/// state prefs.json kept.
 #[tauri::command]
-fn set_ping(app: tauri::AppHandle, on: bool) -> bool {
+fn set_ping(app: tauri::AppHandle, on: bool) -> Result<bool, String> {
+    if !cfg!(windows) {
+        return Err("Ping plays on Windows only.".into());
+    }
     write_pref(&app, "ping", serde_json::json!(on));
+    let saved = ping_saved(&app);
     #[cfg(windows)]
     {
-        ping::set(on);
-        if on {
+        ping::set(saved);
+        if saved && on {
             ping::preview(klepsydra_fleet::cue::Cue::NeedsYou);
         }
     }
-    on
+    Ok(saved)
 }
 
+/// Whether the phone wall is serving now (a busy port leaves it off even
+/// when saved on).
 #[tauri::command]
 fn get_phone_wall(app: tauri::AppHandle) -> bool {
-    phone::saved(&app)
+    phone::serving(&app)
 }
 
+/// Settings' "Phone wall": save the choice and return whether it serves now.
 #[tauri::command]
 fn set_phone_wall(app: tauri::AppHandle, on: bool) -> bool {
     write_pref(&app, phone::PREF, serde_json::json!(on));
     phone::set(&app, on)
 }
 
+/// Settings' "Reset position".
 #[tauri::command]
 fn reset_gauge_position(app: tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -295,6 +340,7 @@ fn reset_gauge_position(app: tauri::AppHandle) {
     }
 }
 
+/// Settings' "Set home here".
 #[tauri::command]
 fn set_gauge_home(app: tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -302,47 +348,24 @@ fn set_gauge_home(app: tauri::AppHandle) {
     }
 }
 
-#[tauri::command]
-fn get_fleet_files(app: tauri::AppHandle) -> serde_json::Value {
-    let q = fleet::queue_source(&app)
-        .0
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let n = fleet::needs_source(&app)
-        .0
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    serde_json::json!({
-        "queue": q,
-        "needs": n,
-    })
-}
-
-#[tauri::command]
-fn choose_queue_file(app: tauri::AppHandle) {
-    fleet::choose_queue(&app);
-}
-
-#[tauri::command]
-fn choose_needs_file(app: tauri::AppHandle) {
-    fleet::choose_needs(&app);
-}
-
-/// The tray menu's items: exactly 3 items following #384.
-pub const TRAY_MENU_ITEMS: [(&str, &str); 3] = [
+/// The tray menu's items (#384): every setting lives on the settings page.
+const TRAY_MENU_ITEMS: [(&str, &str); 3] = [
     ("open_wall", "Open wall"),
     ("settings", "Settings..."),
     ("quit", "Quit"),
 ];
 
-/// Build the tray menu with exactly three items: Open wall, Settings..., Quit.
-pub fn build_tray_menu<R: tauri::Runtime, M: tauri::Manager<R>>(app: &M) -> tauri::Result<Menu<R>> {
-    let open_wall = MenuItem::with_id(app, "open_wall", "Open wall", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    Menu::with_items(app, &[&open_wall, &settings, &quit])
+/// The tray menu, one item per [`TRAY_MENU_ITEMS`] entry.
+fn build_tray_menu<R: tauri::Runtime, M: tauri::Manager<R>>(app: &M) -> tauri::Result<Menu<R>> {
+    let items = TRAY_MENU_ITEMS
+        .iter()
+        .map(|(id, label)| MenuItem::with_id(app, *id, *label, true, None::<&str>))
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = items
+        .iter()
+        .map(|i| i as &dyn tauri::menu::IsMenuItem<R>)
+        .collect();
+    Menu::with_items(app, &refs)
 }
 
 /// Where the window is: the rect last requested while it may still be landing,
@@ -941,8 +964,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(launch::JumpFlight::default())
         .manage(phone::Phone::default())
         .manage(theme::Themes::default())
-        .manage(theme::ThemeMenu::default())
-        .manage(voices::VoicesMenu::default())
+        .manage(voices::VoicesReader::default())
         .manage(split::Follow::default())
 }
 
@@ -1013,9 +1035,9 @@ fn main() {
             set_layout_mode,
             reset_gauge_position,
             set_gauge_home,
-            get_fleet_files,
-            choose_queue_file,
-            choose_needs_file,
+            fleet::get_fleet_files,
+            fleet::choose_queue_file,
+            fleet::choose_needs_file,
             jump::jump_to_terminal,
             launch::launch_session,
             launch::agy_models,
@@ -1061,38 +1083,37 @@ fn main() {
             }
             let layout = layout_of(app.handle());
             app.state::<Layouts>().0.publish(serde_json::json!(layout));
-
             #[cfg(windows)]
-            {
-                let on = read_prefs(app.handle())
-                    .and_then(|p| p.get("ping")?.as_bool())
-                    .unwrap_or(false);
-                ping::set(on);
-            }
-            let _phone_on = phone::set(app.handle(), phone::saved(app.handle()));
+            ping::set(ping_saved(app.handle()));
+            // Off unless saved on: the wall on loopback for Tailscale Serve (README).
+            phone::set(app.handle(), phone::saved(app.handle()));
+            // The saved theme to each window as it subscribes, and to the hook's cast.
+            theme::publish(app.handle());
 
             let menu = build_tray_menu(app)?;
-
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("bundled icon").clone())
                 .tooltip("klepsydra")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
-                .on_menu_event(move |app, event| match event.id.as_ref() {
-                    "open_wall" => {
-                        let app_handle = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let _ = fleet::open_wall(app_handle, String::new()).await;
-                        });
-                    }
-                    "settings" => {
-                        let app_handle = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let _ = fleet::open_settings(app_handle).await;
-                        });
-                    }
-                    "quit" => app.exit(0),
-                    _ => {}
+                .on_menu_event(|app, event| {
+                    let settings = match event.id.as_ref() {
+                        "open_wall" => false,
+                        "settings" => true,
+                        "quit" => return app.exit(0),
+                        _ => return,
+                    };
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let opened = if settings {
+                            fleet::open_settings(app).await
+                        } else {
+                            fleet::open_wall(app, String::new()).await
+                        };
+                        if let Err(e) = opened {
+                            log::error!(settings; "tray: the wall did not open: {e}");
+                        }
+                    });
                 })
                 .build(app)?;
 
@@ -1161,15 +1182,15 @@ mod tests {
     }
 
     #[test]
-    fn tray_menu_has_exactly_three_items() {
-        assert_eq!(super::TRAY_MENU_ITEMS.len(), 3);
-        assert_eq!(
-            super::TRAY_MENU_ITEMS.map(|(id, _)| id),
-            ["open_wall", "settings", "quit"]
-        );
+    fn tray_menu_is_open_wall_settings_quit() {
         let app = tauri::test::mock_app();
         let menu = super::build_tray_menu(&app).expect("tray menu builds");
-        let items = menu.items().expect("tray menu items");
-        assert_eq!(items.len(), 3);
+        let items: Vec<String> = menu
+            .items()
+            .expect("tray menu items")
+            .iter()
+            .map(|i| i.id().0.clone())
+            .collect();
+        assert_eq!(items, ["open_wall", "settings", "quit"]);
     }
 }

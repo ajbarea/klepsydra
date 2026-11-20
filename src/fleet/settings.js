@@ -1,377 +1,347 @@
-// Settings page view and controller for klepsydra (#384), Design A.
-// Data-driven rendering from src/settings/registry.js with instant apply and search filtering.
+// The settings page (#384, Design A): rows from settings/registry.js, applied
+// at once, filtered by search. A row shows what its command returned, never
+// what was asked for, so a held or refused change reads as it is.
 
-import { SECTIONS, ROWS, filterRows } from "../settings/registry.js";
 import { createLog } from "../log.js";
+import { filterRows, ROWS, SECTIONS } from "../settings/registry.js";
 
 const log = createLog("fleet/settings");
 
-/**
- * Mount the settings view into container element.
- *
- * @param {Object} options
- * @param {HTMLElement} options.container - The root element (e.g. #settings)
- * @param {Function} options.invoke - Tauri IPC invoke function
- * @param {Function} options.onBack - Callback when Back button or Esc is pressed
- * @param {Function} [options.onSettingChanged] - Optional callback when setting changes (e.g. density/theme sync)
- * @returns {Object} Controller object with destroy, refresh, and sync methods
- */
-export function mountSettings({ container, invoke, onBack, onSettingChanged }) {
-  const rowElements = new Map();
-  const sectionElements = new Map();
+/** A row's view, from what its command returned (registry.js `view`). */
+export function viewOf(row, raw) {
+  return row.view ? row.view(raw) : { value: raw };
+}
 
-  // Build shell HTML
+/**
+ * What `row` shows now: its binding's view (a control the wall has), or its
+ * read's answer through `view`. Rejects when the row cannot be read.
+ */
+export async function readRow(row, invoke, bindings = {}) {
+  if (row.bind) {
+    const b = bindings[row.bind];
+    if (!b) throw new Error(`no ${row.bind} control to bind`);
+    return b.view();
+  }
+  return viewOf(row, await row.read(invoke));
+}
+
+/**
+ * Apply `value` to `row` the one way it is applied: a bound row through the
+ * wall's own function, which its toolbar or gear control calls too; any
+ * other through its command. Resolves with what the row shows afterwards,
+ * from the command's answer (or the shared state the function left), with
+ * the app's message, if it sent one, as the note.
+ */
+export async function apply(row, invoke, value, bindings = {}) {
+  if (row.bind) {
+    const b = bindings[row.bind];
+    const said = await b.write(value);
+    const view = b.view();
+    return typeof said === "string" && said && !view.note ? { ...view, note: said } : view;
+  }
+  return viewOf(row, await row.write(invoke, value));
+}
+
+/** The words of a refusal: a Tauri command rejects with a string. */
+const why = (err) => (typeof err === "string" ? err : (err?.message ?? String(err)));
+
+/**
+ * Mount the page into `container`. `bindings` holds the wall's controls by
+ * registry `bind` name, each { view(), write(value), flush?() }. Returns
+ * { refresh, sync(rowId), destroy }: refresh reads every row (on each open),
+ * sync re-reads one bound row after its control changed on the wall.
+ */
+export function mountSettings({ container, invoke, bindings = {}, onBack }) {
+  const rows = new Map(); // row id -> { row, el, label, note, control, show(view) }
+  const labels = new Map(); // row id -> the label shown now
+  const unavailable = new Set(); // rows whose read failed: hidden
+  const sections = new Map();
+
   container.innerHTML = `
     <div class="set-a">
       <header class="settings-top">
         <button type="button" class="back-btn" id="settings-back" aria-label="Back to the wall">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
         </button>
-        <h1>Settings</h1>
+        <h1 id="settings-title">Settings</h1>
         <div class="settings-search" role="search">
           <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="search" class="search-input" id="settings-search-input" placeholder="Search settings (/)" aria-label="Search settings" autocomplete="off" spellcheck="false" />
+          <input type="search" class="search-input" id="settings-search-input" placeholder="Search settings" aria-label="Search settings" aria-keyshortcuts="/" autocomplete="off" spellcheck="false" />
           <kbd class="search-kbd" aria-hidden="true">/</kbd>
           <button type="button" class="search-clear" id="settings-search-clear" aria-label="Clear search" hidden>&times;</button>
         </div>
       </header>
-
       <nav class="settings-nav" aria-label="Settings sections">
-        ${SECTIONS.map((s) => `<a href="#sec-${s.id}" class="nav-item">${s.title}</a>`).join("")}
+        ${SECTIONS.map((s) => `<a href="#sec-${s.id}" class="nav-item" data-section="${s.id}">${s.title}</a>`).join("")}
       </nav>
-
       <div class="settings-sections">
         ${SECTIONS.map(
-          (s) => `
-          <section id="sec-${s.id}" class="settings-section" aria-labelledby="heading-${s.id}">
+          (s) => `<section id="sec-${s.id}" class="settings-section" aria-labelledby="heading-${s.id}">
             <h2 id="heading-${s.id}">${s.title}</h2>
             <div class="settings-rows" data-section="${s.id}"></div>
-          </section>
-        `,
+          </section>`,
         ).join("")}
       </div>
-
       <p class="settings-empty" id="settings-no-results" role="status" hidden>
         No settings match &ldquo;<span class="search-term"></span>&rdquo;.
       </p>
     </div>
   `;
+  for (const s of SECTIONS) sections.set(s.id, container.querySelector(`#sec-${s.id}`));
+  // The section links scroll the page, not the URL: #settings stays the page's hash.
+  container.querySelector(".settings-nav").addEventListener("click", (e) => {
+    const a = e.target.closest(".nav-item");
+    if (!a) return;
+    e.preventDefault();
+    sections.get(a.dataset.section)?.scrollIntoView({ block: "start" });
+  });
 
-  // Index section containers
-  for (const s of SECTIONS) {
-    const secEl = container.querySelector(`#sec-${s.id}`);
-    if (secEl) sectionElements.set(s.id, secEl);
-  }
-
-  // Render rows into sections
   for (const row of ROWS) {
-    const secContainer = container.querySelector(`.settings-rows[data-section="${row.section}"]`);
-    if (!secContainer) continue;
-
-    const rowEl = document.createElement("div");
-    rowEl.className = "settings-row";
-    rowEl.id = `row-${row.id}`;
-    rowEl.dataset.rowId = row.id;
-
-    const infoEl = document.createElement("div");
-    infoEl.className = "settings-row-info";
-    infoEl.innerHTML = `
-      <span class="settings-row-label">${row.label}</span>
-      <span class="settings-row-desc">${row.description}</span>
-    `;
-    rowEl.appendChild(infoEl);
-
-    const ctrlEl = document.createElement("div");
-    ctrlEl.className = "settings-row-control";
-
-    renderControl(ctrlEl, row, invoke, onSettingChanged);
-    rowEl.appendChild(ctrlEl);
-
-    secContainer.appendChild(rowEl);
-    rowElements.set(row.id, rowEl);
+    const el = document.createElement("div");
+    el.className = "settings-row";
+    el.id = `row-${row.id}`;
+    el.dataset.rowId = row.id;
+    const info = document.createElement("div");
+    info.className = "settings-row-info";
+    const label = Object.assign(document.createElement("span"), { className: "settings-row-label", id: `label-${row.id}`, textContent: row.label });
+    const desc = Object.assign(document.createElement("span"), { className: "settings-row-desc", id: `desc-${row.id}`, textContent: row.description });
+    const note = Object.assign(document.createElement("span"), { className: "settings-row-note", id: `note-${row.id}` });
+    note.setAttribute("role", "status");
+    info.append(label, desc, note);
+    const ctrl = document.createElement("div");
+    ctrl.className = "settings-row-control";
+    el.append(info, ctrl);
+    const entry = { row, el, label, note, ctrl };
+    entry.show = control(entry, invoke, bindings);
+    container.querySelector(`.settings-rows[data-section="${row.section}"]`).append(el);
+    rows.set(row.id, entry);
   }
 
-  // Load live initial values
-  loadValues(ROWS, invoke, container);
+  /** Show `view` on row `id`: its value, and its label, note and disabled state when given. */
+  function show(id, view) {
+    const e = rows.get(id);
+    if (!e || !view) return;
+    if (view.label) {
+      e.label.textContent = view.label;
+      labels.set(id, view.label);
+    }
+    if (view.available === false) unavailable.add(id);
+    else unavailable.delete(id);
+    if ("note" in view) e.note.textContent = view.note ?? "";
+    e.show(view);
+    applySearch();
+  }
 
-  // Wire back button
-  const backBtn = container.querySelector("#settings-back");
-  backBtn?.addEventListener("click", () => onBack?.());
+  /** Read every row afresh, all at once; reads that share a command share one call. */
+  async function refresh() {
+    const asked = new Map();
+    const once = (cmd, args) => {
+      const key = `${cmd} ${JSON.stringify(args ?? null)}`;
+      if (!asked.has(key)) asked.set(key, invoke(cmd, args));
+      return asked.get(key);
+    };
+    await Promise.all(
+      ROWS.filter((r) => r.read || r.bind).map((r) =>
+        readRow(r, once, bindings).then(
+          (view) => show(r.id, view),
+          (err) => {
+            // The app refuses what this system lacks (Ping, Split off Windows): no row for it.
+            log.info(`settings: ${r.id} hidden: ${why(err)}`);
+            show(r.id, { available: false });
+          },
+        ),
+      ),
+    );
+  }
 
-  // Wire search input & shortcuts
-  const searchInput = container.querySelector("#settings-search-input");
-  const searchKbd = container.querySelector(".search-kbd");
-  const searchClear = container.querySelector("#settings-search-clear");
-  const emptyState = container.querySelector("#settings-no-results");
-  const searchTerm = emptyState?.querySelector(".search-term");
+  const search = container.querySelector("#settings-search-input");
+  const kbd = container.querySelector(".search-kbd");
+  const clear = container.querySelector("#settings-search-clear");
+  const empty = container.querySelector("#settings-no-results");
 
-  function applySearch(query) {
-    const matches = new Set(filterRows(ROWS, query).map((r) => r.id));
-    const activeQuery = Boolean(query && query.trim());
-
-    if (searchClear) searchClear.hidden = !activeQuery;
-    if (searchKbd) searchKbd.hidden = activeQuery;
-
-    let totalVisible = 0;
-    for (const [secId, secEl] of sectionElements.entries()) {
-      let secVisible = 0;
-      const rowsInSec = ROWS.filter((r) => r.section === secId);
-      for (const r of rowsInSec) {
-        const rowEl = rowElements.get(r.id);
-        if (!rowEl) continue;
-        const visible = !activeQuery || matches.has(r.id);
-        rowEl.hidden = !visible;
-        if (visible) secVisible++;
+  function applySearch() {
+    const query = search.value;
+    const matches = new Set(filterRows(ROWS, query, labels).map((r) => r.id));
+    const active = Boolean(query.trim());
+    clear.hidden = !active;
+    kbd.hidden = active;
+    let total = 0;
+    for (const [id, sec] of sections) {
+      let shown = 0;
+      for (const r of ROWS.filter((x) => x.section === id)) {
+        const on = matches.has(r.id) && !unavailable.has(r.id);
+        rows.get(r.id).el.hidden = !on;
+        if (on) shown++;
       }
-      secEl.hidden = secVisible === 0;
-      totalVisible += secVisible;
+      sec.hidden = shown === 0;
+      container.querySelector(`.nav-item[data-section="${id}"]`).hidden = shown === 0;
+      total += shown;
     }
-
-    if (emptyState) {
-      emptyState.hidden = totalVisible > 0;
-      if (searchTerm) searchTerm.textContent = query.trim();
-    }
+    empty.hidden = total > 0 || !active;
+    empty.querySelector(".search-term").textContent = query.trim();
   }
 
-  searchInput?.addEventListener("input", (e) => {
-    applySearch(e.target.value);
+  search.addEventListener("input", applySearch);
+  clear.addEventListener("click", () => {
+    search.value = "";
+    applySearch();
+    search.focus();
   });
 
-  searchClear?.addEventListener("click", () => {
-    if (searchInput) {
-      searchInput.value = "";
-      applySearch("");
-      searchInput.focus();
-    }
-  });
+  container.querySelector("#settings-back").addEventListener("click", () => onBack?.());
 
-  // Global keydown handler inside settings view
   function onKeyDown(e) {
-    if (container.hidden) return;
-
-    if (e.key === "/" && document.activeElement !== searchInput) {
+    if (container.hidden || e.defaultPrevented) return;
+    const typing = e.target instanceof HTMLElement && e.target.matches("input, select, textarea");
+    if (e.key === "/" && !typing) {
       e.preventDefault();
-      searchInput?.focus();
-      return;
-    }
-
-    if (e.key === "Escape") {
-      if (searchInput && (searchInput.value || document.activeElement === searchInput)) {
-        e.preventDefault();
-        searchInput.value = "";
-        applySearch("");
-        searchInput.blur();
-      } else {
-        e.preventDefault();
-        onBack?.();
-      }
+      search.focus();
+    } else if (e.key === "Escape") {
+      // A select's own Escape closes its list; it never leaves the page.
+      if (e.target instanceof HTMLElement && e.target.matches("select")) return;
+      e.preventDefault();
+      if (e.target === search && search.value) {
+        search.value = "";
+        applySearch();
+      } else onBack?.();
     }
   }
-
   window.addEventListener("keydown", onKeyDown);
 
   return {
+    refresh,
+    /** Row `id`'s bound control changed on the wall: show it as the wall does. */
+    sync(id) {
+      const e = rows.get(id);
+      if (!e?.row.bind || !bindings[e.row.bind]) return;
+      show(id, bindings[e.row.bind].view());
+    },
     destroy() {
       window.removeEventListener("keydown", onKeyDown);
-      container.innerHTML = "";
-    },
-    refresh() {
-      loadValues(ROWS, invoke, container);
-    },
-    sync(rowId, val) {
-      updateControlValue(container, rowId, val);
+      container.replaceChildren();
     },
   };
-}
 
-/**
- * Render individual control into container based on control.type
- */
-function renderControl(container, row, invoke, onSettingChanged) {
-  const { type } = row.control;
-
-  if (type === "toggle") {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "tog";
-    btn.setAttribute("role", "switch");
-    btn.setAttribute("aria-checked", "false");
-    btn.setAttribute("aria-label", row.label);
-    btn.innerHTML = "<i></i>";
-
-    btn.addEventListener("click", async () => {
-      const now = btn.getAttribute("aria-checked") === "true";
-      const next = !now;
-      btn.setAttribute("aria-checked", String(next));
+  /** Build row `e`'s control in its cell; returns how it shows a view. */
+  function control(e, invoke, bindings) {
+    const { row } = e;
+    const labelled = (el) => {
+      el.setAttribute("aria-labelledby", `label-${row.id}`);
+      el.setAttribute("aria-describedby", `desc-${row.id} note-${row.id}`);
+      return el;
+    };
+    /** Apply `value` and show what came back; a refusal keeps what was shown and says why. */
+    const run = async (value, busy) => {
+      busy.setAttribute("aria-busy", "true");
       try {
-        await row.write(invoke, next);
-        onSettingChanged?.(row.id, next);
+        const view = await apply(row, invoke, value, bindings);
+        show(row.id, view);
+        return view;
       } catch (err) {
-        log.error(`Settings: failed to write toggle ${row.id}`, err);
-        btn.setAttribute("aria-checked", String(now));
+        log.warn(`settings: ${row.id} was not changed`, err);
+        e.note.textContent = `Not changed: ${why(err)}`;
+        return null;
+      } finally {
+        busy.removeAttribute("aria-busy");
       }
-    });
+    };
+    const type = row.control.type;
 
-    container.appendChild(btn);
-  } else if (type === "seg") {
-    const span = document.createElement("span");
-    span.className = "seg";
-    span.setAttribute("role", "radiogroup");
-    span.setAttribute("aria-label", row.label);
-
-    const options = row.control.options || [];
-    for (let i = 0; i < options.length; i++) {
-      const opt = options[i];
-      const optBtn = document.createElement("button");
-      optBtn.type = "button";
-      optBtn.setAttribute("role", "radio");
-      optBtn.setAttribute("aria-checked", i === 0 ? "true" : "false");
-      optBtn.dataset.value = opt.value;
-      optBtn.textContent = opt.label;
-
-      optBtn.addEventListener("click", async () => {
-        const prev = span.querySelector('button[aria-checked="true"]');
-        for (const b of span.querySelectorAll("button")) {
-          b.setAttribute("aria-checked", b === optBtn ? "true" : "false");
-        }
-        try {
-          await row.write(invoke, opt.value);
-          onSettingChanged?.(row.id, opt.value);
-        } catch (err) {
-          log.error(`Settings: failed to write seg ${row.id}`, err);
-          if (prev) {
-            for (const b of span.querySelectorAll("button")) {
-              b.setAttribute("aria-checked", b === prev ? "true" : "false");
-            }
-          }
-        }
+    if (type === "toggle") {
+      const tog = labelled(Object.assign(document.createElement("button"), { type: "button", className: "tog", innerHTML: "<i></i>" }));
+      tog.setAttribute("role", "switch");
+      tog.setAttribute("aria-checked", "false");
+      tog.addEventListener("click", async () => {
+        if (tog.getAttribute("aria-disabled") === "true" || tog.getAttribute("aria-busy") === "true") return;
+        const want = tog.getAttribute("aria-checked") !== "true";
+        const view = await run(want, tog);
+        if (view && Boolean(view.value) !== want && !view.note) e.note.textContent = `Not changed: the app kept it ${view.value ? "on" : "off"}.`;
       });
-
-      span.appendChild(optBtn);
-    }
-    container.appendChild(span);
-  } else if (type === "select") {
-    const sel = document.createElement("select");
-    sel.className = "sel-control";
-    sel.setAttribute("aria-label", row.label);
-
-    const options = row.control.options || [];
-    for (const opt of options) {
-      const optEl = document.createElement("option");
-      optEl.value = opt.value;
-      optEl.textContent = opt.label;
-      sel.appendChild(optEl);
+      e.ctrl.append(tog);
+      return (view) => {
+        if ("value" in view) tog.setAttribute("aria-checked", view.value ? "true" : "false");
+        if ("disabled" in view) tog.setAttribute("aria-disabled", view.disabled ? "true" : "false");
+      };
     }
 
-    sel.addEventListener("change", async () => {
-      try {
-        await row.write(invoke, sel.value);
-        onSettingChanged?.(row.id, sel.value);
-      } catch (err) {
-        log.error(`Settings: failed to write select ${row.id}`, err);
-      }
+    if (type === "seg") {
+      // A radio group (WAI-ARIA APG): one tab stop, arrows move and choose.
+      const seg = labelled(Object.assign(document.createElement("span"), { className: "seg" }));
+      seg.setAttribute("role", "radiogroup");
+      const radios = row.control.options.map((opt) => {
+        const b = Object.assign(document.createElement("button"), { type: "button", textContent: opt.label });
+        b.setAttribute("role", "radio");
+        b.setAttribute("aria-checked", "false");
+        b.tabIndex = -1;
+        b.dataset.value = opt.value;
+        b.addEventListener("click", () => {
+          if (b.getAttribute("aria-checked") !== "true") run(opt.value, seg);
+        });
+        return b;
+      });
+      const stop = () => {
+        const on = radios.find((b) => b.getAttribute("aria-checked") === "true") ?? radios[0];
+        for (const b of radios) b.tabIndex = b === on ? 0 : -1;
+      };
+      seg.addEventListener("keydown", (ev) => {
+        const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+        if (!step) return;
+        ev.preventDefault();
+        const at = radios.indexOf(document.activeElement);
+        const next = radios[(at + step + radios.length) % radios.length];
+        next.focus();
+        next.click();
+      });
+      seg.append(...radios);
+      stop();
+      e.ctrl.append(seg);
+      return (view) => {
+        if (!("value" in view)) return;
+        for (const b of radios) b.setAttribute("aria-checked", b.dataset.value === String(view.value) ? "true" : "false");
+        stop();
+      };
+    }
+
+    if (type === "select") {
+      const sel = labelled(Object.assign(document.createElement("select"), { className: "sel-control" }));
+      sel.addEventListener("change", () => run(sel.value, sel));
+      // A choice still waiting to be saved (the theme's) is saved as the select lets go.
+      sel.addEventListener("blur", () => row.bind && bindings[row.bind]?.flush?.());
+      e.ctrl.append(sel);
+      return (view) => {
+        if (view.options) {
+          const value = String(view.value ?? "");
+          const options = view.options.some((o) => o.value === value) ? view.options : [...view.options, { value, label: value }];
+          sel.replaceChildren(...options.map((o) => Object.assign(document.createElement("option"), { value: o.value, textContent: o.label })));
+        }
+        if ("value" in view) sel.value = String(view.value ?? "");
+        if ("disabled" in view) sel.disabled = Boolean(view.disabled);
+      };
+    }
+
+    if (type === "button") {
+      const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn-action", textContent: row.control.label });
+      btn.setAttribute("aria-describedby", `desc-${row.id} note-${row.id}`);
+      btn.addEventListener("click", () => run(undefined, btn));
+      e.ctrl.append(btn);
+      return () => {};
+    }
+
+    // A path and the button that picks another.
+    const wrap = Object.assign(document.createElement("div"), { className: "path-wrap" });
+    const path = Object.assign(document.createElement("span"), { className: "path-val", textContent: "—" });
+    const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn-action small", textContent: row.control.buttonLabel });
+    btn.setAttribute("aria-label", `${row.control.buttonLabel.replace("…", "")} ${row.label}`);
+    btn.setAttribute("aria-describedby", `label-${row.id} note-${row.id}`);
+    btn.addEventListener("click", () => {
+      if (btn.getAttribute("aria-busy") !== "true") run(undefined, btn);
     });
-
-    container.appendChild(sel);
-  } else if (type === "button") {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn-action";
-    btn.textContent = row.control.label;
-
-    btn.addEventListener("click", async () => {
-      try {
-        await row.write(invoke);
-        onSettingChanged?.(row.id);
-      } catch (err) {
-        log.error(`Settings: failed to trigger button ${row.id}`, err);
-      }
-    });
-
-    container.appendChild(btn);
-  } else if (type === "path") {
-    const wrap = document.createElement("div");
-    wrap.className = "path-wrap";
-
-    const pathSpan = document.createElement("span");
-    pathSpan.className = "path-val";
-    pathSpan.textContent = "—";
-    pathSpan.title = "";
-    wrap.appendChild(pathSpan);
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn-action small";
-    btn.textContent = row.control.buttonLabel || "Choose…";
-
-    btn.addEventListener("click", async () => {
-      try {
-        await row.write(invoke);
-        // Path choices are async; re-read after a short delay
-        setTimeout(async () => {
-          if (row.read) {
-            const p = await row.read(invoke);
-            if (p) {
-              pathSpan.textContent = p;
-              pathSpan.title = p;
-            }
-          }
-        }, 500);
-      } catch (err) {
-        log.error(`Settings: failed to choose path ${row.id}`, err);
-      }
-    });
-    wrap.appendChild(btn);
-
-    container.appendChild(wrap);
-  }
-}
-
-/**
- * Load initial values from backend and update DOM controls
- */
-async function loadValues(rows, invoke, container) {
-  for (const row of rows) {
-    if (!row.read) continue;
-    try {
-      const val = await row.read(invoke);
-      updateControlValue(container, row.id, val);
-    } catch (err) {
-      log.warn(`Settings: could not read initial value for ${row.id}`, err);
-    }
-  }
-}
-
-/**
- * Update DOM element for rowId to match val
- */
-function updateControlValue(container, rowId, val) {
-  const rowEl = container.querySelector(`#row-${rowId}`);
-  if (!rowEl) return;
-
-  const tog = rowEl.querySelector(".tog");
-  if (tog) {
-    tog.setAttribute("aria-checked", Boolean(val) ? "true" : "false");
-    return;
-  }
-
-  const seg = rowEl.querySelector(".seg");
-  if (seg) {
-    for (const b of seg.querySelectorAll("button")) {
-      b.setAttribute("aria-checked", b.dataset.value === String(val) ? "true" : "false");
-    }
-    return;
-  }
-
-  const sel = rowEl.querySelector(".sel-control");
-  if (sel) {
-    sel.value = String(val ?? "");
-    return;
-  }
-
-  const pathVal = rowEl.querySelector(".path-val");
-  if (pathVal && typeof val === "string") {
-    pathVal.textContent = val || "—";
-    pathVal.title = val || "";
+    wrap.append(path, btn);
+    e.ctrl.append(wrap);
+    return (view) => {
+      if (!("value" in view)) return;
+      path.textContent = view.value || "—";
+      path.title = view.value || "";
+    };
   }
 }

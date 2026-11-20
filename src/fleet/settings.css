@@ -1,13 +1,14 @@
-/* Settings page styles for klepsydra (#384), Design A (Spotify-inspired single-column layout).
-   Shared color tokens and typography come from wall.css. */
+/* The settings page (#384, Design A): one column of rows in sections. Every
+   colour, font and focus ring is a wall.css token, so both schemes follow
+   (css-tokens.test.js holds every var() here to a defined property). */
 
 .settings-view {
   display: block;
   width: 100%;
   min-height: 100vh;
-  background: var(--page);
-  color: var(--ink);
-  font-family: var(--font, system-ui, sans-serif);
+  background: var(--wall-bg);
+  color: var(--text);
+  font-family: var(--font);
   line-height: 1.45;
   overflow-y: auto;
   box-sizing: border-box;
@@ -42,7 +43,7 @@
   border-radius: 50%;
   background: var(--button-bg);
   border: 1px solid var(--button-line);
-  color: var(--ink);
+  color: var(--text);
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
   flex: none;
@@ -53,7 +54,7 @@
 }
 
 .settings-top h1 {
-  font-family: var(--title, serif);
+  font-family: var(--title);
   font-weight: 650;
   font-size: 28px;
   letter-spacing: 0.02em;
@@ -73,7 +74,7 @@
 .search-icon {
   position: absolute;
   left: 12px;
-  color: var(--ink-dim);
+  color: var(--text-dim);
   pointer-events: none;
 }
 
@@ -81,11 +82,11 @@
   width: 100%;
   height: 38px;
   padding: 0 42px 0 38px;
-  font-family: var(--font, inherit);
+  font-family: var(--font);
   font-size: 13.5px;
-  color: var(--ink);
-  background: var(--page-2);
-  border: 1px solid var(--line);
+  color: var(--text);
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
   border-radius: 999px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -93,8 +94,8 @@
 }
 
 .search-input:focus {
-  border-color: var(--gold, #c9a24a);
-  box-shadow: 0 0 0 1px var(--gold, #c9a24a);
+  border-color: var(--card-focus);
+  box-shadow: 0 0 0 1px var(--card-focus);
 }
 
 .search-input::-webkit-search-cancel-button {
@@ -112,7 +113,7 @@
   font-family: inherit;
   font-size: 11px;
   font-weight: 600;
-  color: var(--ink-quiet);
+  color: var(--text-quiet);
   background: var(--button-bg);
   border: 1px solid var(--button-line);
   border-radius: 4px;
@@ -129,7 +130,7 @@
   padding: 0;
   font-size: 16px;
   line-height: 1;
-  color: var(--ink-dim);
+  color: var(--text-dim);
   background: transparent;
   border: 0;
   border-radius: 50%;
@@ -137,7 +138,7 @@
 }
 
 .search-clear:hover {
-  color: var(--ink);
+  color: var(--text);
 }
 
 .search-clear[hidden] {
@@ -153,8 +154,8 @@
   gap: 8px;
   padding: 10px 0 14px;
   margin-bottom: 12px;
-  background: var(--page);
-  border-bottom: 1px solid var(--line);
+  background: var(--wall-bg);
+  border-bottom: 1px solid var(--card-line);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -169,10 +170,10 @@
   padding: 6px 12px;
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--ink-dim);
+  color: var(--text-dim);
   text-decoration: none;
-  background: var(--page-2);
-  border: 1px solid var(--line);
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
   border-radius: 999px;
   white-space: nowrap;
   transition: color 0.12s, background 0.12s, border-color 0.12s;
@@ -180,7 +181,7 @@
 
 .nav-item:hover,
 .nav-item:focus-visible {
-  color: var(--ink);
+  color: var(--text);
   background: var(--button-hover);
   border-color: var(--button-line);
 }
@@ -191,7 +192,7 @@
 }
 
 .settings-section + .settings-section {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--card-line);
 }
 
 .settings-section[hidden] {
@@ -203,7 +204,7 @@
   font-weight: 700;
   letter-spacing: 0.01em;
   margin: 0 0 10px;
-  color: var(--ink);
+  color: var(--text);
 }
 
 .settings-row {
@@ -220,7 +221,7 @@
 }
 
 .settings-row + .settings-row {
-  border-top: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--card-line) 40%, transparent);
 }
 
 .settings-row-info {
@@ -232,12 +233,12 @@
 .settings-row-label {
   font-size: 14px;
   font-weight: 650;
-  color: var(--ink);
+  color: var(--text);
 }
 
 .settings-row-desc {
   font-size: 12.5px;
-  color: var(--ink-dim);
+  color: var(--text-dim);
   line-height: 1.4;
 }
 
@@ -273,19 +274,41 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--ink-dim);
+  background: var(--text-dim);
   transition: transform 0.15s, background 0.15s;
   pointer-events: none;
 }
 
 .tog[aria-checked="true"] {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--text);
+  border-color: var(--text);
 }
 
 .tog[aria-checked="true"] i {
   transform: translateX(20px);
-  background: var(--page);
+  background: var(--wall-bg);
+}
+
+/* Held (autostart under KLEPSYDRA_NO_AUTOSTART) or waiting on the app. */
+.tog[aria-disabled="true"],
+[aria-busy="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* What the app said about a row: keryx's live state, a refusal, a hold. */
+.settings-row-note {
+  font-size: 12.5px;
+  color: var(--text-quiet);
+  line-height: 1.4;
+}
+
+.settings-row-note:empty {
+  display: none;
 }
 
 /* Segmented Control */
@@ -294,8 +317,8 @@
   padding: 3px;
   gap: 2px;
   border-radius: 9px;
-  background: var(--page-3);
-  box-shadow: inset 0 0 0 1px var(--line);
+  background: var(--card-quiet);
+  box-shadow: inset 0 0 0 1px var(--card-line);
 }
 
 .seg button {
@@ -306,29 +329,29 @@
   font-family: inherit;
   font-size: 12.5px;
   font-weight: 500;
-  color: var(--ink-dim);
+  color: var(--text-dim);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
   white-space: nowrap;
 }
 
 .seg button:hover {
-  color: var(--ink);
+  color: var(--text);
 }
 
 .seg button[aria-checked="true"] {
   background: var(--button-hover);
-  color: var(--ink);
+  color: var(--text);
   font-weight: 650;
   box-shadow: inset 0 0 0 1px var(--button-line);
 }
 
 /* Dropdown Select */
 .sel-control {
-  font-family: var(--font, inherit);
+  font-family: var(--font);
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink);
+  color: var(--text);
   background: var(--button-bg);
   border: 1px solid var(--button-line);
   border-radius: 8px;
@@ -339,15 +362,15 @@
 }
 
 .sel-control:focus-visible {
-  border-color: var(--gold, #c9a24a);
+  border-color: var(--card-focus);
 }
 
 /* Button Action */
 .btn-action {
-  font-family: var(--font, inherit);
+  font-family: var(--font);
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--text);
   background: var(--button-bg);
   border: 1px solid var(--button-line);
   border-radius: 8px;
@@ -362,7 +385,7 @@
 }
 
 .btn-action:focus-visible {
-  outline: 2px solid var(--gold, #c9a24a);
+  outline: 2px solid var(--card-focus);
   outline-offset: 1px;
 }
 
@@ -376,9 +399,9 @@
 .path-val {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 11.5px;
-  color: var(--ink-dim);
-  background: var(--page-2);
-  border: 1px solid var(--line);
+  color: var(--text-dim);
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
   border-radius: 6px;
   padding: 5px 8px;
   max-width: 240px;
@@ -393,17 +416,31 @@
 .settings-empty {
   padding: 48px 16px;
   text-align: center;
-  color: var(--ink-dim);
+  color: var(--text-dim);
   font-size: 14.5px;
 }
 
-.settings-empty[hidden] {
+.settings-empty[hidden],
+.nav-item[hidden] {
   display: none !important;
 }
 
+/* The page stands alone: the wall's Ledger and Queue tabs and docked panels wait behind it. */
+.settings-open :is(#ledger-tab, #queue-tab, #ledger, #queue) {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-view *,
+  .settings-view *::before,
+  .settings-view *::after {
+    transition: none !important;
+  }
+}
+
 /* Focus visibility for full keyboard navigation */
-:focus-visible {
-  outline: 2px solid var(--gold, #c9a24a);
+.settings-view :focus-visible {
+  outline: 2px solid var(--card-focus);
   outline-offset: 2px;
 }
 
