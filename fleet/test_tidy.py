@@ -712,12 +712,117 @@ class ReviewRound1(unittest.TestCase):
             "the kept copy keeps its own time",
         )
 
-    def test_a_future_time_in_the_record_counts_as_now(self):
+    def test_a_record_time_counts_only_when_sane(self):
         mod = load_tidy(self.state, self.brief)
         (self.state / ".heph-seen.tsv").write_text(
-            f"k:0\t{NOW + 10 * DAY}\nj:0\t{NOW - DAY}\n"
+            f"k\t{NOW + 10 * DAY}\nj\t{NOW - DAY}\nn\tnan\nz\t0\nm\t-5\ni\tinf\nk\t{NOW - 2 * DAY}\n"
         )
-        self.assertEqual(mod.load_seen(), {"k:0": NOW, "j:0": NOW - DAY})
+        self.assertEqual(mod.load_seen(), {"k": [NOW, NOW - 2 * DAY], "j": [NOW - DAY]})
+
+    def test_an_edited_or_deleted_copy_never_passes_its_age_on(self):
+        """A text written twice, days apart: when the older copy is edited or deleted, the
+        copy left keeps the newer time."""
+        mod = load_tidy(self.state, self.brief)
+        head = "# H\n## START HERE\n- now\n## 2026-11-01 log\n"
+        mod.NOW = NOW - 3 * DAY
+        mod.first_seen((head + "- watch CI\n").splitlines(True))
+        mod.NOW = NOW - 3600
+        mod.first_seen((head + "- watch CI\n- other\n- watch CI\n").splitlines(True))
+        mod.NOW = NOW
+        for later in (
+            head + "- watch CI ✅\n- other\n- watch CI\n",
+            head + "- other\n- watch CI\n",
+        ):
+            with self.subTest(later=later):
+                seen = mod.first_seen(later.splitlines(True))
+                kept, _ = mod.plan_heph(later, dt.datetime.fromtimestamp(NOW), seen)
+                self.assertIn("- watch CI\n", kept)
+                mod.save_seen(  # back to the state before this edit
+                    mod.line_keys(
+                        (head + "- watch CI\n- other\n- watch CI\n").splitlines(True)
+                    ),
+                    [NOW - 3600] * 4 + [NOW - 3 * DAY, NOW - 3600, NOW - 3600],
+                )
+
+    def test_first_seen_takes_a_key_s_newest_time(self):
+        mod = load_tidy(self.state, self.brief)
+        lines = ["# H\n", "- x\n"]
+        k = mod.line_keys(lines)[1]
+        (self.state / ".heph-seen.tsv").write_text(
+            f"{k}\t{NOW - 9 * DAY}\n{k}\t{NOW - DAY}\n"
+        )
+        self.assertEqual(mod.first_seen(lines)[1], NOW - DAY)
+
+    def test_a_blank_line_above_does_not_reset_a_line_s_age(self):
+        mod = load_tidy(self.state, self.brief)
+        mod.NOW = NOW - 9 * DAY
+        mod.first_seen(["# H\n", "- a\n", "\n", "- b\n"])
+        mod.NOW = NOW
+        self.assertEqual(mod.first_seen(["# H\n", "- a\n", "- b\n"])[2], NOW - 9 * DAY)
+
+    def test_a_text_moved_after_another_line_is_new(self):
+        mod = load_tidy(self.state, self.brief)
+        mod.NOW = NOW - 9 * DAY
+        mod.first_seen(["# H\n", "- a\n", "- ok\n", "- b\n"])
+        mod.NOW = NOW
+        self.assertEqual(mod.first_seen(["# H\n", "- a\n", "- b\n", "- ok\n"])[3], NOW)
+
+    def test_no_line_under_48_hours_ever_goes(self):
+        """Random appends (some texts repeated), edits and deletes, seen every 6 hours, with an
+        applied tidy now and then: a line whose text was written only once is kept while it is
+        under HEPH_HOURS old, and a text found twice after the same line is never dropped. (The
+        same text written again after the same line is the same note: no new text is lost.)"""
+        import random
+
+        mod = load_tidy(self.state, self.brief)
+        rng = random.Random(514)
+        head = ["# H\n", "## START HERE\n", "- now\n", "## 2026-11-01 log\n"]
+        checked = 0
+        for trial in range(40):
+            (self.state / ".heph-seen.tsv").unlink(missing_ok=True)
+            body: list[
+                tuple[str, float, bool]
+            ] = []  # line, when written, written only once
+            written: set[str] = set()
+
+            def put(ln: str, when: float) -> tuple[str, float, bool]:
+                once = ln not in written
+                written.add(ln)
+                return ln, when, once
+
+            t0 = NOW - 20 * DAY
+            for step in range(60):
+                now = t0 + step * 6 * 3600
+                for i in range(rng.randint(0, 3)):
+                    op = rng.random()
+                    if op < 0.6 or not body:
+                        text = rng.choice(["- ok", "", f"- note {trial}.{step}.{i}"])
+                        body.append(put(text + "\n", now))
+                    elif op < 0.8:
+                        k = rng.randrange(len(body))
+                        body[k] = put(body[k][0].rstrip("\n") + f" ✅{step}\n", now)
+                    else:
+                        del body[rng.randrange(len(body))]
+                mod.NOW = now
+                lines = head + [ln for ln, _, _ in body]
+                seen = mod.first_seen(lines)
+                if step % 5 != 4:
+                    continue
+                text = "".join(lines)
+                kept, s = mod.plan_heph(text, dt.datetime.fromtimestamp(now), seen)
+                keep = set(s["kept_index"])
+                cut = now - mod.HEPH_HOURS * 3600
+                keys = mod.line_keys(lines)
+                for n, (ln, w, once) in enumerate(body, start=len(head)):
+                    if not ln.strip():
+                        continue
+                    if keys.count(keys[n]) > 1 or (w >= cut and once):
+                        checked += 1
+                        self.assertIn(n, keep, (trial, step, ln))
+                body = [b for n, b in enumerate(body, start=len(head)) if n in keep]
+                mod.save_seen(mod.line_keys(kept), [seen[i] for i in s["kept_index"]])
+        mod.NOW = NOW
+        self.assertGreater(checked, 500)
 
     def test_the_report_records_first_sight(self):
         (self.state / "HEPH.md").write_text(HEPH)

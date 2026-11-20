@@ -51,6 +51,7 @@ import importlib.util
 import json
 import logging
 import logging.handlers
+import math
 import os
 import re
 import shutil
@@ -264,33 +265,38 @@ SEEN = ".heph-seen.tsv"  # each HEPH.md line's fingerprint and when a tidy first
 
 
 def line_keys(lines: list[str]) -> list[str]:
-    """A key per line: a hash of its text and which copy of that text it is, so blank lines
-    and repeats each get their own."""
-    copies: dict[str, int] = {}
-    out = []
+    """A key per line: a hash of its text and of the nearest non-blank line above it, so the
+    same text written again elsewhere is a new line, and an edit or a delete above a line
+    makes it new too (both err toward keeping)."""
+    out, prev = [], ""
     for ln in lines:
-        h = hashlib.blake2b(
-            ln.rstrip("\r\n").encode("utf-8", "surrogateescape"), digest_size=8
-        ).hexdigest()
-        k = copies.get(h, 0)
-        copies[h] = k + 1
-        out.append(f"{h}:{k}")
+        text = ln.rstrip("\r\n")
+        out.append(
+            hashlib.blake2b(
+                f"{prev}\0{text}".encode("utf-8", "surrogateescape"), digest_size=8
+            ).hexdigest()
+        )
+        if text.strip():
+            prev = text
     return out
 
 
-def load_seen() -> dict[str, float]:
-    """The first-seen record; empty when it is missing or unreadable, so every line is new."""
+def load_seen() -> dict[str, list[float]]:
+    """The first-seen record, every time kept per key; empty when it is missing or
+    unreadable, and a time that is no positive number is skipped, so such lines are new."""
     try:
         text = (STATE / SEEN).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return {}
-    out: dict[str, float] = {}
+    out: dict[str, list[float]] = {}
     for row in text.splitlines():
         key, _, when = row.partition("\t")
         try:
-            out[key] = min(float(when), NOW)
+            w = float(when)
         except ValueError:
             continue
+        if math.isfinite(w) and w > 0:
+            out.setdefault(key, []).append(min(w, NOW))
     return out
 
 
@@ -301,17 +307,27 @@ def save_seen(keys: list[str], times: list[float]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.writelines(f"{k}\t{w:.0f}\n" for k, w in zip(keys, times))
         os.replace(tmp, STATE / SEEN)
-    except OSError:
+    except OSError as exc:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
+        event(
+            logging.WARNING,
+            "first-seen record not saved; lines it lacks count as new",
+            error=str(exc),
+        )
 
 
 def first_seen(lines: list[str]) -> list[float]:
     """When a tidy (or the 6-hourly report) first saw each line, recording the new ones now.
-    Only this decides a line's age: a date written in the log may name another day."""
+    Only this decides a line's age: a date written in the log may name another day. A key
+    found more than once (the same text after the same line) is always new: which copy was
+    there first cannot be told, so none is ever guessed old."""
     keys = line_keys(lines)
     seen = load_seen()
-    times = [seen.get(k, NOW) for k in keys]
+    count: dict[str, int] = {}
+    for k in keys:
+        count[k] = count.get(k, 0) + 1
+    times = [NOW if count[k] > 1 else max(seen.get(k, [NOW])) for k in keys]
     save_seen(keys, times)
     return times
 
@@ -1049,10 +1065,12 @@ def report(out: Path) -> int:
             data["heph_bytes"] = 0
         if is_state_folder(STATE):
             heph = STATE / "HEPH.md"
-            if (
-                heph.is_file() and not heph.is_symlink()
-            ):  # record first sight, every 6 h
-                first_seen(heph.read_text("utf-8", "surrogateescape").splitlines(True))
+            # First sight every 6 h, but never in the middle of a tidy's rewrite.
+            with FileLock(STATE / ".tidy.lock", 0) as free:
+                if free and heph.is_file() and not heph.is_symlink():
+                    first_seen(
+                        heph.read_text("utf-8", "surrogateescape").splitlines(True)
+                    )
             data["briefs_stale"] = len(stale_briefs())
             data["archive_stale"] = len(stale_archive())
     except Exception as exc:  # the report is written whatever failed, naming it
