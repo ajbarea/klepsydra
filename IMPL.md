@@ -22,14 +22,16 @@ verifies each PR against before.md. perf-k codes a slice only when it is too sub
 - Reported to Athena 16:42 (fleet send).
 
 ## Next
-1. make test-fleet + make shellcheck + hooks/test_fleet.sh (running), then PR for slice 4 (Part of #492).
-2. Verify each agy PR: rerun `ba.sh`-style BEFORE/AFTER with SANDBOX_SEED, compare with before.md.
-3. Class (b) specs (Rust readers, phone server). SOTA: notify + notify-debouncer-full for Linux paths,
-   but inotify misses Windows-side writes on /mnt/c (9P): files there need notify PollWatcher or an
-   mtime+size cache; measure both. Gate on instruction counts (CodSpeed simulation), report wall time.
+1. Athena round 1 on #500 (reports/perf-500-r1.md): SF1 menu screen " ❯ 1. Yes" added (mutant == 1 -> >= 1);
+   SF2 budget now covers rc_settled, armed_at, input_text, plus a watch-tick count against a stub tmux
+   (23 per tick, 2 panes; 82 on 958dbb2; ps=$(plain) put back fails it); nits: idle_empty/box_empty parse
+   their own screen, redundant rule-gap test dropped, missing strace is a loud local warning (CI already fails).
+   Then commit, push, CI green, report to Athena (a fresh reviewer runs round 2). Resume pass: covered by the
+   helper budget and the harness, not a unit count (one() needs a dozen stubs).
+2. Verify each agy PR (slices 1, 2, 3, 5): rerun the harness BEFORE/AFTER with SANDBOX_SEED, compare with before.md.
 
 ## Verify
-- `bash fleet/test_forks_screen.sh` (STRACE=, mawk on PATH; ~2.5 min); `make test-forks`.
+- `bash fleet/test_forks_screen.sh` (STRACE=, mawk on PATH; ~2.5 min); `make test-forks`. strace here: `apt-get download strace && dpkg -x strace_*.deb root`, then STRACE=root/usr/bin/strace.
 - BEFORE/AFTER: detached worktree at origin/main + `SANDBOX_SEED=<copy> bash scripts/perf/forks/run.sh OUT %59 %60 %63`
   for each checkout, under `flock -o /tmp/fleet-heavy.lock`.
 - strace/hyperfine/mawk without root: `apt-get download X && dpkg -x X_*.deb root`.

@@ -119,9 +119,9 @@ SCR_AWK='
     out(1, NR)
     out(1, (n >= 2) ? r[n - 1] - 1 : NR)
     if (n >= 2) out(r[n] + 1, NR); else printf "%s", Z
-    printf "%d%s", (n >= 2 && r[n] - r[n - 1] >= 2 && index(pl[r[n - 1] + 1], "❯") == 1), Z
+    printf "%d%s", (n >= 2 && index(pl[r[n - 1] + 1], "❯") == 1), Z
     t = ""
-    if (nd >= 2 && rd[nd] - rd[nd - 1] >= 2 && index(dl[rd[nd - 1] + 1], "❯") == 1) {
+    if (nd >= 2 && index(dl[rd[nd - 1] + 1], "❯") == 1) {
       t = dl[rd[nd - 1] + 1]
       sub(/^❯(\xc2\xa0| )?/, "", t)
       for (i = rd[nd - 1] + 2; i < rd[nd]; i++) { l = dl[i]; sub(/^  /, "", l); t = t " " l }
@@ -312,8 +312,9 @@ type_exactly() { # PANE TEXT
 }
 
 not_busy() { has_input_box "$1" && ! busy "$1"; }
-idle_empty() { has_input_box "$1" && [[ -z $SCR_INPUT ]] && ! busy "$1"; }
-box_empty() { has_input_box "$1" && [[ -z $SCR_INPUT ]]; }
+# Each parses its own SCREEN first, so SCR_INPUT is never a screen read before.
+idle_empty() { screen_parse "$1"; has_input_box "$1" && [[ -z $SCR_INPUT ]] && ! busy "$1"; }
+box_empty() { screen_parse "$1"; has_input_box "$1" && [[ -z $SCR_INPUT ]]; }
 holds_input() { screen_parse "$1"; [[ -n $SCR_INPUT ]]; }
 started() { busy "$1" || limit_line "$1" >/dev/null; }
 # PANE (showing SCREEN) stopped at a usage limit: no turn running, and a limit

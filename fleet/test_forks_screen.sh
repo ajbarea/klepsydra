@@ -130,6 +130,10 @@ $RULE"
 $RULE"
   "$RULE
 $RULE"
+  "$RULE
+ ❯ 1. Yes
+   2. No
+$RULE"
   " Stop and wait for limit to reset
  Enter to confirm · Esc to cancel"
   " Enter to select · Esc to continue"
@@ -276,17 +280,45 @@ if command -v "$STRACE" >/dev/null; then
     grep -cE ' (clone|clone3|fork|vfork)\(' "$work/trace"
   }
   printf '%s' "${corpus[2]}" >"$work/screen"
-  # shellcheck disable=SC2016  # the child bash expands $1 and $2, its positional args.
-  load=$(forks_of env -u FLEET_RUN_ID bash -c '. "$1/fleet/lib.sh"; s=$(<"$2")' _ "$root" "$work/screen")
-  # shellcheck disable=SC2016  # the child bash expands $1, $2 and $s.
-  all=$(forks_of env -u FLEET_RUN_ID bash -c '. "$1/fleet/lib.sh"; s=$(<"$2")
+  armed_src=$(sed -n '/^# ARMED: the time BELOW/,/^}/p' "$root/fleet/resume-at-reset.sh")
+  # shellcheck disable=SC2016  # the child bash expands $1, $2 and $3, its positional args.
+  load=$(forks_of env -u FLEET_RUN_ID bash -c '. "$1/fleet/lib.sh"; eval "$3"; s=$(<"$2")' _ "$root" "$work/screen" "$armed_src")
+  # shellcheck disable=SC2016  # the child bash expands $1, $2, $3 and $s.
+  all=$(forks_of env -u FLEET_RUN_ID bash -c '. "$1/fleet/lib.sh"; eval "$3"; s=$(<"$2")
     busy "$s"; has_input_box "$s"; idle_empty "$s"; limit_line "$s" >/dev/null; limit_menu "$s"
-    split_screen "$s"; near 6 >/dev/null; holds_input "$s"; box_empty "$s"' _ "$root" "$work/screen")
-  check "every screen helper on one capture: one process" "$((all - load))" 1
+    split_screen "$s"; near 6 >/dev/null; holds_input "$s"; box_empty "$s"; rc_settled "$s"
+    screen_parse "$s"; armed_at; : "$(input_text "$s")"' _ "$root" "$work/screen" "$armed_src")
+  # input_text prints, so its $(...) is one fork of the caller's: two in all.
+  check "every screen helper on one capture: one parse" "$((all - load))" 2
+  # The watch loop, one tick at a time, against a stub tmux (no server): one
+  # busy pane and one idle pane that says "done". Processes between one tick's
+  # sleep and the next; the first tick also loads the state, so it is left out.
+  mkdir -p "$work/stub" "$work/wstate" "$work/wk/fleet"
+  printf '%s\n' "● Working" "✻ Pondering… (12s · esc to interrupt)" "$RULE" "❯ " "$RULE" >"$work/pane-busy"
+  printf '%s\n' "● Done." "  done 3:40 PM" "$RULE" "❯ " "$RULE" "  ⏵⏵ bypass permissions on" >"$work/pane-done"
+  cat >"$work/stub/tmux" <<STUB
+#!/bin/sh
+case "\$*" in
+  *list-panes*) printf '%s\\n' %1 %2 ;;
+  *capture-pane*%1*) cat "$work/pane-busy" ;;
+  *capture-pane*%2*) cat "$work/pane-done" ;;
+esac
+STUB
+  chmod +x "$work/stub/tmux"
+  PATH=$work/stub:$PATH FLEET_STATE=$work/wstate KLEPSYDRA_DIR=$work/wk WATCH_TICK=0.2 IDLE_S=99999 \
+    "$STRACE" -f -qq -e trace=clone,clone3,fork,vfork,execve -e signal=none -o "$work/wtrace" \
+    timeout 6 bash "$root/fleet/watch-panes.sh" %1 %2 >/dev/null 2>&1 </dev/null
+  ticks=$(awk '/ (clone|clone3|fork|vfork)\(/ && !/resumed/ { n++ } / execve\("[^"]*\/sleep"/ { if (seen) print n; seen = 1; n = 0 }' "$work/wtrace")
+  most=$(sort -n <<<"$ticks" | tail -1)
+  check "the watch loop ran ticks to count" "$(($(grep -c . <<<"$ticks") >= 2))" 1
+  # Counted with the stub's own processes. 23 on every tick here; 82 before
+  # #492's slice 4. A later slice that lowers it lowers WATCH_TICK_BUDGET.
+  check "one watch tick, 2 panes: at most ${WATCH_TICK_BUDGET:-23} processes (most was ${most:-none})" \
+    "$((${most:-999} <= ${WATCH_TICK_BUDGET:-23}))" 1
 elif [[ -n ${CI:-} ]]; then
   check "strace present in CI" no yes
 else
-  echo "  SKIP fork budget: no strace (sudo apt-get install strace, or STRACE=path)"
+  printf '\n  WARNING: NO FORK BUDGET RAN: strace is missing (sudo apt-get install strace, or STRACE=path).\n  CI fails without it; this local run checked behaviour only.\n\n' >&2
 fi
 
 echo "screen parse: $pass passed, $fail failed"
