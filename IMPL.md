@@ -36,19 +36,20 @@ docs/mockups/2026-11-18/wall-header.html; shots fleet-briefing/shots/2026-11-18/
   ledger_gives_auto_its_room ("a drag of the Ledger's separator ... measures Auto once"), passed once on
   main (2/0): check whether 3a causes it.
 
-## Next (resume here)
-1. ✅ #504 CI green on 370a729; reported to Heph via inbox/gauge-421.md (fleet send said not-pasted).
-2. `ledger_gives_auto_its_room`: main passed 2 of 2 (20:3x, 11-19) before the run was killed for low WSL
-   memory (8/9 GB); 3a not rerun yet. CI does not run the browser tests, so run it locally when memory allows,
-   3x on 3a. On 3a, Auto measured once during the drag (expected 0): the only writer of the observed title is
-   showDensity; the ResizeObserver skips while edge.resizing, so suspect a rAF queued just before pointerdown
-   (Ledger opening at 1440 re-wraps the header with the dock, a later settle wave) - check with a longer
-   settle before the drag, or cancel densityFrame on drag start (sidepanel pointerdown).
-3. Rebuild (`.live/live3a.sh stop` first; build under flock), restart `.live/live3a.sh start`, `openwall`,
+## Next (resume here) - stopped 11-19 night for capacity (Athena); #504 comes first
+0. #504 round 1 fixes pushed (502c6fb); its own IMPL lists what is left there (local browser run, mutation
+   matrix, report). Finish that before 3a.
+1. `ledger_gives_auto_its_room` on 3a (before the fix): 1 fail, 2 pass of 3 (fail: measures 1 during the drag);
+   main 2/2. Fix committed, NOT yet run in a browser: the ResizeObserver's frame checks edge.resizing again when
+   it runs (`densityCheck`), since the dock's 5 s reads can resize the wall and queue a frame just before
+   pointerdown; the release still measures via onResized. Node 590/590, lint clean. Verify: the case 5x under
+   flock, all pass; then the whole wall suite once.
+2. Rebuild (`.live/live3a.sh stop` first; build under flock), restart `.live/live3a.sh start`, `openwall`,
    re-measure `flock -o /tmp/fleet-heavy.lock bash .live/cpu3a.sh`: the dock-on number after bc5936d.
-4. Shots README lines under 2026-11-19; PR: base fix/fade-guard-498 (main after #504), assignee ajbarea,
+3. Shots README lines under 2026-11-19; PR: base fix/fade-guard-498 (main after #504), assignee ajbarea,
    label enhancement, "Part of #421"; short top + details (live vs tested, CPU before/after, #505, the
-   390 wrap); follow-up: one Rust usage hub feeding strip, wall and phone. Report to Heph; do not merge.
+   390 wrap, the separator race); follow-up: one Rust usage hub feeding strip, wall and phone. Report to Heph;
+   do not merge.
 
 ## Verify
 - `node --test src/*.test.js` (590 pass); `npm run lint`; `(cd src-tauri && cargo fmt --all --check && cargo test -p klepsydra-fleet)`.

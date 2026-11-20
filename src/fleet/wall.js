@@ -1723,10 +1723,13 @@ addEventListener("resize", () => {
 // wall's height without a card arriving: Auto looks again, once a frame. A
 // switch it makes changes the height too, and the hysteresis holds it there.
 let densityFrame = 0;
+// A drag of a panel's separator measures once, on release: checked again when
+// the frame runs, since a drag can start between the resize and its frame.
+const densityCheck = () => edge.resizing || showDensity();
 new ResizeObserver(() => {
-  if (edge.resizing) return; // a drag of a panel's separator measures once, on release
+  if (edge.resizing) return;
   cancelAnimationFrame(densityFrame);
-  densityFrame = requestAnimationFrame(showDensity);
+  densityFrame = requestAnimationFrame(densityCheck);
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 
