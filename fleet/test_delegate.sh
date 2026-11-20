@@ -688,6 +688,74 @@ check "an echo wrapped onto indented lines is not part of the answer, and the HT
   "$(has "$(cat "$work/state/delegate/$idw/answer-2.md")" 'STUB ANSWER') $(has "$(cat "$work/state/delegate/$idw/answer-2.md")" 'wrapmarker-tail') $(has "$(sent)" 'status=ok turn=2')" "yes no yes"
 sleep 3; bash "$delegate" stop "$idw" >/dev/null 2>&1; knobs_off
 knobs_off
+echo "review round 8: watcher 3-poll idle debounce (#488)"
+watch_code=$(sed -n '/^cmd_watch()/,/^}/p' "$delegate")
+# shellcheck disable=SC2034,SC2329 # variables and mocks invoked by eval-ed cmd_watch
+run_watch_test() {
+  local mode=$1
+  eval "$watch_code"
+  DEL_ROOT="$work/watch_debounce"
+  rm -rf "$DEL_ROOT" && mkdir -p "$DEL_ROOT/tw"
+  POLL=0.001
+  TURN_TIMEOUT=5
+  pane_screen() { echo "mock screen"; }
+  eng_answer() { echo "mock answer"; }
+  meta_get() {
+    case $2 in
+      pane) echo "p" ;;
+      engine) echo "agy" ;;
+      turn) echo "0" ;;
+      prompt) echo "p" ;;
+      model) echo "m" ;;
+    esac
+  }
+  status_file="$DEL_ROOT/status.txt"
+  meta_set() { echo "$2" > "$status_file"; }
+  stamp() { :; }
+  flog() { :; }
+  notify() { :; }
+
+  history_file="$DEL_ROOT/history.txt"
+  : > "$history_file"
+  : > "$status_file"
+  if [[ $mode == single ]]; then
+    eng_state() {
+      local count
+      count=$(wc -l < "$history_file")
+      (( count++ ))
+      case $count in
+        1) echo "busy"; echo "busy" >> "$history_file" ;;
+        2) echo "idle"; echo "idle" >> "$history_file" ;;
+        3) echo "busy"; echo "busy" >> "$history_file" ;;
+        *) echo "busy" ;;
+      esac
+    }
+    lane_pane() {
+      local count
+      count=$(wc -l < "$history_file")
+      (( count < 3 ))
+    }
+  else
+    lane_pane() { return 0; }
+    eng_state() {
+      local count
+      count=$(wc -l < "$history_file")
+      (( count++ ))
+      case $count in
+        1) echo "busy"; echo "busy" >> "$history_file" ;;
+        2) echo "idle"; echo "idle" >> "$history_file" ;;
+        3) echo "idle"; echo "idle" >> "$history_file" ;;
+        4) echo "idle"; echo "idle" >> "$history_file" ;;
+        *) echo "busy" ;;
+      esac
+    }
+  fi
+  cmd_watch "tw"
+  cat "$status_file"
+}
+check "idle once between busy polls does not end the turn" "$(run_watch_test single)" "status=gone"
+check "3 consecutive idle polls end the turn" "$(run_watch_test triple)" "status=idle"
+
 echo "the shared policy"
 check "the helper rules fit agy's 24000-byte limit" "$([[ $(stat -c %s "$root/hooks/klepsydra-engine-rules.md") -le 24000 ]] && echo fits)" "fits"
 check "a person, course, team or account name appears in no shipped rule or policy" "$(cat "$root/hooks/klepsydra-engine-rules.md" "$root/hooks/klepsydra-agy-locked.json" | grep -cwE 'AJ|ajbar|RIT|CISC|Ben|makesense|Anthropic|Claude')" "0"
