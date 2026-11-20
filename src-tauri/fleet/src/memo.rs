@@ -210,7 +210,7 @@ mod win {
     /// A reparse point that names another file (a symlink or junction), as
     /// std's `FileType::is_symlink` reads it; other tags (cloud or dedup
     /// placeholders) are the file itself.
-    fn is_link(attributes: u32, tag: u32) -> bool {
+    pub(super) fn is_link(attributes: u32, tag: u32) -> bool {
         attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && tag & 0x2000_0000 != 0
     }
 
@@ -636,30 +636,19 @@ mod tests {
         assert_eq!(Stamp::of_file(&std::fs::File::open(&dir.0).unwrap()), None);
     }
 
-    /// A junction is a link to Windows' listing, as a symlink is on Unix:
-    /// `mklink /J` needs no administrator.
+    /// Windows' listing calls a junction or symlink a link and any other
+    /// reparse point (a cloud placeholder) the file itself, as std's
+    /// `is_symlink` does. Tags from MS-FSCC 2.1.2.1.
     #[cfg(windows)]
     #[test]
-    fn a_junction_is_listed_as_other_with_no_stamp() {
-        let dir = crate::scan::tests::Scratch::new("memo-junction");
-        std::fs::create_dir(dir.0.join("d")).unwrap();
-        let ok = std::process::Command::new("cmd")
-            .arg("/C")
-            .arg("mklink")
-            .arg("/J")
-            .arg(dir.0.join("j"))
-            .arg(dir.0.join("d"))
-            .output()
-            .unwrap()
-            .status
-            .success();
-        assert!(ok, "mklink /J failed");
-        let j = list(&dir.0)
-            .unwrap()
-            .into_iter()
-            .find(|e| e.name == "j")
-            .unwrap();
-        assert_eq!((j.kind, j.stamp, j.modified), (Kind::Other, None, None));
+    fn only_a_name_surrogate_reparse_point_is_a_link() {
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT as R;
+        let (junction, symlink, cloud) = (0xA000_0003, 0xA000_000C, 0x9000_001A);
+        assert!(win::is_link(R, junction));
+        assert!(win::is_link(R, symlink));
+        assert!(!win::is_link(R, cloud));
+        // EaSize is a length, not a tag, without the reparse attribute.
+        assert!(!win::is_link(0, junction));
     }
 
     #[test]
