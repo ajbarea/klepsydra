@@ -33,6 +33,12 @@ def run(browser):
             card.querySelector('.task').textContent = 'A useful development task';
             card.querySelector('.repo').textContent = 'example/repository';
             card.querySelector('.jump').textContent = 'Open terminal';
+            card.querySelector('.pill .label').textContent = 'working';
+            card.querySelector('.pill .when').textContent = '5m';
+            card.querySelector('.branch').hidden = false;
+            card.querySelector('.branch').textContent = 'fix/narrow-wall';
+            card.querySelector('.acct').hidden = false;
+            card.querySelector('.acct').textContent = 'Personal';
             wall.append(card);
           }
         }""")
@@ -48,6 +54,11 @@ def run(browser):
                     const wall = document.querySelector('#wall');
                     const cards = [...wall.querySelectorAll('.card')];
                     const rects = cards.map(c => c.getBoundingClientRect());
+                    const withinCard = selector => cards.every(c => {
+                      const child = c.querySelector(selector).getBoundingClientRect();
+                      const card = c.getBoundingClientRect();
+                      return child.width > 0 && child.left >= card.left - 0.5 && child.right <= card.right + 0.5;
+                    });
                     return {
                       cardCount: cards.length,
                       pageWidth: doc.scrollWidth,
@@ -56,6 +67,8 @@ def run(browser):
                       firstCardRight: rects[0].right,
                       rightmostCard: Math.max(...rects.map(r => r.right)),
                       columns: getComputedStyle(wall).gridTemplateColumns.split(' ').length,
+                      terminalInside: withinCard('.jump'),
+                      accountInside: withinCard('.acct'),
                     };
                 }""")
                 ok = (
@@ -63,6 +76,8 @@ def run(browser):
                     and result["pageWidth"] <= result["viewportWidth"]
                     and result["rightmostCard"] <= width + 0.5
                     and result["firstCardRight"] <= width + 0.5
+                    and result["terminalInside"]
+                    and result["accountInside"]
                 )
                 if width == 945:
                     ok = ok and result["columns"] == 2
