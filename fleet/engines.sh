@@ -126,6 +126,7 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   foot=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -1)
   # Only the dialog's own footer, last on screen: the answered dialog stays in scrollback.
   if [[ $engine == copilot && $(grep -v '^[[:space:]]*$' <<<"$screen" | tail -2) == *"enter to select"* ]]; then echo trust; return; fi
+  if [[ $engine == agy && $(grep -v '^[[:space:]]*$' <<<"$screen" | tail -2) == *"enter Confirm"* ]]; then echo trust; return; fi
   local footer=unknown
   if [[ $engine == agy && $foot == *"esc to cancel"* ]]; then footer=busy
   elif [[ $engine == agy && $foot == *"? for shortcuts"* ]]; then footer=idle

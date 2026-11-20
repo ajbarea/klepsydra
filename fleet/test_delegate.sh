@@ -202,6 +202,9 @@ bg_task=$(cat "$here/fixtures/agy-1.5.13-bg-running.txt")
 check "agy 1.5.13 real background task fixture reads busy" "$(eng_state agy "$bg_task")" "busy"
 loading_screen=$'────\n> ask\n  reply\n⢿  Loading...\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%'
 check "agy: ⢿ Loading... screen reads busy" "$(eng_state agy "$loading_screen")" "busy"
+trust_screen=$(cat "$here/fixtures/agy-1.5.13-trust.txt")
+check "agy 1.5.13 real trust dialog reads trust" "$(eng_state agy "$trust_screen")" "trust"
+check "agy trust key is Enter" "$(eng_trust_key agy)" "Enter"
 check "agy 1.5.12: a short reply that is a quota message is a limit" "$(eng_state agy $'────\n> ask\n  You have exhausted your quota\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%')" "limit"
 check "agy 1.5.12: a short answer about a 429 is a limit too" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\nGemini 3.8 Flash (Low) · ctx 0% · 5h 21% · 7d 39%')" "limit"
 
