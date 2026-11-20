@@ -328,12 +328,24 @@ pub(crate) mod tests {
         dir.write(&name, &session(A, "error"));
         age(&dir, &name, 1_700_000_000);
         let ino = || std::fs::metadata(dir.0.join(&name)).unwrap().ino();
-        let before = ino();
+        let ctime = || {
+            let m = std::fs::metadata(dir.0.join(&name)).unwrap();
+            (m.ctime(), m.ctime_nsec())
+        };
+        let before = (ino(), ctime());
         let mut s = Scanner::default();
         s.scan(&dir.0);
-        std::fs::write(dir.0.join(&name), session(A, "ended")).unwrap();
-        age(&dir, &name, 1_700_000_000);
-        assert_eq!(ino(), before, "the same inode");
+        // Rewrite until the change time moves: before multigrain timestamps
+        // (Linux 6.13) it moves once per tick, not on every write.
+        loop {
+            std::fs::write(dir.0.join(&name), session(A, "ended")).unwrap();
+            age(&dir, &name, 1_700_000_000);
+            if ctime() != before.1 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(ino(), before.0, "the same inode");
         assert_eq!(
             s.scan(&dir.0).entries[0].file.state,
             crate::session::State::Ended
@@ -356,14 +368,19 @@ pub(crate) mod tests {
             s.scan(&dir.0).entries[0].file.state,
             crate::session::State::Ended
         );
-        // With no pass between.
-        std::fs::remove_file(dir.0.join(&name)).unwrap();
-        dir.write(&name, &session(A, "error"));
-        age(&dir, &name, 1_700_000_000);
-        assert_eq!(
-            s.scan(&dir.0).entries[0].file.state,
-            crate::session::State::Error
-        );
+        // With no pass between. Unix only: NTFS tunnelling gives a name made
+        // again within 15 s its old creation time, so there the 2 s rule and
+        // a fresh time (every klepsydra writer gives one) are what catch it.
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(dir.0.join(&name)).unwrap();
+            dir.write(&name, &session(A, "error"));
+            age(&dir, &name, 1_700_000_000);
+            assert_eq!(
+                s.scan(&dir.0).entries[0].file.state,
+                crate::session::State::Error
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -418,6 +435,7 @@ pub(crate) mod tests {
             dir.write(&name, &session(&id, "working"));
             age(&dir, &name, 1_700_000_000);
             s.scan(&dir.0);
+            assert_eq!(s.kept(), 1, "the one listed session is held");
             std::fs::remove_file(dir.0.join(&name)).unwrap();
         }
         s.scan(&dir.0);
