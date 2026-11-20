@@ -17,9 +17,9 @@ when it rebases on this.
 - PR #487's body already justifies the placeholder icon's 0.7 (no edit needed).
 
 ## Next (resume here)
-1. Heavy: run the case alone and mutation-check it (same bypasses injected into src/style.css):
+1. ✅ Browser case 40/40 clean; 6 of 6 bypasses turn it red (scratchpad mut498.sh).
    `flock -o /tmp/fleet-heavy.lock timeout 900 uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py strip_words_keep_their_ink`
-2. PR (Closes #498, label bug, assignee ajbarea), CI green, report to Heph. Do not merge.
+2. PR #504 open (Closes #498). When CI is green, report to Heph. Do not merge.
 
 ## Verify
 - `node --test src/*.test.js`; `npm run lint`.
