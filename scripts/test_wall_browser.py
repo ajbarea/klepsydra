@@ -1185,6 +1185,11 @@ window.__TAURI__ = { core: {
       setTimeout(() => args.onMessage.onmessage(window.__savedTheme ?? 'kourai'), window.__themeDelay ?? 0);
       return Promise.resolve();
     }
+    if (cmd === 'opacity_subscribe') {
+      window.__opacity = args.onMessage;
+      setTimeout(() => args.onMessage.onmessage(window.__savedOpacity ?? 80), 0);
+      return Promise.resolve();
+    }
     // A test's own answers by command (settings rows): a function gets the args, may reject.
     if (window.__answers && cmd in window.__answers) {
       window.__calls.push([cmd, args]);
@@ -4920,6 +4925,30 @@ def worn(wall, page, theme, got, what):
     wall.check(cards and not wrong and got["picker"] == theme and got["keeper"] == keeper, f"{what}: every cast card wears {theme}", [wrong[:2], got["picker"], got["keeper"]])
 
 
+def gauge_opacity_slider(wall):
+    """Gauge background (#438): the gear's slider shows the saved opacity; arrow
+    steps show at once and are saved once, where the slider rests; with no push
+    back from the app (Tauri does not order one before the reply) the thumb
+    stays where it was asked."""
+    page = open_app(wall, 1920, 1000, init="window.__savedOpacity = 35;")
+    open_gear(page)
+    got = page.evaluate("[document.querySelector('.opacity-pick').hidden, document.getElementById('gauge-opacity').value, document.querySelector('.opacity-value').textContent, document.getElementById('gauge-opacity').getAttribute('aria-valuetext')]")
+    wall.check(got == [False, "35", "35%", "35%"], "the slider shows the saved opacity, in words too", got)
+    box = page.locator("#gauge-opacity").bounding_box()
+    wall.check(box is not None and box["height"] >= 24, "the slider is a real target", box)
+    before = len(page.evaluate("window.__calls"))
+    page.focus("#gauge-opacity")
+    for _ in range(3):
+        page.keyboard.press("ArrowRight")
+    early = page.evaluate("window.__calls")[before:]
+    shown = page.evaluate("document.querySelector('.opacity-value').textContent")
+    page.wait_for_timeout(600)
+    calls = page.evaluate("window.__calls")[before:]
+    value = page.evaluate("document.getElementById('gauge-opacity').value")
+    wall.check(early == [] and shown == "50%" and calls == [["set_gauge_opacity", {"opacity": 50}]] and value == "50",
+               "arrow steps show at once and save once, where the slider rests; the thumb stays", [early, shown, calls, value])
+
+
 def themes_switch_live(wall):
     """Characters (#135): the saved theme arrives over theme_subscribe and the
     wall wears it; a switch from the tray (a new message) or the picker
@@ -5981,6 +6010,19 @@ def settings_by_hash(wall):
     wall.check(page.evaluate("document.getElementById('settings').hidden"), "Open wall (the app clears the hash) shows the cards", True)
     page.close()
 
+    # A Ledger open on one session comes back on that session after the page.
+    page = open_app(wall, init=SETTINGS_ANSWERS)
+    page.evaluate("window.__answers.ledger_today = () => fetch('/scripts/fixtures/ledger-demo.json').then((r) => r.json()).then(({ at, ...v }) => v)")
+    page.locator(".card[data-key='demo-2-af_bella'] .chip").click()
+    page.wait_for_selector("#ledger .scope")
+    page.evaluate("location.hash = '#settings'")
+    page.wait_for_selector("#settings:not([hidden]) #row-ping:not([hidden])")
+    page.click("#settings-back")
+    page.wait_for_selector("#ledger[open] .ledger-content table")
+    scope = page.evaluate("() => [document.querySelector('#ledger .scope')?.textContent ?? '', document.activeElement.closest('.gear') !== null]")
+    wall.check("Showing Kallos only" in scope[0] and scope[1], "Back reopens the Ledger on the same session and leaves focus on the gear", scope)
+    page.close()
+
     # Under 1200 px a panel is a modal dialog: the page shuts it (no hidden modal holds the
     # focus), keeps Ctrl+Alt+B from opening one, and reopens it on Back.
     page = open_app(wall, 945, 1000, init=SETTINGS_ANSWERS)
@@ -6117,6 +6159,7 @@ def main() -> int:
             split_toggle,
             ci_watch,
             themes_switch_live,
+            gauge_opacity_slider,
             themes_keeper_and_portrait,
             themes_fit,
             picker_costs_no_height,

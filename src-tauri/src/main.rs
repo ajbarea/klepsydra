@@ -6,6 +6,7 @@ mod geometry;
 mod jump;
 mod launch;
 mod logging;
+mod opacity;
 mod phone;
 #[cfg(windows)]
 mod ping;
@@ -965,6 +966,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(phone::Phone::default())
         .manage(theme::Themes::default())
         .manage(voices::VoicesReader::default())
+        .manage(opacity::Opacities::default())
         .manage(split::Follow::default())
 }
 
@@ -1037,6 +1039,8 @@ fn main() {
             fleet::get_fleet_files,
             fleet::choose_queue_file,
             fleet::choose_needs_file,
+            opacity::opacity_subscribe,
+            opacity::set_gauge_opacity,
             jump::jump_to_terminal,
             launch::launch_session,
             launch::agy_models,
@@ -1088,6 +1092,8 @@ fn main() {
             phone::set(app.handle(), phone::saved(app.handle()));
             // The saved theme to each window as it subscribes, and to the hook's cast.
             theme::publish(app.handle());
+            // Before any window subscribes, so each is sent the saved opacity (#438).
+            opacity::publish(app.handle());
 
             let menu = build_tray_menu(app)?;
             TrayIconBuilder::with_id("main")

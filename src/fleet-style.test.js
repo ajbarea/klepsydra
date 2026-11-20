@@ -41,7 +41,9 @@ test("every badge meets 3:1 against the strip's backdrop, and its symbol against
   const { ring, tones: all } = tones(badgeCss);
   assert.deepEqual(Object.keys(all).sort(), ["done", "error", "needs", "quiet", "working"]);
   // The ring is the panel's own colour: what every badge sits on.
-  const panel = token(read("./style.css"), "--panel-bg");
+  // At the default opacity (#438): the alpha is the setting's token.
+  const style = read("./style.css");
+  const panel = token(style, "--panel-bg").replace("var(--panel-alpha)", token(style, "--panel-alpha"));
   assert.equal(over(panel, ring), ring.toLowerCase(), "ring matches the panel over a dark desktop");
   const onWhite = over(panel, "#ffffff");
   for (const [tone, t] of Object.entries(all)) {

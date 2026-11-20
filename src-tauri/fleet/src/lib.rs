@@ -12,6 +12,7 @@ pub mod hub;
 pub mod ledger;
 pub mod logfmt;
 pub mod lookup;
+pub mod opacity;
 pub mod otel;
 pub mod phone;
 pub mod picks;
