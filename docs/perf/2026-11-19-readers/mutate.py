@@ -60,11 +60,15 @@ M = [
         "            changed,\n            id: meta.ino(),",
         "            changed: SystemTime::UNIX_EPOCH,\n            id: meta.ino(),",
     ),
+    # Equivalent on Linux: every replace (rename, recreate, `ln -f`) moves
+    # the inode's ctime, which the stamp already holds, so no test can tell
+    # it apart. winmutate.sh's "listing file id dropped" is killed on NTFS.
     (
         "file id not stamped",
         "src/memo.rs",
         "            id: meta.ino(),",
         "            id: 0,",
+        "equivalent",
     ),
     (
         "still by the write time alone",
@@ -117,7 +121,7 @@ if base.returncode != 0:
         + (base.stdout + base.stderr)[-2000:]
     )
 print("baseline: pass", flush=True)
-for name, f, old, new in M:
+for name, f, old, new, *expect in M:
     p = os.path.join(root, f)
     orig = open(p).read()
     assert orig.count(old) == 1, (name, orig.count(old))
@@ -131,6 +135,8 @@ for name, f, old, new in M:
             if ln.startswith("    ") and "::" in ln and " " not in ln.strip()
         ]
         verdict = "KILLED" if r.returncode != 0 else "SURVIVED"
+        if expect:
+            verdict = "EQUIVALENT, survived as expected" if r.returncode == 0 else "KILLED (expected equivalent)"
         print(f"{verdict}: {name} :: {', '.join(sorted(set(fails)))[:300]}", flush=True)
     finally:
         open(p, "w").write(orig)
