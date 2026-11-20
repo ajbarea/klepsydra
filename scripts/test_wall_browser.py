@@ -1190,6 +1190,12 @@ window.__TAURI__ = { core: {
       setTimeout(() => args.onMessage.onmessage(window.__savedOpacity ?? 80), 0);
       return Promise.resolve();
     }
+    // A test's own answers by command (settings rows): a function gets the args, may reject.
+    if (window.__answers && cmd in window.__answers) {
+      window.__calls.push([cmd, args]);
+      const a = window.__answers[cmd];
+      return typeof a === 'function' ? Promise.resolve().then(() => a(args)) : Promise.resolve(a);
+    }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     // The front end's log lines, apart from the actions.
     if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
@@ -1214,7 +1220,7 @@ READS = ["get_launch_dir", "get_split_mode", "agy_models", "read_usage", "engine
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
-def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks", theme=None, init=None, before=None):
+def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", launch_dir="/home/aj/ajsoftworks", theme=None, init=None, before=None, scheme="light", path="src/wall.html"):
     """The demo wall as the app would feed it, with invokes recorded; `keep`
     picks which demo sessions the snapshot carries, `theme` the saved theme."""
     import time
@@ -1226,7 +1232,7 @@ def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", l
         snapshot["sessions"] = [s for s in snapshot["sessions"] if keep(s)]
         snapshot["speaking"] = None
     page = wall.browser.new_page(
-        viewport={"width": width, "height": height}, reduced_motion=motion
+        viewport={"width": width, "height": height}, reduced_motion=motion, color_scheme=scheme
     )
     page.snapshot = snapshot
     page.snapshot_all = shifted(json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text()), int(time.time()) - at)["sessions"]
@@ -1239,7 +1245,7 @@ def open_app(wall, width=1920, height=1000, keep=None, motion="no-preference", l
         page.add_init_script(init)
     if before is not None:
         before(page)
-    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html")
+    page.goto(f"http://127.0.0.1:{wall.port}/{path}")
     if snapshot["sessions"] and keep is None:
         painted(page, "document.getElementById('wall').children.length > 0")
     else:
@@ -5689,6 +5695,421 @@ def theme_list_is_dark(wall):
     page.close()
 
 
+# The settings page's commands, each answering what the app would; set_ping
+# and set_phone_wall refuse (a port in use answers off), set_autostart comes
+# back held, so a row that shows its ask instead of the answer fails.
+SETTINGS_ANSWERS = """
+window.__answers = {
+  get_layout: false, set_layout_mode: (a) => a.compact,
+  get_ping: false, set_ping: () => false,
+  get_phone_wall: false, set_phone_wall: () => false,
+  get_autostart: { on: false, held: false, label: 'Start with Windows' },
+  set_autostart: () => ({ on: false, held: true, label: 'Start with Windows' }),
+  get_voices_mode: { tick: null, says: 'keryx now: on for 1 other session only; saved: Heph only' },
+  set_voices_mode: (a) => ({ tick: a.mode, says: '' }),
+  get_fleet_files: { queue: '/fleet/queue.md', needs: '/fleet/needs-you.md' },
+  choose_queue_file: () => ({ queue: '/picked/queue.md', needs: '/picked/needs-you.md' }),
+  choose_needs_file: () => Promise.reject('needs-you.md was not saved: denied'),
+  get_split_mode: false,
+  set_split_mode: (a) => (a.on ? 'Split: the terminal is on the right.' : ''),
+  reset_gauge_position: null, set_gauge_home: null,
+};
+"""
+
+SETTINGS_STATE = """() => {
+  const s = document.getElementById('settings');
+  const box = (el) => el.getBoundingClientRect();
+  const tog = (id) => s.querySelector(`#row-${id} .tog`);
+  const knob = (id) => getComputedStyle(tog(id).querySelector('i')).backgroundColor;
+  return {
+    open: !s.hidden && document.getElementById('main').hidden && document.querySelector('.bar').hidden,
+    rows: [...s.querySelectorAll('.settings-row')].filter((r) => !r.hidden).map((r) => r.dataset.rowId),
+    nav: [...s.querySelectorAll('.nav-item')].filter((a) => !a.hidden).length,
+    bg: getComputedStyle(s).backgroundColor,
+    text: getComputedStyle(s.querySelector('h1')).color,
+    knobOff: knob('ping'),
+    fillOff: getComputedStyle(tog('ping')).backgroundColor,
+    wide: document.documentElement.scrollWidth > innerWidth,
+    tabs: ['ledger-tab', 'queue-tab'].filter((id) => document.getElementById(id).checkVisibility()),
+    voices: s.querySelector('#row-voices_mode [aria-checked="true"]')?.dataset.value ?? null,
+    voicesNote: s.querySelector('#note-voices_mode').textContent,
+    autostart: s.querySelector('#label-autostart').textContent,
+    queue: s.querySelector('#row-queue_file .path-val').textContent,
+    focused: document.activeElement?.id,
+  };
+}"""
+
+TRANSPARENT = "rgba(0, 0, 0, 0)"
+
+
+def open_settings(wall, width=1920, height=1000, scheme="light", init="", path="src/wall.html", **kw):
+    """The wall with the settings commands answering, on its settings page."""
+    page = open_app(wall, width, height, scheme=scheme, init=SETTINGS_ANSWERS + init, path=path, **kw)
+    if not path.endswith("#settings"):
+        open_gear(page)
+        page.click("#gear-settings-open")
+    page.wait_for_selector("#settings:not([hidden]) #row-ping:not([hidden])")
+    page.wait_for_timeout(SETTLE_MS)
+    return page
+
+
+def settings_view(wall):
+    """The settings page (#384, Design A) at 1920 and 390 in each colour
+    scheme, emulated for real: it stands in the wall's place with every row
+    and section, the toggles' knob and fill drawn from defined tokens (none
+    transparent), the Ledger and Queue tabs behind it, no sideways scroll.
+    Search filters by label and description; '/' focuses it, Escape clears
+    it, then goes back. $KLEPSYDRA_SETTINGS_SHOTS names a folder for a
+    screenshot of each."""
+    seen = {}
+    for width, height in ((1920, 1000), (390, 844)):
+        for scheme in ("dark", "light"):
+            page = open_settings(wall, width, height, scheme=scheme)
+            st = page.evaluate(SETTINGS_STATE)
+            tag = f"{width} {scheme}"
+            seen[(width, scheme)] = st
+            wall.check(st["open"] and len(st["rows"]) == 13 and st["nav"] == 7, f"{tag}: the page stands in the wall's place with 13 rows in 7 sections", st)
+            wall.check(TRANSPARENT not in (st["knobOff"], st["fillOff"]), f"{tag}: an off toggle's knob and track are drawn", [st["knobOff"], st["fillOff"]])
+            # Measured with the pointer still over it: wall.css's button:hover must not hide the new state.
+            page.click("#row-compact .tog")
+            # Its transitions finish first: a loaded machine runs them slower than the clock.
+            page.wait_for_function("document.querySelector('#row-compact .tog').getAttribute('aria-checked') === 'true'")
+            page.evaluate("() => { getComputedStyle(document.querySelector('#row-compact .tog i')).transform; return Promise.all(document.getAnimations().map((a) => a.finished)); }")
+            on = page.evaluate("""() => { const t = document.querySelector('#row-compact .tog');
+              return { checked: t.getAttribute('aria-checked'), knob: getComputedStyle(t.querySelector('i')).backgroundColor, fill: getComputedStyle(t).backgroundColor }; }""")
+            wall.check(
+                on["checked"] == "true" and TRANSPARENT not in (on["knob"], on["fill"]) and on["fill"] == st["text"],
+                f"{tag}: an on toggle reads as on under the pointer (track in the text colour, knob drawn)",
+                on,
+            )
+            wall.check(not st["wide"] and st["tabs"] == [], f"{tag}: no sideways scroll; the Ledger and Queue tabs wait behind the page", [st["wide"], st["tabs"]])
+            shots = os.environ.get("KLEPSYDRA_SETTINGS_SHOTS")
+            if shots:
+                page.evaluate("document.getElementById('settings').scrollTop = 0")
+                page.screenshot(path=str(pathlib.Path(shots) / f"klepsydra-384-settings-{width}-{scheme}.png"))
+            if width == 1920 and scheme == "dark":
+                page.fill("#settings-search-input", "PING")
+                page.wait_for_timeout(50)
+                found = page.evaluate(SETTINGS_STATE)["rows"]
+                wall.check(found == ["ping"], "search finds Ping by its label, ignoring case", found)
+                page.fill("#settings-search-input", "tailscale")
+                page.wait_for_timeout(50)
+                found = page.evaluate(SETTINGS_STATE)["rows"]
+                wall.check(found == ["phone_wall"], "and the Phone wall by its description", found)
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(50)
+                after = page.evaluate(SETTINGS_STATE)
+                wall.check(len(after["rows"]) == 13 and after["open"], "Escape in the search clears it and stays on the page", [len(after["rows"]), after["open"]])
+                page.focus("#row-character_theme select")
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(50)
+                wall.check(page.evaluate(SETTINGS_STATE)["open"], "Escape on a select stays on the page", True)
+                page.focus("#settings-back")
+                page.keyboard.press("/")
+                wall.check(page.evaluate("document.activeElement.id") == "settings-search-input", "'/' focuses the search", page.evaluate("document.activeElement.id"))
+                page.focus("#settings-back")
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(50)
+                back = page.evaluate("() => ({ settings: !document.getElementById('settings').hidden, main: !document.getElementById('main').hidden, hash: location.hash })")
+                wall.check(back == {"settings": False, "main": True, "hash": ""}, "Escape elsewhere goes back to the wall and clears #settings", back)
+            page.close()
+    for width in (1920, 390):
+        dark, light = seen[(width, "dark")], seen[(width, "light")]
+        wall.check(dark["bg"] != light["bg"] and dark["text"] != light["text"], f"{width}: the dark and light schemes really differ", [dark["bg"], light["bg"]])
+
+
+def settings_rows_show_answers(wall):
+    """Each row the app answers sends its command once and shows the answer:
+    a refused Ping and a busy-port Phone wall stay off and say so, autostart
+    comes back held and greys out, Voices shows keryx's live state (no mode
+    when none matches) with its line, the queue file shows the path the
+    picker returned at once, and a refusal leaves the path and says why.
+    Off Windows the app refuses Ping and Split, and their rows go."""
+    page = open_settings(wall)
+    st = page.evaluate(SETTINGS_STATE)
+    wall.check(
+        st["voices"] is None and st["voicesNote"].startswith("keryx now: on for 1 other session") and st["autostart"] == "Start with Windows" and st["queue"] == "/fleet/queue.md",
+        "the rows read the app's answers: keryx's live state, the system's name for autostart, the queue path",
+        st,
+    )
+    reads = page.evaluate("window.__calls.filter(([c]) => c === 'get_fleet_files').length")
+    wall.check(reads == 1, "the two file rows share one read", reads)
+
+    def click(selector):
+        page.evaluate("window.__calls = []")
+        # Forced: a held switch is aria-disabled on purpose, and must send nothing when clicked.
+        page.click(selector, force=True)
+        page.wait_for_timeout(100)
+        return page.evaluate("window.__calls.filter(([c]) => !['plugin:log|log'].includes(c))")
+
+    for row, cmd, args, shown, note in (
+        ("compact", "set_layout_mode", {"compact": True}, "true", ""),
+        ("ping", "set_ping", {"on": True}, "false", "Not changed: the app kept it off."),
+        ("phone_wall", "set_phone_wall", {"on": True}, "false", "Not changed: the app kept it off."),
+        ("autostart", "set_autostart", {"enabled": True}, "false", "Held as it is: KLEPSYDRA_NO_AUTOSTART is set."),
+    ):
+        sent = click(f"#row-{row} .tog")
+        got = page.evaluate(f"() => [document.querySelector('#row-{row} .tog').getAttribute('aria-checked'), document.getElementById('note-{row}').textContent]")
+        wall.check(sent == [[cmd, args]] and got == [shown, note], f"{row}: sends {cmd} once and shows its answer", [sent, got])
+    held = page.evaluate("document.querySelector('#row-autostart .tog').getAttribute('aria-disabled')")
+    sent = click("#row-autostart .tog")
+    wall.check(held == "true" and sent == [], "a held autostart greys out and sends nothing", [held, sent])
+
+    sent = click("#row-voices_mode [data-value='everyone']")
+    got = page.evaluate("() => [document.querySelector('#row-voices_mode [aria-checked=\"true\"]')?.dataset.value, document.getElementById('note-voices_mode').textContent]")
+    wall.check(sent == [["set_voices_mode", {"mode": "everyone"}]] and got == ["everyone", ""], "Voices sends the mode and shows the one saved", [sent, got])
+    page.keyboard.press("ArrowRight")
+    page.wait_for_timeout(100)
+    got = page.evaluate("() => [document.activeElement.dataset.value, document.activeElement.getAttribute('aria-checked'), [...document.querySelectorAll('#row-voices_mode [role=radio]')].map((b) => b.tabIndex)]")
+    wall.check(got == ["off", "true", [-1, -1, 0]], "arrow keys move and choose within the group, one tab stop", got)
+
+    sent = click("#row-queue_file .btn-action")
+    got = page.evaluate("() => [...document.querySelectorAll('#settings .path-val')].map((p) => p.textContent)")
+    wall.check(
+        sent == [["choose_queue_file", None]] and got == ["/picked/queue.md", "/picked/needs-you.md"],
+        "the file rows show both paths the picker's answer holds, at once (Needs you moves beside a new queue file)",
+        [sent, got],
+    )
+    sent = click("#row-needs_file .btn-action")
+    got = page.evaluate("() => [document.querySelector('#row-needs_file .path-val').textContent, document.getElementById('note-needs_file').textContent]")
+    wall.check(got == ["/picked/needs-you.md", "Not changed: needs-you.md was not saved: denied"], "a refused pick keeps the path and says why", got)
+
+    # A slow app: arrow keys held over Voices send the first mode and the last, not one a step.
+    page.evaluate("""() => { window.__answers.set_voices_mode = (a) => new Promise((r) => setTimeout(() => r({ tick: a.mode, says: '' }), 300)); window.__calls = []; }""")
+    page.focus("#row-voices_mode [aria-checked='true']")
+    for key in ("ArrowLeft", "ArrowLeft", "ArrowRight", "ArrowLeft", "End"):
+        page.keyboard.press(key)
+    page.wait_for_timeout(900)
+    sent = page.evaluate("window.__calls.filter(([c]) => c === 'set_voices_mode').map(([, a]) => a.mode)")
+    got = page.evaluate("document.querySelector('#row-voices_mode [aria-checked=\"true\"]').dataset.value")
+    wall.check(len(sent) == 2 and sent[-1] == "off" and got == "off", "a held key over Voices runs fleet voices twice at most, ending on the last mode", [sent, got])
+    page.close()
+
+    page = open_app(
+        wall,
+        init=SETTINGS_ANSWERS
+        + """window.__answers.get_ping = () => Promise.reject('Ping plays on Windows only.');
+        window.__answers.get_split_mode = () => Promise.reject('Split mode needs Windows.');
+        window.__answers.get_autostart = { on: true, held: false, label: 'Start at login' };""",
+        path="src/wall.html#settings",
+    )
+    page.wait_for_selector("#settings:not([hidden]) #row-phone_wall:not([hidden])")
+    page.wait_for_timeout(SETTLE_MS)
+    st = page.evaluate(SETTINGS_STATE)
+    wall.check(
+        "ping" not in st["rows"] and "split_terminal" not in st["rows"] and len(st["rows"]) == 11 and st["autostart"] == "Start at login",
+        "off Windows: no Ping or Split row, and autostart is 'Start at login'",
+        st["rows"],
+    )
+    page.close()
+
+
+def settings_bound_controls(wall):
+    """A row for a control the wall already has runs that control's own
+    function, and each shows the other's changes: Split from the page
+    presses the toolbar's toggle and from the toolbar turns the page's; the
+    density likewise with the gear's picker; Characters goes through the
+    picker's guards (worn before saved, saved once after a held arrow key,
+    never a theme that failed to load); New session lists the engines the
+    button does, by their real ids, and a choice moves the button."""
+    init = "window.__engines = { claude: ['personal', 'rit'], agy: false, copilot: true }; window.__nsprefs = { default: 'claude:rit', last: null };"
+    page = open_settings(wall, init=init)
+
+    def calls(c):
+        return page.evaluate(f"window.__calls.filter(([x]) => x === '{c}')")
+
+    page.click("#row-split_terminal .tog")
+    page.wait_for_timeout(100)
+    got = page.evaluate("() => [document.querySelector('#row-split_terminal .tog').getAttribute('aria-checked'), document.getElementById('split').getAttribute('aria-pressed'), document.getElementById('note-split_terminal').textContent]")
+    wall.check(calls("set_split_mode") == [["set_split_mode", {"on": True}]] and got == ["true", "true", "Split: the terminal is on the right."], "Split from the page runs the toolbar's path: both pressed, the app's message shown", got)
+    page.evaluate("window.__split.onmessage({ on: false, note: 'The terminal left the split.' })")
+    page.wait_for_timeout(50)
+    got = page.evaluate("document.querySelector('#row-split_terminal .tog').getAttribute('aria-checked')")
+    wall.check(got == "false", "a split the app ended turns the page's toggle off too", got)
+
+    page.click("#row-card_density [data-value='compact']")
+    page.wait_for_timeout(100)
+    got = page.evaluate("() => [document.querySelector('.density input:checked').value, document.getElementById('wall').dataset.density]")
+    wall.check(calls("set_wall_density")[-1:] == [["set_wall_density", {"density": "compact"}]] and got == ["compact", "compact"], "the density from the page is the gear's: picked and worn", got)
+
+    page.evaluate("window.__calls = []")
+    sel = "#row-character_theme select"
+    page.select_option(sel, "professions")
+    page.wait_for_timeout(1000)
+    got = page.evaluate("() => [document.documentElement.dataset.theme, document.getElementById('theme').value]")
+    wall.check(calls("set_theme") == [["set_theme", {"theme": "professions"}]] and got == ["professions", "professions"], "a theme from the page is worn, shown in the gear, then saved once", got)
+    page.evaluate("window.__calls = []")
+    page.focus(sel)
+    for key in ("ArrowUp", "ArrowDown", "ArrowUp", "ArrowDown", "ArrowDown"):
+        page.keyboard.press(key)
+    page.wait_for_timeout(1200)
+    saved = calls("set_theme")
+    wall.check(len(saved) == 1 and saved[0][1]["theme"] == page.evaluate("document.documentElement.dataset.theme"), "a held arrow key saves once, where the select rests", saved)
+    # A theme whose file will not load (a fresh page, so no step above loaded it).
+    failing = open_settings(wall, init=init, before=lambda p: p.route("**/fleet/themes/dicebear.json", lambda r: r.abort()))
+    worn = failing.evaluate("document.documentElement.dataset.theme")
+    failing.evaluate("window.__calls = []")
+    failing.select_option(sel, "dicebear")
+    failing.wait_for_timeout(1200)
+    got = failing.evaluate("() => [document.querySelector('#row-character_theme select').value, document.getElementById('note-character_theme').textContent, window.__calls.filter(([c]) => c === 'set_theme')]")
+    wall.check(got[2] == [] and got[0] == worn and got[1].startswith("Not switched"), "a theme that failed to load is never saved; the select goes back and says why", got)
+    failing.close()
+
+    opts = page.evaluate("[...document.querySelectorAll('#row-new_session_default option')].map((o) => o.value)")
+    shown = page.evaluate("document.querySelector('#row-new_session_default select').value")
+    wall.check(opts == ["", "claude:personal", "claude:rit", "copilot"] and shown == "claude:rit", "New session lists + New session's engines by real id, the saved one shown", [opts, shown])
+    page.select_option("#row-new_session_default select", "copilot")
+    page.wait_for_timeout(150)
+    got = page.evaluate("document.querySelector('#new-session .new-label').textContent")
+    wall.check(calls("set_new_session_default")[-1:] == [["set_new_session_default", {"id": "copilot"}]] and got.startswith("New Copilot"), "a choice saves the real id and moves the + New session button", got)
+    page.select_option("#row-new_session_default select", "")
+    page.wait_for_timeout(150)
+    wall.check(calls("set_new_session_default")[-1:] == [["set_new_session_default", {"id": None}]], "Last used saves no default", calls("set_new_session_default")[-1:])
+
+    page.click("#settings-back")
+    page.wait_for_timeout(100)
+    page.click("#split")
+    page.wait_for_timeout(100)
+    pick(page, ".density label:has([value='comfortable'])")
+    page.evaluate("location.hash = '#settings'")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("() => [document.querySelector('#row-split_terminal .tog').getAttribute('aria-checked'), document.querySelector('#row-card_density [aria-checked=\"true\"]').dataset.value]")
+    wall.check(got == ["true", "comfortable"], "the toolbar's Split and the gear's density show on the page", got)
+    page.close()
+
+    # A saved default that cannot start now (agy not installed) stays listed, with what starts instead.
+    page = open_settings(wall, init="window.__engines = { claude: ['personal'], agy: false, copilot: false }; window.__nsprefs = { default: 'agy', last: null };")
+    got = page.evaluate("""() => [[...document.querySelectorAll('#row-new_session_default option')].map((o) => o.value),
+      document.querySelector('#row-new_session_default select').value, document.getElementById('note-new_session_default').textContent]""")
+    wall.check(
+        got[0] == ["", "claude:personal", "agy"] and got[1] == "agy" and got[2] == "Antigravity cannot start now, so + New session starts Claude.",
+        "only engines that can start are offered; a saved one that cannot is shown with what starts instead",
+        got,
+    )
+    page.close()
+
+
+def settings_by_hash(wall):
+    """The tray's Settings... opens the page on a wall made then (it loads
+    wall.html#settings) and on one already open (the app sets the hash);
+    Back clears the hash, so the next Settings... opens it again."""
+    page = open_app(wall, init=SETTINGS_ANSWERS, path="src/wall.html#settings")
+    page.wait_for_timeout(SETTLE_MS)
+    first = page.evaluate("() => [!document.getElementById('settings').hidden, document.activeElement.id]")
+    wall.check(first == [True, "settings-search-input"], "a wall opened on #settings shows the page, the search focused", first)
+    page.click("#settings-back")
+    page.wait_for_timeout(100)
+    back = page.evaluate("() => [document.getElementById('settings').hidden, location.hash, document.activeElement.closest('.gear') !== null]")
+    wall.check(back == [True, "", True], "Back shows the wall, clears the hash and gives focus to the gear", back)
+    page.evaluate("location.hash = '#settings'")
+    page.wait_for_timeout(100)
+    again = page.evaluate("!document.getElementById('settings').hidden")
+    wall.check(again, "the hash set on a wall already open shows the page again", again)
+    page.evaluate("location.hash = ''")
+    page.wait_for_timeout(100)
+    wall.check(page.evaluate("document.getElementById('settings').hidden"), "Open wall (the app clears the hash) shows the cards", True)
+    page.close()
+
+    # The tray's Settings... sends an empty focus with the hash (show_wall), in either order:
+    # the page stays. A card asked for from the gauge leaves the page and takes the focus,
+    # whether the app's hash clear runs before the focus or the focus comes alone.
+    page = open_app(wall, init=SETTINGS_ANSWERS, path="src/wall.html#settings")
+    page.wait_for_timeout(SETTLE_MS)
+    send(page, {"focus": ""})
+    after_new = page.evaluate("!document.getElementById('settings').hidden")
+    page.click("#settings-back")
+    page.wait_for_timeout(100)
+    page.evaluate("() => { location.hash = '#settings'; window.__channel.onmessage({ focus: '' }); }")
+    page.wait_for_timeout(SETTLE_MS)
+    after_open = page.evaluate("!document.getElementById('settings').hidden")
+    wall.check([after_new, after_open] == [True, True], "the empty focus sent with Settings... keeps the page, on a new wall and an open one", [after_new, after_open])
+    card = "demo-2-af_bella"
+    shown = "() => [document.getElementById('settings').hidden, location.hash, document.activeElement?.dataset?.key ?? null]"
+    page.evaluate("(k) => { location.hash = ''; window.__channel.onmessage({ focus: k }); }", card)
+    page.wait_for_timeout(SETTLE_MS)
+    hash_first = page.evaluate(shown)
+    page.evaluate("location.hash = '#settings'")
+    page.wait_for_timeout(SETTLE_MS)
+    send(page, {"focus": card})
+    focus_alone = page.evaluate(shown)
+    wall.check(
+        hash_first == [True, "", card] and focus_alone == [True, "", card],
+        "a card asked for from the gauge leaves the page with the focus on the card, the hash cleared first or not",
+        [hash_first, focus_alone],
+    )
+    page.close()
+
+    # The tray's Settings... over an open portrait, End confirmation, session menu or engine
+    # menu dismisses each (never confirms), so none is left over the page.
+    page = open_app(wall, init=SETTINGS_ANSWERS)
+    card = page.locator(".card[data-key='demo-2-af_bella']")
+    left = {}
+    for what in ("portrait", "end", "menu", "engines"):
+        if what == "portrait":
+            card.locator(".look").click()
+            page.wait_for_selector("#portrait[open]")
+        elif what == "end":
+            open_menu(page, card)
+            page.get_by_role("menuitem", name="End session…").click()
+            page.wait_for_selector("#end-dialog[open]")
+        elif what == "menu":
+            open_menu(page, card)
+        else:
+            page.evaluate("document.getElementById('new-menu').showPopover()")
+        page.evaluate("window.__calls = []; location.hash = '#settings'")
+        page.wait_for_selector("#settings:not([hidden]) #row-ping:not([hidden])")
+        page.wait_for_timeout(SETTLE_MS)
+        left[what] = page.evaluate(
+            """() => [[...document.querySelectorAll('dialog[open], :popover-open, #session-menu:not([hidden])')].map((e) => e.id),
+              window.__calls.filter(([c]) => c === 'end_session').length, document.activeElement.id]"""
+        )
+        page.click("#settings-back")
+        page.wait_for_timeout(SETTLE_MS)
+    wall.check(
+        all(v == [[], 0, "settings-search-input"] for v in left.values()),
+        "Settings... over a portrait, End confirmation, session menu or engine menu dismisses it, ends nothing, and focuses the search",
+        left,
+    )
+    page.close()
+
+    # A Ledger open on one session comes back on that session after the page.
+    page = open_app(wall, init=SETTINGS_ANSWERS)
+    page.evaluate("window.__answers.ledger_today = () => fetch('/scripts/fixtures/ledger-demo.json').then((r) => r.json()).then(({ at, ...v }) => v)")
+    page.locator(".card[data-key='demo-2-af_bella'] .chip").click()
+    page.wait_for_selector("#ledger .scope")
+    page.evaluate("location.hash = '#settings'")
+    page.wait_for_selector("#settings:not([hidden]) #row-ping:not([hidden])")
+    page.click("#settings-back")
+    page.wait_for_selector("#ledger[open] .ledger-content table")
+    scope = page.evaluate("() => [document.querySelector('#ledger .scope')?.textContent ?? '', document.activeElement.closest('.gear') !== null]")
+    wall.check("Showing Kallos only" in scope[0] and scope[1], "Back reopens the Ledger on the same session and leaves focus on the gear", scope)
+    page.close()
+
+    # Under 1200 px a panel is a modal dialog: the page shuts it (no hidden modal holds the
+    # focus), keeps Ctrl+Alt+B from opening one, and reopens it on Back.
+    page = open_app(wall, 945, 1000, init=SETTINGS_ANSWERS)
+    page.click("#queue-open")
+    page.wait_for_timeout(SETTLE_MS)
+    modal = page.evaluate("document.querySelector('dialog:modal')?.id ?? null")
+    page.evaluate("location.hash = '#settings'")
+    page.wait_for_selector("#settings:not([hidden]) #row-ping:not([hidden])")
+    page.wait_for_timeout(SETTLE_MS)
+    page.keyboard.press("Control+Alt+b")
+    page.wait_for_timeout(100)
+    page.evaluate("window.__calls = []")
+    page.click("#row-ping .tog")
+    page.wait_for_timeout(100)
+    got = page.evaluate("() => [document.querySelector('dialog[open]')?.id ?? null, window.__calls.filter(([c]) => c === 'set_ping').length]")
+    wall.check(modal == "queue" and got == [None, 1], "a modal Queue shuts under the page, Ctrl+Alt+B opens none, and the page takes clicks", [modal, got])
+    kept = page.evaluate("localStorage.getItem('klepsydra.queue.view')")
+    wall.check(kept == "docked", "the Queue shut under the page is still saved open, for a restart meanwhile", kept)
+    page.click("#settings-back")
+    page.wait_for_timeout(SETTLE_MS)
+    back = page.evaluate("document.getElementById('queue').open")
+    wall.check(back, "Back reopens the Queue that was open", back)
+    page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -5816,6 +6237,10 @@ def main() -> int:
             theme_file_that_never_answers,
             theme_retry_waits_before_loading,
             living_backdrop_and_arrival_motifs,
+            settings_view,
+            settings_rows_show_answers,
+            settings_bound_controls,
+            settings_by_hash,
         )
         for case in cases:
             if not only or case.__name__ in only:

@@ -5,6 +5,7 @@ pub mod bounded;
 pub mod choice;
 pub mod ci;
 pub mod clear;
+pub mod coalesce;
 pub mod cue;
 pub mod health;
 pub mod hub;

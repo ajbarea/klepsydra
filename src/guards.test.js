@@ -335,7 +335,7 @@ test("only Ping and a card's reply button make a sound", () => {
 /** Rust source with its comments removed, so a comment cannot satisfy a guard. */
 const stripRustComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
-test("Ping plays only its embedded chimes, and only the tray previews past the quiet check", () => {
+test("Ping plays only its embedded chimes, and only turning it on previews past the quiet check", () => {
   const code = stripRustComments(read(PING)).replace(/\s+/g, "");
   const calls = code.match(/(snd)?PlaySound[AW]?\(/g) ?? [];
   assert.deepEqual(calls, ["PlaySoundW("]);

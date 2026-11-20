@@ -1,7 +1,7 @@
 // The gauge strip's chips as DOM (#421, variant A "Readout"): a mark, a bold
 // value, the reset, a pip per window, and the account's portraits docked
-// beside it. Linear is one row (the tray's Compact); stacked is a line per
-// account with every window (the tray's Full). Shared by the floating strip
+// beside it. Linear is one row (Settings' Compact layout); stacked is a line per
+// account with every window (Compact layout off). Shared by the floating strip
 // and, later, the wall header, so both draw the same chip the same way.
 import { rampColor, windowLabel } from "../gauge.js";
 import { STALE_AFTER_MS, ageText, cellWhen, rowAge } from "./chips.js";

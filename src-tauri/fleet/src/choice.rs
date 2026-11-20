@@ -1,10 +1,10 @@
 //! A choice kept in prefs.json under one key, from a fixed table of ids and
-//! the tray's labels, the first the default: the Characters theme and the
+//! their labels, the first the default: the Characters theme and the
 //! Voices mode.
 
 use serde_json::{Map, Value};
 
-/// Each choice's id and the label the tray gives it, the default first.
+/// Each choice's id and its label, the default first.
 pub type Table = [(&'static str, &'static str)];
 
 /// `id` when it is in `table`; else the default.

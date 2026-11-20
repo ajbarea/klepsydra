@@ -27,6 +27,7 @@ import { subscribeOpacity } from "../opacity.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
 import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
+import { mountSettings } from "./settings.js";
 
 const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
@@ -90,6 +91,8 @@ const limitWait = limits.querySelector(".limit-wait");
 // desktop snapshot carries no readings), engines and accounts from the
 // launcher, the default and the last used from prefs.json.
 let sessions = [];
+// The settings page (#384), mounted at the end; each wall control it mirrors tells it of a change.
+let settingsController = null;
 let latestSnapshot = null; // its usage readings draw the limit gauges
 const newKind = document.getElementById("new-kind");
 const newMenu = document.getElementById("new-menu");
@@ -267,6 +270,7 @@ function paintMenu() {
 function paintNewSession() {
   paintButton();
   paintMenu();
+  settingsController?.sync("new_session_default");
 }
 
 async function readRows() {
@@ -372,15 +376,22 @@ newMenu.addEventListener("change", (e) => {
   paintMenu();
 });
 
-async function saveDefault(id) {
+/** Save `id` (null: the last used) as + New session's default: the menu and the settings page both call this. */
+async function setDefault(id) {
   try {
     await window.__TAURI__.core.invoke("set_new_session_default", { id });
     ns.prefs = { ...ns.prefs, default: id };
+  } finally {
+    paintNewSession();
+  }
+}
+async function saveDefault(id) {
+  try {
+    await setDefault(id);
   } catch (err) {
     say(newNote, String(err));
   }
   // The new default leaves the menu: focus goes to the caret, not the page.
-  paintNewSession();
   if (!newMenu.contains(document.activeElement)) newKind.focus();
 }
 
@@ -1164,7 +1175,12 @@ function take(message) {
     if (!frameId) drawSpeaking();
     if (pending) focusCard(pending, true);
   }
-  if (typeof message?.focus === "string") focusCard(message.focus);
+  if (typeof message?.focus === "string") {
+    // A card asked for (a click on the gauge) shows on the wall, not behind the page;
+    // the empty focus that comes with the tray's Settings... and Open wall leaves it be.
+    if (message.focus) leaveSettings();
+    focusCard(message.focus);
+  }
 }
 
 wall.addEventListener("click", (e) => {
@@ -1243,7 +1259,9 @@ const tauri = (command, args) =>
   inTauri && window.__TAURI__?.core ? window.__TAURI__.core.invoke(command, args) : Promise.reject("Needs the klepsydra app");
 const ender = createEnder({ invoke: tauri });
 // Split mode: the wall left, the fleet terminal right (Windows only; split.js).
-wireSplit({ button: document.getElementById("split"), note: document.getElementById("split-note"), invoke: tauri, app: inTauri, follow });
+const split = wireSplit({ button: document.getElementById("split"), note: document.getElementById("split-note"), invoke: tauri, app: inTauri, follow });
+split.onShow(() => settingsController?.sync("split_terminal"));
+split.ready.then(() => settingsController?.sync("split_terminal"));
 const menu = document.getElementById("session-menu");
 const dialog = document.getElementById("end-dialog");
 const endCancel = dialog.querySelector(".end-cancel");
@@ -1672,11 +1690,16 @@ function choose(value) {
   choice = parseDensity(value);
   for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
   showDensity();
+  settingsController?.sync("card_density");
 }
 
+/** Wear and save density `value`: the gear's picker and the settings page both call this. */
+function pickDensity(value) {
+  choose(value);
+  return inTauri ? window.__TAURI__.core.invoke("set_wall_density", { density: choice }).then(() => undefined) : Promise.resolve();
+}
 densityPicker.addEventListener("change", (e) => {
-  choose(e.target.value);
-  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+  pickDensity(e.target.value).catch((err) => log.warn("set_wall_density failed, so the density is not saved", err));
 });
 let resizeTimer = 0;
 addEventListener("resize", () => {
@@ -1709,8 +1732,8 @@ if (inTauri) {
   });
 }
 
-// Characters (#135): the theme picker, the tray's Characters menu and the
-// phone all wear one theme. html[data-theme] names it, as a CSS colour theme
+// Characters (#135): the theme picker, the settings page's Characters row and
+// the phone all wear one theme. html[data-theme] names it, as a CSS colour theme
 // does, and a switch repaints every name, face, epithet and accent from the
 // data already held: the wall and its compact cards, the empty wall's keeper,
 // an open portrait, the Ledger and the Queue's keeper, with nothing read again.
@@ -1723,6 +1746,11 @@ const keeper = empty.querySelector(".keeper");
 let wanted = DEFAULT_THEME; // the theme last asked for: a slower load must not undo a later one
 const asked = new Map(); // theme id -> when a paint first waited for its file; cleared when it fails
 const themeNote = document.getElementById("theme-note");
+/** Say `text` about the theme, beside the gear's picker and on the settings page. */
+function sayTheme(text) {
+  setText(themeNote, text);
+  settingsController?.sync("character_theme");
+}
 /**
  * Wear theme `id` (an unknown one is the default), repainting unless `paint`
  * is false. A theme not loaded yet is worn once its file arrives. Resolves
@@ -1742,7 +1770,7 @@ function wearTheme(id, paint = true) {
     (loaded) => {
       if (wanted !== next) return null;
       put(next, loaded, paint);
-      if (themeNote.textContent.startsWith("Loading")) setText(themeNote, "");
+      if (themeNote.textContent.startsWith("Loading")) sayTheme("");
       return true;
     },
     (err) => {
@@ -1752,7 +1780,8 @@ function wearTheme(id, paint = true) {
       if (wanted === next) {
         wanted = worn;
         themePicker.value = worn;
-        setText(themeNote, `Not switched: the ${THEME_LABELS[next]} theme could not be loaded.`);
+        settingsController?.sync("character_theme");
+        sayTheme(`Not switched: the ${THEME_LABELS[next]} theme could not be loaded.`);
       }
       return false;
     },
@@ -1788,7 +1817,7 @@ function deadline(next) {
   return new Promise((late) =>
     setTimeout(() => {
       // A wait whose load failed since is over: a retry has its own.
-      if (asked.get(next) === since && wanted === next && worn !== next) setText(themeNote, `Loading the ${THEME_LABELS[next]} theme…`);
+      if (asked.get(next) === since && wanted === next && worn !== next) sayTheme(`Loading the ${THEME_LABELS[next]} theme…`);
       late(null);
     }, left),
   );
@@ -1799,6 +1828,7 @@ function put(next, theme, paint) {
   cast = theme;
   document.documentElement.dataset.theme = next;
   themePicker.value = next;
+  settingsController?.sync("character_theme");
   updateBackdrop(theme);
   const src = keeperOf(cast);
   if (src && keeper.getAttribute("src") !== src) keeper.src = src;
@@ -1831,20 +1861,26 @@ function saveTheme() {
   picking = false;
   const asked = worn;
   window.__TAURI__.core.invoke("set_theme", { theme: asked }).then(
-    () => setText(themeNote, ""),
+    () => sayTheme(""),
     (err) => {
       log.error(`set_theme refused theme ${asked}`, err);
-      setText(themeNote, `Not saved: ${err}`);
+      sayTheme(`Not saved: ${err}`);
     },
   );
 }
-themePicker.addEventListener("change", () => {
+/**
+ * Pick theme `id`: wear it, then save it once worn, THEME_SAVE_MS after the
+ * last pick. The gear's picker and the settings page both call this, so a
+ * held arrow key saves once and a theme that failed to load is never saved.
+ */
+function chooseTheme(id) {
   picking = true;
   clearTimeout(saving);
   saving = 0;
+  themePicker.value = themeId(id);
   // Picked before the app names a theme, a file that never answers holds the first paint no longer than any other.
   if (!loadedTheme(themePicker.value)) deadline(themeId(themePicker.value)).then(firstReady);
-  wearTheme(themePicker.value).then((worn) => {
+  return wearTheme(themePicker.value).then((worn) => {
     firstReady();
     if (worn === null) return; // a later choice took over: this one changes nothing
     const now = flushNow;
@@ -1853,7 +1889,7 @@ themePicker.addEventListener("change", () => {
       picking = false;
       return;
     }
-    setText(themeNote, "");
+    sayTheme("");
     if (!inTauri) {
       picking = false;
       return;
@@ -1862,7 +1898,8 @@ themePicker.addEventListener("change", () => {
     saving = setTimeout(saveTheme, THEME_SAVE_MS);
     if (now) saveTheme();
   });
-});
+}
+themePicker.addEventListener("change", () => chooseTheme(themePicker.value));
 // A choice still waiting is saved before the picker, the window or the page
 // lets go of it: a click on the tray's Quit first takes the focus away.
 const flushTheme = () => {
@@ -1903,3 +1940,90 @@ setInterval(() => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) drawer.checkDay();
 });
+
+// The settings page (#384): a view of the wall window, opened from the gear,
+// the tray's "Settings..." (wall.html#settings, or that hash set on a wall
+// already open) or the URL. The hash is the one switch: open sets it, Back
+// clears it. Rows bound to a wall control call that control's own function.
+const mainEl = document.getElementById("main");
+const settingsEl = document.getElementById("settings");
+// The engines the menu lets you make default (usable now); a saved one that
+// cannot start now stays listed, with what + New session starts instead.
+const nsView = () => {
+  const { entries, pick } = nsState();
+  const saved = ns.prefs.default ?? "";
+  const off = saved && !entries.some((e) => e.id === saved && e.usable);
+  const name = entries.find((e) => e.id === saved)?.name ?? saved;
+  return {
+    value: saved,
+    options: [{ value: "", label: "Last used" }, ...entries.filter((e) => e.usable || e.id === saved).map((e) => ({ value: e.id, label: e.name }))],
+    disabled: !ns.ready,
+    note: off && ns.ready ? `${name} cannot start now, so + New session starts ${pick.entry.name}.` : "",
+  };
+};
+settingsController = mountSettings({
+  container: settingsEl,
+  invoke: tauri,
+  bindings: {
+    split: { view: split.view, write: split.set },
+    density: { view: () => ({ value: choice }), write: pickDensity },
+    theme: {
+      view: () => ({
+        value: themePicker.value,
+        options: Object.entries(THEME_LABELS).map(([value, label]) => ({ value, label })),
+        note: themeNote.textContent,
+      }),
+      write: chooseTheme,
+      flush: () => flushTheme(),
+    },
+    newSession: { view: nsView, write: (id) => setDefault(id || null) },
+  },
+  onBack: leaveSettings,
+});
+
+/**
+ * Back to the cards now, without waiting for a hashchange: keyed on the page shown, not
+ * the hash, since the app may clear the hash before a card is asked for (its hashchange
+ * then finds the cards already shown and does nothing).
+ */
+function leaveSettings() {
+  if (settingsEl.hidden) return;
+  if (location.hash === "#settings") history.replaceState(null, "", location.pathname + location.search);
+  showView();
+}
+
+/** Show the page the hash names: the settings page for #settings, else the wall. */
+function showView() {
+  const settings = location.hash === "#settings" && !served;
+  if (settings === !settingsEl.hidden) return;
+  gear.open = false;
+  // A hidden Queue or Ledger, modal under 1200 px, would hold the focus: shut while the page shows.
+  if (settings) {
+    edge.hold();
+    // The tray's Settings... can come while a portrait, an End confirmation or a menu is
+    // open over the cards: each is dismissed as Escape would, never confirmed.
+    for (const d of document.querySelectorAll("dialog[open]")) d.close("cancel");
+    for (const p of document.querySelectorAll(":popover-open")) p.hidePopover();
+    closeMenu(false);
+  }
+  settingsEl.hidden = !settings;
+  bar.hidden = settings;
+  mainEl.hidden = settings;
+  document.documentElement.classList.toggle("settings-open", settings);
+  if (settings) {
+    settingsController.refresh();
+    // A wall loaded at #settings: the browser's own move to the fragment, after this
+    // script, takes the focus to the page's start, so the search takes it after load.
+    const search = () => settingsEl.querySelector("#settings-search-input").focus();
+    if (document.readyState === "complete") search();
+    else addEventListener("load", () => setTimeout(search), { once: true });
+  } else {
+    gear.querySelector("summary").focus();
+    edge.release();
+  }
+}
+document.getElementById("gear-settings-open").addEventListener("click", () => {
+  location.hash = "#settings";
+});
+addEventListener("hashchange", showView);
+showView();
