@@ -75,7 +75,9 @@ Do not merge: Heph reviews and merges.
 - Reviewer saw one flake in 7 slice runs (indented-38 case refused at quiet_screen, pane gone next case;
   stderr discarded). Not reproduced.
 
-## Next
-1. 📋 make test-fleet on the round-2 fixes, push, CI green, report to Heph (fleet send, else inbox/close-menu.md).
-2. 📋 A fresh reviewer verifies the round-2 fixes (round 3). Do not merge.
+## Next (saved 11-20 for the account move; e912f2d pushed, make test-fleet 1016/0)
+1. 📋 CI on e912f2d (was pending at the move); report to Heph (fleet send, else inbox/close-menu.md).
+2. 📋 Round 3: a fresh Opus reviewer verifies the round-2 fixes (brief: diff e912f2d + reports
+   close-496-r1.md and r2.md; write reports/close-496-r3.md). A round 3 started 11-20 was stopped
+   unfinished at the account move, so rerun it. Do not merge.
 3. 📋 `fleet done` once #496 is clean; #502 and techne #387 are green and wait on Heph.
