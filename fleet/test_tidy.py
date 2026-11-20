@@ -785,6 +785,10 @@ class ReviewRound1(unittest.TestCase):
                 before = rec.read_bytes()
                 r = self.tidy("heph", now=NOW - step)
                 self.assertIn("later than the clock", r.stdout)
+                self.assertIn(
+                    f"{self.state / '.heph-seen.tsv'} holds 2026-11-20", r.stdout
+                )
+                self.assertIn("delete it and every line counts as new", r.stdout)
                 r = self.tidy("--report", str(self.tmp / "r.json"), now=NOW - step)
                 self.assertEqual(
                     rec.read_bytes(), before, "nothing recorded while early"

@@ -472,8 +472,9 @@ def tidy_heph(apply: bool) -> int:
     except ClockBehind as exc:
         when = dt.datetime.fromtimestamp(exc.args[0])
         print(
-            f"heph: refused: the record holds {when:%m-%d %H:%M}, later than the clock "
-            f"({now:%m-%d %H:%M}): set the clock right; nothing dropped"
+            f"heph: refused: {STATE / SEEN} holds {when:%Y-%m-%d %H:%M}, later than the clock "
+            f"({now:%Y-%m-%d %H:%M}); nothing dropped. If the clock is right, the record is "
+            f"wrong: delete it and every line counts as new (nothing is lost)"
         )
         return 1
     except ValueError as exc:
