@@ -64,7 +64,18 @@ Do not merge: Heph reviews and merges.
   5 and 6 pre-existing).
 - Suite 1014/1 locally: my new test's name collided with the `--why nobody` test; renamed to ghost.
 
+## Independent round 2 (fresh Opus, 11-19 ~23:30; report reports/close-496-r2.md)
+- Should-fix: menu_gap was one row short. Claude Code draws a blank row above every block, so a turn's
+  first visible row is t+2; at t = m-1 (gap of menu rows + 1: 6 at 84 cols, 4 at 160) only the blank row
+  shows. Now `t + 1 >= m`; matrices 84 (0-7, 6 gap) and 160 (1-5, 4 gap); comment corrected.
+- Nit 1: the last look (busy, screen compare, box) was untested. Pulled into last_look(), replayed with a
+  stubbed screen on bg-160-after: ok / busy / quiet_screen / input_text; each of the 3 mutants caught.
+- Nit 2: docs/fleet.md names menu_gap, the orchestrator flag and every check. Nit 3: the menu_gap reason
+  says it stays refused until the transcript grows, so close it by hand.
+- Reviewer saw one flake in 7 slice runs (indented-38 case refused at quiet_screen, pane gone next case;
+  stderr discarded). Not reproduced.
+
 ## Next
-1. 📋 CI green on the round-1 push, then report to Athena/Heph (fleet send, else inbox/close-menu.md).
-2. 📋 A fresh reviewer runs round 2 (Athena's). Do not merge.
-3. 📋 `fleet done` once #496 round 2 is clean, #502 (green) and techne #387 are through.
+1. 📋 make test-fleet on the round-2 fixes, push, CI green, report to Heph (fleet send, else inbox/close-menu.md).
+2. 📋 A fresh reviewer verifies the round-2 fixes (round 3). Do not merge.
+3. 📋 `fleet done` once #496 is clean; #502 and techne #387 are green and wait on Heph.

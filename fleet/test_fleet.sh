@@ -2353,10 +2353,28 @@ gapscreens() { # BEFORE AFTER MENU-ROWS GAP: real screens' box, footer and menu 
   { for i in $(seq $((39 - $4))); do echo "⏺ line $i"; done; for (( i = 0; i < $4; i++ )); do echo; done; tail -n 5 "$1"; } >"$work/gap-b"
   { head -n $((39 - $3)) "$work/gap-b"; sed -n "$((40 - $3)),39p" "$2"; tail -n 5 "$2"; } >"$work/gap-a"
 }
-check "#496 review: at 84 columns (a 5-row menu) a gap of 2 to 5 rows reads gap; 0, 1 (the box's margin) and 6 (a row in view) do not" \
-  "$(for g in 0 1 2 3 4 5 6; do gapscreens "$cs/gap-84-before.txt" "$cs/gap-84-after.txt" 5 "$g"; printf '%s:%s ' "$g" "$(replay "$work/gap-b" "$work/gap-a")"; done)" "0:same 1:same 2:gap 3:gap 4:gap 5:gap 6:same "
-check "#496 review: at 160 columns (a 3-row menu) a gap of 2 or 3 rows reads gap; 1 and 4 do not" \
-  "$(for g in 1 2 3 4; do gapscreens "$cs/bg-160-before.txt" "$cs/bg-160-after.txt" 3 "$g"; printf '%s:%s ' "$g" "$(replay "$work/gap-b" "$work/gap-a")"; done)" "1:same 2:gap 3:gap 4:same "
+# A turn's first row is blank (Claude Code draws one above every block), so a gap one row taller than
+# the menu leaves only that blank row in view and still hides the turn (#496 review 2).
+check "#496 review: at 84 columns (a 5-row menu) a gap of 2 to 6 rows reads gap; 0, 1 (the box's margin) and 7 (a turn's row in view) do not" \
+  "$(for g in 0 1 2 3 4 5 6 7; do gapscreens "$cs/gap-84-before.txt" "$cs/gap-84-after.txt" 5 "$g"; printf '%s:%s ' "$g" "$(replay "$work/gap-b" "$work/gap-a")"; done)" "0:same 1:same 2:gap 3:gap 4:gap 5:gap 6:gap 7:same "
+check "#496 review: at 160 columns (a 3-row menu) a gap of 2 to 4 rows reads gap; 1 and 5 do not" \
+  "$(for g in 1 2 3 4 5; do gapscreens "$cs/bg-160-before.txt" "$cs/bg-160-after.txt" 3 "$g"; printf '%s:%s ' "$g" "$(replay "$work/gap-b" "$work/gap-a")"; done)" "1:same 2:gap 3:gap 4:gap 5:same "
+# The last look before Enter, its screen read stubbed with a real capture (#496 review 2): unchanged it
+# passes; a spinner just above the menu, a changed transcript row, or more text in the box each refuse.
+look() { # SREF-SCREEN NOW-SCREEN: ok, or the check that failed
+  ( eval "$(awk '/^above_raw\(\)/,/^steady\(\)/' "$here/close.sh" | sed '$d')"
+    eval "$(awk '/^last_look\(\)/,/^}/' "$here/close.sh")"
+    now=$2; screen() { cat "$now"; }
+    check='' why='' more=() box=''
+    last_look %0 "$(above_raw "$(cat "$1")")" 2 && echo ok || echo "$check" )
+}
+lk=$cs/bg-160-after.txt
+lkr=$(plain <"$lk" | grep -n '^  ❯ /exit' | cut -d: -f1)
+sed "$((lkr - 1))s/.*/✢ Churning… (1s · esc to interrupt)/" "$lk" >"$work/look-spin"
+sed "1s/.*/⏺ a changed row/" "$lk" >"$work/look-moved"
+sed $'s#m/exit\e\\[39m$#m/exit typed\e[39m#' "$lk" >"$work/look-box"
+check "#496 review 2: the last look passes an unchanged screen and refuses a spinner (busy), a changed row (quiet_screen), more text in the box (input_text)" \
+  "$(for f in "$lk" "$work/look-spin" "$work/look-moved" "$work/look-box"; do printf '%s ' "$(look "$lk" "$f")"; done)" "ok busy quiet_screen input_text "
 # A wrapped line one column left or right of the descriptions' column is no part of the menu (#483 review).
 for ind in 36 38; do
   state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_after\":\"$(printf '%*s' "$ind" '')grid\",\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"

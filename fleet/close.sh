@@ -147,18 +147,21 @@ same_transcript() { # REF AFTER
   return 1
 }
 # Whether a new turn could arrive wholly under the menu in AFTER without moving a row same_transcript
-# compares: REF's transcript ends at or below the last compared row with at least 2 blank rows under
-# it before the box. A pane short of a screenful pins the box to the bottom, the gap shrinking as the
-# transcript grows (25 rows in a fresh one, 1 in ns477's full one): a prompt and its spinner fill
-# that gap in place. A gap of 1 is the box's own margin, so a turn scrolls the compared rows; one
-# whose first blank row stays in view shows the turn there. Prints the gap and the menu's rows.
+# compares: REF's transcript ends at most one row above the last compared row, with at least 2 blank
+# rows under it before the box. A pane short of a screenful pins the box to the bottom, the gap
+# shrinking as the transcript grows (25 rows in a fresh one, 1 in ns477's full one): a prompt and its
+# spinner fill that gap in place. Claude Code draws a blank row above every block, so a turn's first
+# row that shows is the second under the transcript: when only the first is in view, it stays blank
+# and the turn lands under the menu. A gap of 1 is the box's own margin, so a turn scrolls the
+# compared rows; one whose second blank row stays in view shows the turn there. Prints the gap and
+# the menu's rows.
 menu_gap() { # REF AFTER
   local n t k m
   n=$(above_rows "$1")
   t=$(plain <<<"$1" | head -n "$n" | awk 'NF { t = NR } END { print t + 0 }')
   k=$(screen_lines "$(above_raw "$2")" | head -1)
   m=$(( $(above_rows "$2") - k ))
-  (( n - t >= 2 && t >= m )) || return 1
+  (( n - t >= 2 && t + 1 >= m )) || return 1
   printf '%s %s' "$(( n - t ))" "$k"
 }
 # The first lines that differ between OLD and NEW (plain text), at most 5, each cut to 120
@@ -218,6 +221,25 @@ refuse() { # NAME PANE CHECK WHY [KEY=VALUE...]
     *) err "refused: cannot confirm $1 is idle (${w#* }); left open $more"; return 12 ;;
   esac
 }
+# The last look before Enter, from close_now (it sets close_now's box, and check, why and more when
+# it fails): no spinner shows (where the menu leaves its row in view; at 84 columns it covers it,
+# and the fingerprint is the guard), the screen above the box is still SREF (the settle window's),
+# and the box still holds just our /exit.
+last_look() { # PANE SREF SETTLE
+  local s
+  s=$(screen "$1"); box=$(input_text "$s")
+  if busy "$s"; then
+    check=busy why="working (a turn started within ${3} s of /exit going in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
+  elif [[ $(above_raw "$s") != "$2" ]]; then
+    check=quiet_screen why="working (its screen changed just before Enter)"
+    more=(differs="$(excerpt "$(plain <<<"$2")" "$(above_raw "$s" | plain)")")
+  elif [[ $box != /exit ]]; then
+    check=input_text why="working (its box changed within ${3} s of /exit going in)" more=(text="$(clip 80 <<<"$box")")
+  else
+    return 0
+  fi
+  return 1
+}
 # The checks and the /exit hold one pane lock, so a `fleet send` that is mid-paste cannot start a
 # turn between them. A finished agent may work again (a follow-up message, a phone prompt, the
 # wrap-up's checkpoint): /exit would end the turn or kill its shells with the pane. So the pane must
@@ -263,7 +285,7 @@ close_now() { # PANE NAME SID
   elif ! same_transcript "$s0" "$s"; then
     check=transcript why="working (its screen changed as /exit went in)" more=(differs="$SAME_WHY")
   elif gap=$(menu_gap "$s0" "$s"); then
-    check=menu_gap why="unconfirmed its transcript ends ${gap%% *} blank rows above the box, under the ${gap##* }-row /exit menu, where a new turn would not show"
+    check=menu_gap why="unconfirmed its transcript ends ${gap%% *} blank rows above the box, under the ${gap##* }-row /exit menu, where a new turn would not show; refused until the transcript grows, so close it by hand (/exit) once it is idle"
     more=(gap="${gap%% *}" menu_rows="${gap##* }")
   elif [[ $box != /exit ]]; then
     check=input_text why="working (its box changed as /exit went in)" more=(text="$(clip 80 <<<"$box")")
@@ -278,16 +300,8 @@ close_now() { # PANE NAME SID
       check=session_file more=(session="$(session_brief "$3")")
     fi
     box=$(input_text "$(screen "$1")")
-  # The last look before Enter: no spinner shows (where the menu leaves its row in view; at 84
-  # columns it covers it, and the fingerprint is the guard), the screen is still the settle
-  # window's, and the box still holds just our /exit.
-  elif s=$(screen "$1"); box=$(input_text "$s"); busy "$s"; then
-    check=busy why="working (a turn started within ${g} s of /exit going in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
-  elif [[ $(above_raw "$s") != "$sref" ]]; then
-    check=quiet_screen why="working (its screen changed just before Enter)"
-    more=(differs="$(excerpt "$(plain <<<"$sref")" "$(above_raw "$s" | plain)")")
-  elif [[ $box != /exit ]]; then
-    check=input_text why="working (its box changed within ${g} s of /exit going in)" more=(text="$(clip 80 <<<"$box")")
+  elif ! last_look "$1" "$sref" "$g"; then
+    :
   fi
   if [[ -n $check ]]; then
     # Back out only our own /exit: text typed after it stays, and so does the close's refusal.
