@@ -1,39 +1,30 @@
 # IMPL: klepsydra#501, perf class (b): read only the files that changed
 
-Branch perf/readers (worktree .claude/worktrees/perf-readers), PR #510 (Closes #501). Base origin/main 5dfdff5.
+Branch perf/readers (worktree .claude/worktrees/perf-readers), PR #510 (Closes #501). Base origin/main 5dfdff5
+(main is at 7ed5e88; #500 touched only shell, no Rust conflict).
 Push only: `git push -u origin perf/readers:perf/readers`. Never push to main. Do not merge (Athena merges).
 
-## State (11-20, stopped for a Windows restart)
-- Merged-ready history up to 43fd34d (CI green, my verify passes clean). Athena's independent round 1 on 43fd34d:
-  NOT CLEAN, 2 Should-fix + nits: ~/.local/state/fleet-orchestrator/reports/readers-510-r1.md.
-- HEAD = WIP commit answering round 1. UNTESTED: it compiles on Linux (`cargo check --tests`), nothing else ran.
-  - SF1: `memo::Stamp` is now {len, modified, changed, id}; `Change` is gone. Unix: ctime + inode. Windows:
-    `memo::win::list` lists with GetFileInformationByHandleEx(FileIdBothDirectoryInfo) (ChangeTime + FileId per
-    entry, no call per file; falls back to std read_dir, unstamped, on ERROR_INVALID_PARAMETER), and
-    `Stamp::of_file` reads the handle (GetFileInformationByHandle + FileBasicInfo). `memo::list` returns
-    `Listed {name, kind, modified, stamp}`; scan.rs and usage.rs use it; bounded.rs uses `Stamp::of_file`.
-    The still test is max(mtime, ctime) (`Stamp::last`).
-  - Test clock: `memo::now()` runs RACY + 1 s ahead in tests (a just-written file has ctime = now); a test of
-    the racy rule on real files sets `memo::REAL_CLOCK` on its thread (scan's a_file_written_just_now test).
-  - Tests: in-place rewrite, recreate-without-pass and rename-replace are now cross-platform; new memo tests
-    (change time keeps it racy, each stamp part compared, listing kinds + listed == handle stamp).
-  - Nit: `UsageReader::read` in main.rs (lock/poison/read in one place); phone.rs uses it.
-  - mutate.py anchors updated (15 mutations, every anchor occurs once); not yet run.
+## Done (11-20, after the hard shutdown)
+- Athena round 1 (~/.local/state/fleet-orchestrator/reports/readers-510-r1.md) SF1 + nits answered in 10764b6:
+  Stamp {len, modified, changed, id}; Windows listing via GetFileInformationByHandleEx(FileIdBothDirectoryInfo).
+- Verified: Linux `cargo test --lib` 462/462, fmt clean; Windows clippy (cross) clean; native Windows
+  `build-windows.sh --check` clean (fleet 449 pass, incl. the in-place test: NTFS ChangeTime moves on write).
+- 9e9a224: NTFS directory-entry lag documented on `Stamp` (copied on last handle close; Raymond Chen 2011),
+  new test a_file_written_in_place_lists_its_new_stamp_once_its_writer_closes; Windows unused-mut fixed.
+- New: docs/perf/2026-11-19-readers/winmutate.sh (4 Windows-listing mutations on the NTFS stage),
+  appab.ps1 (whole-app A/B on one data copy, per-PID I/O counters, restores .window-state.json).
 
-## Next (fresh session: rerun everything below; nothing after the WIP commit has passed)
-1. `cd src-tauri/fleet && cargo fmt --check && flock -o /tmp/fleet-heavy.lock timeout 1500 cargo test -q --lib`; fix failures.
-2. Windows type check: `CARGO_TARGET_DIR=<scratch>/wincheck flock -o /tmp/fleet-heavy.lock timeout 900 cargo clippy --target x86_64-pc-windows-msvc --lib --tests -- -D warnings`
-   (target installed), then real Windows tests: `KLEPSYDRA_STAGE=klepsydra-build-perf_readers flock -o /tmp/fleet-heavy.lock timeout 2400 bash scripts/build-windows.sh --check`.
-   Settle empirically there: the in-place test proves NTFS ChangeTime moves on write + set_modified.
-3. `flock -o /tmp/fleet-heavy.lock timeout 3000 python3 docs/perf/2026-11-19-readers/mutate.py` (expect 15 of 15 killed); clippy on Linux.
-4. SF2: app-level before/after on one copy of live data: build main (stage klepsydra-build-perf-before) and this
-   branch (klepsydra-build-perf_readers), run each exe 60 s with its own KLEPSYDRA_DIR = a fresh copy of the data,
-   `scripts/perf/io.ps1`; back up/restore %APPDATA% .window-state.json; stop only your own PID. If not done, say
-   plainly in the PR body what was measured (old installed app live; readers per call on Windows) and what was not.
-   Fix the PR body "Checked live" line either way; README "Not measured here" stays honest.
-5. Rerun readcost (examples/readcost.rs) on Windows: the listing changed, so the after counts in the README change.
-6. Update PR body (SF1 design + sources: MS FILE_ID_BOTH_DIR_INFO, MS-FSCC EaSize = reparse tag, Go os/dir_windows.go
-   uses the same query), fresh Opus self-review, CI green, then report to Athena; a fresh reviewer runs round 2.
+## Next
+1. winmutate.sh result (running); then `flock -o /tmp/fleet-heavy.lock timeout 3000 python3 docs/perf/2026-11-19-readers/mutate.py` (15 expected killed); Linux clippy.
+2. SF2: build release exes: `KLEPSYDRA_STAGE=klepsydra-build-perf-before` from worktree perf-readers-before
+   and `klepsydra-build-perf_readers` from here (`scripts/build-windows.sh`, under the lock); then
+   `powershell.exe -File appab.ps1 -Before <exe> -After <exe> -Data C:\Users\ajbar\klepsydra-perf\data-1119`.
+   Static copy: no writes during the run, so it measures the idle steady state; say so.
+3. Rerun readcost on Windows (`ab.sh`): the listing changed, after counts change. Update README tables.
+4. PR body: SF1 design + sources (MS FILE_ID_BOTH_DIR_INFO, MS-FSCC EaSize = reparse tag, Raymond Chen NTFS lag),
+   fix "Checked live" and the NTFS-lag line (it can serve the old value while a writer holds the file open;
+   no klepsydra writer does). Fresh Opus self-review, CI green, report to Athena.
+5. Then #423 (heavy lock as a slot pool sized from the machine; Heph 11-20, design in the issue's latest comment).
 
 ## Verify
 - see Next 1-3. Data copy: C:\Users\ajbar\klepsydra-perf\data-1119 (delete when the PR merges).
