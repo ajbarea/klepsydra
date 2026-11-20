@@ -2232,6 +2232,12 @@ check "#445 review: fleet close refuses the orchestrator's own pane even when id
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "refused: .* is the orchestrator's pane") $(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 1 0"
 check "#483: that refusal logs check orchestrator" "$(lastclose wrk7 .check)" "orchestrator"
 rm -f "$FLEET_STATE/orchestrator.pane"
+jq '.orchestrator = true' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/sf.t" && mv -f "$work/sf.t" "$KLEPSYDRA_DIR/fleet/$SID.json"
+check "#496 review: a session file that says orchestrator refuses the close with no orchestrator.pane (1), by session_file, nothing typed" \
+  "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "refused: .* is the orchestrator's pane \[check: orchestrator;") $(lastclose wrk7 '.check + " " + .by') $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 orchestrator session_file 0"
+done_live "$b" "done" '[]'
+check "#496 review: a name with no finished row logs check finished and names it in the error" \
+  "$(bash "$here/fleet" close nobody 2>&1 | grep -c '\[check: finished\]$') $(lastclose nobody .check)" "1 finished"
 # The race: the pane goes busy while close waits for the pane lock (a send mid-paste); the check runs under the lock.
 exec 8>"$FLEET_STATE/locks/send-${b#%}"; flock 8
 FLEET_SEND_WAIT=8 bash "$here/fleet" close wrk7 >"$work/clr.out" 2>&1 & clp=$!
@@ -2301,6 +2307,7 @@ check "#454 S1: /exit that opens the stop-tasks dialog is cancelled with Esc, ne
 state wrk7 '{"above":["done"],"busy":false,"on_submit":"none"}'; settle; : >"$work/wrk7.log"
 check "#454 S1: a pane still there after /exit is left open, never killed (1), and its record stays" \
   "$(FLEET_CLOSE_EXIT_WAIT=2 bash "$here/fleet" close wrk7 2>&1 | grep -c "left open: $b is still there after /exit") $(grep -c '^SUBMIT /exit' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b") $(cut -f2 "$DONE_REPORTS" | grep -c '^wrk7$')" "1 1 1 1"
+check "#496 review: that left-open logs check exit_wait" "$(lastclose wrk7 .check)" "exit_wait"
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none"}'; settle; : >"$work/wrk7.log"
 # Typing /exit opens Claude Code's command menu above the box, drawn over the transcript's last rows.
 long=$(jq -nc '[range(60) | "⏺ line \(.)"]')
@@ -2329,15 +2336,27 @@ check "#483: --why for a name with no close fails (1); --why with no name is bad
 # Real screens (Claude Code 2.1.316, captured 11-19) replayed through close.sh's own comparison, no tmux
 # (#483 review 2): the menu over an idle transcript reads the same at 84 and 160 columns, and every
 # transcript that scrolled up under it differs, blank top rows included.
-replay() { # BEFORE AFTER: same or differs
+replay() { # BEFORE AFTER: same, differs, or gap (same, but a turn could hide under the menu)
   ( eval "$(awk '/^above_raw\(\)/,/^steady\(\)/' "$here/close.sh" | sed '$d')"
-    same_transcript "$(cat "$1")" "$(cat "$2")" && echo same || echo differs )
+    same_transcript "$(cat "$1")" "$(cat "$2")" || { echo differs; exit; }
+    menu_gap "$(cat "$1")" "$(cat "$2")" >/dev/null && echo gap || echo same )
 }
 cs=$here/tests/close-screens
 check "#483 review 2: the /exit menu over a resting transcript reads the same (ns477 and a background shell at 84, 160, blank top rows, a blank row just above the menu)" \
   "$(for p in ns477-84 bg-84 bg-160 blanktop-84 blankabove-84; do replay "$cs/$p-before.txt" "$cs/$p-after.txt"; done | tr '\n' ' ')" "same same same same same "
 check "#483 review 2: every transcript that scrolled up under the menu differs (10 screens, 3 of them scrolling off blank rows)" \
   "$(for f in "$cs"/*-scroll*.txt; do fn=${f##*/}; replay "$cs/${fn%-scroll*}-before.txt" "$f"; done | sort | uniq -c | tr -s ' ')" " 10 differs"
+# A short transcript leaves a gap of blank rows above the bottom-pinned box. One the menu covers whole,
+# 2 rows up to its height, could hold a new turn's prompt and spinner unseen (#496 review): menu_gap.
+check "#496 review: the reviewer's gap screen (5 blank rows under a 5-row menu) reads gap" "$(replay "$cs/gap-84-before.txt" "$cs/gap-84-after.txt")" "gap"
+gapscreens() { # BEFORE AFTER MENU-ROWS GAP: real screens' box, footer and menu over 39 rows, GAP of them blank
+  { for i in $(seq $((39 - $4))); do echo "⏺ line $i"; done; for (( i = 0; i < $4; i++ )); do echo; done; tail -n 5 "$1"; } >"$work/gap-b"
+  { head -n $((39 - $3)) "$work/gap-b"; sed -n "$((40 - $3)),39p" "$2"; tail -n 5 "$2"; } >"$work/gap-a"
+}
+check "#496 review: at 84 columns (a 5-row menu) a gap of 2 to 5 rows reads gap; 0, 1 (the box's margin) and 6 (a row in view) do not" \
+  "$(for g in 0 1 2 3 4 5 6; do gapscreens "$cs/gap-84-before.txt" "$cs/gap-84-after.txt" 5 "$g"; printf '%s:%s ' "$g" "$(replay "$work/gap-b" "$work/gap-a")"; done)" "0:same 1:same 2:gap 3:gap 4:gap 5:gap 6:same "
+check "#496 review: at 160 columns (a 3-row menu) a gap of 2 or 3 rows reads gap; 1 and 4 do not" \
+  "$(for g in 1 2 3 4; do gapscreens "$cs/bg-160-before.txt" "$cs/bg-160-after.txt" 3 "$g"; printf '%s:%s ' "$g" "$(replay "$work/gap-b" "$work/gap-a")"; done)" "1:same 2:gap 3:gap 4:same "
 # A wrapped line one column left or right of the descriptions' column is no part of the menu (#483 review).
 for ind in 36 38; do
   state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_after\":\"$(printf '%*s' "$ind" '')grid\",\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
@@ -2348,6 +2367,11 @@ done
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_hidden\":[\"❯ a phone prompt\",\"✢ Churning… (1s · esc to interrupt)\"],\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
 check "#483 review: a transcript that scrolled up under the menu is refused (1) at check transcript, nothing submitted" \
   "$(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 transcript 0"
+# A turn that lands in the gap a short transcript leaves above the box, wholly under the menu, moves no row in view (#496 review).
+gap5=$(jq -nc '[range(34) | "⏺ line \(.)"] + ["", "", "", "", ""]')
+state wrk7 "{\"above\":$gap5,\"busy\":false,\"slash_menu\":true,\"slash_fill\":[\"❯ a phone prompt\",\"\",\"✢ Churning… (1s · esc to interrupt)\"],\"exit_on_exit\":true,\"on_submit\":\"none\"}"; settle; : >"$work/wrk7.log"
+check "#496 review: a turn arriving wholly under the menu in a 5-row gap is refused (1) at check menu_gap, nothing submitted, /exit backed out" \
+  "$(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 '.check + " " + .gap + " " + .menu_rows') $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 menu_gap 5 5 0 0"
 # The hook writes the session file up to a second after a prompt: a write just after /exit went in is seen before Enter.
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"; settle; : >"$work/wrk7.log"
 ( for i in $(seq 100); do grep -q '^TYPED' "$work/wrk7.log" && break; sleep 0.1; done; sleep 1.2

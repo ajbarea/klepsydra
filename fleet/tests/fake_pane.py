@@ -36,6 +36,9 @@ A test steers it through a JSON state file, re-read on every tick:
              does not explain)
   slash_hidden  lines added to the transcript as the menu opens, under it
              (a prompt and its spinner arriving as /exit goes in)
+  slash_fill  lines that take the place of the transcript's last (blank) rows
+             as the menu opens, nothing scrolling: a turn arriving in the gap a
+             bottom-pinned box leaves under a short transcript, under the menu
   exit_dialog  /exit opens Claude Code's "Background work is running" dialog
              (2.1.316, captured 2026-11-18): Enter exits, Esc cancels it
   log_typed  log each run of typed keys (TYPED <text>), so a test can tell
@@ -323,6 +326,9 @@ class Pane:
             # Lines that arrive as the menu opens grow the transcript, so the screen
             # scrolls up under the menu, which covers them.
             above += self.state.get("slash_hidden", [])
+            fill = self.state.get("slash_fill", [])
+            if fill:
+                above = above[: max(0, len(above) - len(fill))] + fill
             adds = [self.state["slash_adds"]] if self.state.get("slash_adds") else []
             above = above[: max(0, len(above) - len(menu) - len(adds))] + adds + menu
         below = self.state.get("below", ["  ⏵⏵ bypass permissions on · 1 shell"])
