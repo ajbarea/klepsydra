@@ -565,6 +565,10 @@ class ReviewRound1(unittest.TestCase):
                 " (11-10 08:00)",
                 " (11-25 08:00)",
             ),  # an MM-DD days ahead reads as no date
+            # Same day and no time: unsure. A later 05:2x may be past 05:25. No clock time.
+            (" (Fri 11-12, 05:2x)", " (11-12, Athena -> next)"),
+            (" (11-12 05:25)", " (11-12 05:2x)"),
+            (" (11-19 52:0x)", " (11-21 03:00)"),
         ):
             with self.assertRaisesRegex(
                 ValueError, "START HERE block newer than the first"

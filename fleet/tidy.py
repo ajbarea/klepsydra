@@ -273,9 +273,11 @@ def keep_lines(raw: str | None) -> int:
 HEPH_KEEP = keep_lines(os.environ.get("FLEET_HEPH_KEEP"))
 
 
-def heading_time(line: str, now: dt.datetime) -> dt.datetime | None:
-    """The date (and time, if given) a heading itself names, or None when it names none that
-    reads as a real date."""
+def heading_time(line: str, now: dt.datetime) -> tuple[dt.datetime, dt.datetime] | None:
+    """The earliest and latest moment a heading itself names, or None when it names no real
+    date. A date with no time spans its whole day, `05:2x` spans 05:20 to 05:29, and a time
+    that is no clock time (`52:0x`) counts as none: nothing the heading did not give is
+    guessed."""
     m = FULL_DATE.search(line)
     if m:
         try:
@@ -287,10 +289,12 @@ def heading_time(line: str, now: dt.datetime) -> dt.datetime | None:
         day = month_day(int(s[1]), int(s[2]), now) if s else None
     if day is None:
         return None
+    start = dt.datetime.combine(day, dt.time())
     t = HEAD_TIME.search(line)
-    return dt.datetime.combine(day, dt.time()) + dt.timedelta(
-        minutes=minutes_of(t) if t else 0
-    )
+    if not t or int(t[1]) > 23 or int(t[2]) > 5:
+        return start, start + dt.timedelta(days=1, minutes=-1)
+    low = start + dt.timedelta(minutes=minutes_of(t))
+    return low, low + dt.timedelta(minutes=9 if t[3] == "x" else 0)
 
 
 def plan_heph(
@@ -314,10 +318,10 @@ def plan_heph(
     stamps, _ = stamp_lines(lines, now)
     a = heading_time(lines[s0], now)
     for s in starts[1:]:
-        b = heading_time(
-            lines[s], now
-        )  # its own heading's date, never one borrowed above
-        if a is None or b is None or b > a:
+        # Its own heading's date, never one borrowed above; older only if its latest
+        # possible moment is no later than the first block's earliest.
+        b = heading_time(lines[s], now)
+        if a is None or b is None or b[1] > a[0]:
             raise ValueError(
                 f"line {s + 1} is a START HERE block newer than the first, or undated: "
                 "merge it into the top one first"
