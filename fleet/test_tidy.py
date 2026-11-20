@@ -131,8 +131,14 @@ class Tidy(unittest.TestCase):
         self.shots.write_text("raise SystemExit(0)\n")
 
     def tidy(
-        self, *args: str, now: float = NOW, **env: str
+        self, *args: str, now: float = NOW, dry_first: bool = True, **env: str
     ) -> subprocess.CompletedProcess:
+        """Run tidy as the fleet does. --apply goes only after a dry run of the same parts
+        (the guard tested in test_apply_drops_only_what_the_dry_run_listed)."""
+        if "--apply" in args and dry_first:
+            self.tidy(
+                *(a for a in args if a != "--apply"), now=now, dry_first=False, **env
+            )
         e = {
             k: v
             for k, v in os.environ.items()
@@ -173,10 +179,7 @@ class Tidy(unittest.TestCase):
         """The first-seen record a tidy would have kept: OLD lines 30 days ago, the rest now."""
         mod = load_tidy(self.state, self.brief)
         keys = mod.line_keys(text.splitlines(True))
-        rows = zip(keys, seen_times(text, old))
-        (self.state / ".heph-seen.tsv").write_text(
-            "".join(f"{k}\t{w:.0f}\n" for k, w in rows)
-        )
+        mod.save_seen(keys, seen_times(text, old))
 
     def test_heph_keeps_the_head_start_here_and_the_last_48_hours(self):
         p = self.heph()
@@ -693,7 +696,7 @@ class ReviewRound1(unittest.TestCase):
                 self.assertEqual(r.returncode, 0, r.stdout)
                 self.assertEqual(p.read_text(), HEPH)
                 self.assertEqual(
-                    len(rec.read_text().splitlines()), len(HEPH.splitlines())
+                    rec.read_text().splitlines()[-1], f"#end\t{len(HEPH.splitlines())}"
                 )
 
     def test_the_age_boundary_is_heph_hours(self):
@@ -716,13 +719,13 @@ class ReviewRound1(unittest.TestCase):
         lines = text.splitlines(True)
         rows = [NOW - 60] * len(lines)
         rows[4] = NOW - 30 * DAY  # the first "- ok" is old, the second new
-        rec.write_text("".join(f"{k}\t{w:.0f}\n" for k, w in zip(keys, rows)))
+        mod.save_seen(keys, rows)
         r = self.tidy("--apply", "heph")
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertEqual(
             p.read_text(), "# H\n## START HERE\n- now\n## 2026-11-01 a\n- new\n- ok\n"
         )
-        got = dict(row.split("\t") for row in rec.read_text().splitlines())
+        got = dict(row.split("\t") for row in rec.read_text().splitlines()[:-1])
         kept_keys = mod.line_keys(p.read_text().splitlines(True))
         self.assertEqual(set(got), set(kept_keys))
         self.assertEqual(
@@ -731,12 +734,59 @@ class ReviewRound1(unittest.TestCase):
             "the kept copy keeps its own time",
         )
 
-    def test_a_record_time_counts_only_when_sane(self):
+    def test_a_record_loads_only_whole_and_sane(self):
         mod = load_tidy(self.state, self.brief)
-        (self.state / ".heph-seen.tsv").write_text(
-            f"k\t{NOW + 10 * DAY}\nj\t{NOW - DAY}\nn\tnan\nz\t0\nm\t-5\ni\tinf\nk\t{NOW - 2 * DAY}\n"
+        rec = self.state / ".heph-seen.tsv"
+        good = f"k\t{NOW + 10 * DAY:.0f}\nj\t{NOW - DAY:.0f}\nk\t{NOW - 2 * DAY:.0f}\n"
+        rec.write_text(good + "#end\t3\n")
+        self.assertEqual(
+            mod.load_seen(), {"k": [NOW + 10 * DAY, NOW - 2 * DAY], "j": [NOW - DAY]}
         )
-        self.assertEqual(mod.load_seen(), {"k": [NOW, NOW - 2 * DAY], "j": [NOW - DAY]})
+        for bad in (
+            good,  # cut off before its end row
+            good + "#end\t2\n",  # an end row naming another count
+            good[:-4] + "\n#end\t3\n",  # a time cut short reads as 1970
+            good + "#end\t3\nx\t1\n",  # rows after the end
+            good.replace("j\t", "j\tsoon", 1) + "#end\t3\n",  # one bad row among good
+            "k\tnan\n#end\t1\n",
+            "k\tinf\n#end\t1\n",
+            "k\t0\n#end\t1\n",
+            "k\t-5\n#end\t1\n",
+            f"k\t{NOW + 31 * DAY:.0f}\n#end\t1\n",
+            "k\n#end\t1\n",
+            f"\t{NOW:.0f}\n#end\t1\n",
+            "",
+        ):
+            with self.subTest(bad=bad[-30:]):
+                rec.write_text(bad)
+                self.assertEqual(mod.load_seen(), {})
+
+    def test_a_clock_stepped_back_never_ages_a_line(self):
+        """Heph's review r2, S1: a stored time is never moved earlier, and a line first seen
+        while the clock runs behind is stamped no earlier than any time already held."""
+        mod = load_tidy(self.state, self.brief)
+        a = ["# H\n", "## START HERE\n", "- now\n", "## 2026-11-01 log\n", "- a\n"]
+        mod.NOW = NOW - 3600
+        mod.first_seen(a)
+        mod.NOW = NOW - 3 * DAY  # the clock steps back three days
+        seen = mod.first_seen(a + ["- b\n"])
+        self.assertEqual(seen[4:], [NOW - 3600, NOW - 3600])
+        mod.NOW = NOW  # and is set right
+        seen = mod.first_seen(a + ["- b\n"])
+        kept, _ = mod.plan_heph(
+            "".join(a) + "- b\n", dt.datetime.fromtimestamp(NOW), seen
+        )
+        self.assertIn("- a\n", kept)
+        self.assertIn("- b\n", kept)
+
+    def test_a_truncated_record_drops_nothing(self):
+        """Heph's review r2, S2: a record cut off mid-write is no record."""
+        p = self.heph()
+        rec = self.state / ".heph-seen.tsv"
+        rec.write_bytes(rec.read_bytes()[:-12])
+        r = self.tidy("--apply", "heph")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(p.read_text(), HEPH)
 
     def test_an_edited_or_deleted_copy_never_passes_its_age_on(self):
         """A text written twice, days apart: when the older copy is edited or deleted, the
@@ -767,9 +817,7 @@ class ReviewRound1(unittest.TestCase):
         mod = load_tidy(self.state, self.brief)
         lines = ["# H\n", "- x\n"]
         k = mod.line_keys(lines)[1]
-        (self.state / ".heph-seen.tsv").write_text(
-            f"{k}\t{NOW - 9 * DAY}\n{k}\t{NOW - DAY}\n"
-        )
+        mod.save_seen([k, k], [NOW - 9 * DAY, NOW - DAY])
         self.assertEqual(mod.first_seen(lines)[1], NOW - DAY)
 
     def test_a_blank_line_above_does_not_reset_a_line_s_age(self):
@@ -900,12 +948,27 @@ class ReviewRound1(unittest.TestCase):
             all("test/no-such-briefing" in c for c in made.splitlines()), made
         )
 
+    def test_the_report_keeps_the_last_line_of_a_failed_prune(self):
+        mod = load_tidy(self.state, self.brief)
+        self.shots.write_text(
+            "import sys\nsys.stderr.write('Traceback\\n  ' + 'x' * 400 + '\\nCalledProcessError: gh failed\\n')\nsys.exit(1)\n"
+        )
+        out = self.tmp / "report.json"
+        with (
+            mock.patch.dict(os.environ, {"FLEET_PRUNE_SHOTS": str(self.shots)}),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            mod.report(out)
+        self.assertEqual(
+            json.loads(out.read_text())["shots_said"], "CalledProcessError: gh failed"
+        )
+
     def test_the_report_records_first_sight(self):
         (self.state / "HEPH.md").write_text(HEPH)
         r = self.tidy("--report", str(self.tmp / "report.json"))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         rec = (self.state / ".heph-seen.tsv").read_text().splitlines()
-        self.assertEqual(len(rec), len(HEPH.splitlines()))
+        self.assertEqual(rec[-1], f"#end\t{len(HEPH.splitlines())}")
 
     def test_a_queued_task_brief_stays_and_a_finished_one_is_shelved(self):
         s = self.state
@@ -925,6 +988,24 @@ class ReviewRound1(unittest.TestCase):
         self.assertGreaterEqual(shelved[0].stat().st_mtime, time.time() - 60)
         r = self.tidy("--apply", "archive")
         self.assertTrue(shelved[0].exists(), "the archive keeps it 7 more days")
+
+    def test_a_rebriefed_name_keeps_its_new_task_brief(self):
+        s = self.state
+        (s / "task-reused.src").write_text("x")
+        age(s / "task-reused.src", 8 * DAY)  # written after the old run finished
+        older = dt.datetime.fromtimestamp(NOW - 9 * DAY).isoformat()
+        oldest = dt.datetime.fromtimestamp(NOW - 20 * DAY).isoformat()
+        (s / "finished.tsv").write_text(
+            # The newer run first: the last finish counts, not the last row.
+            f"%5\treused\tb\ts\tw\tc\t{older}\n%4\treused\tb\ts\tw\tc\t{oldest}\n"
+        )
+        self.assertEqual(self.tidy("--apply", "briefs").returncode, 0)
+        self.assertTrue((s / "task-reused.src").exists())
+        age(
+            s / "task-reused.src", 10 * DAY
+        )  # the brief of the run that finished 9 days ago
+        self.assertEqual(self.tidy("--apply", "briefs").returncode, 0)
+        self.assertFalse((s / "task-reused.src").exists())
 
     def test_a_resume_brief_of_a_live_agent_stays(self):
         s = self.state
@@ -953,14 +1034,14 @@ class ReviewRound1(unittest.TestCase):
         self.assertTrue(
             all((s / n).exists() for n in names), "a dry run removes nothing"
         )
-        self.assertEqual(self.tidy("--apply", "briefs").returncode, 0)
-        self.assertFalse(
-            (s / "tidy-preview.md").exists(), "an applied run clears the old list"
-        )
+        self.assertEqual(self.tidy("--apply", "briefs", dry_first=False).returncode, 0)
+        left = (s / "tidy-preview.md").read_text()
+        self.assertNotIn("## briefs", left, "an applied part clears its own list")
+        self.assertIn("## heph", left, "and leaves the others")
 
     def test_a_preview_that_cannot_be_written_leaves_no_temp_file(self):
         mod = load_tidy(self.state, self.brief)
-        mod.PREVIEW[:] = ["## briefs (1)\n", "fresh-x.src\n"]
+        mod.PREVIEW["briefs"] = ["fresh-x.src"]
 
         def fail(src, dst):
             raise OSError("disk full")
@@ -970,9 +1051,44 @@ class ReviewRound1(unittest.TestCase):
             mock.patch.object(mod.os, "replace", fail),
             contextlib.redirect_stdout(out),
         ):
-            self.assertEqual(mod.write_preview(), "the full list is above")
+            self.assertEqual(mod.write_preview(["briefs"]), "the full list is above")
         self.assertIn("fresh-x.src", out.getvalue())
         self.assertEqual(list(self.state.glob(".tidy-preview.*")), [])
+
+    def test_apply_drops_only_what_the_dry_run_listed(self):
+        """Heph's review r2, N5: --apply goes only when each thing it would drop was shown."""
+        s = self.state
+        (s / "fresh-a.src").write_text("x")
+        age(s / "fresh-a.src", 30 * DAY)
+        r = self.tidy("--apply", "briefs", dry_first=False)  # no dry run at all
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("briefs: refused: 1 of 1 not in the dry run's list", r.stdout)
+        self.assertTrue((s / "fresh-a.src").exists())
+        self.tidy("briefs")
+        (s / "fresh-b.src").write_text("x")  # eligible after the dry run
+        age(s / "fresh-b.src", 30 * DAY)
+        r = self.tidy("--apply", "briefs", dry_first=False)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("1 of 2 not in the dry run's list", r.stdout)
+        self.assertTrue((s / "fresh-a.src").exists() and (s / "fresh-b.src").exists())
+        self.tidy("briefs")
+        self.heph()
+        self.tidy("heph")  # another part's dry run keeps the briefs list
+        r = self.tidy("--apply", "briefs", dry_first=False)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertFalse((s / "fresh-a.src").exists() or (s / "fresh-b.src").exists())
+
+    def test_the_saved_list_reads_blank_and_heading_items(self):
+        mod = load_tidy(self.state, self.brief)
+        mod.PREVIEW["heph"] = ["## 10-28 00:40", "", "- 00:41 old work"]
+        mod.write_preview(["heph"])
+        self.assertEqual(
+            mod.read_preview(), {"heph": ["## 10-28 00:40", "", "- 00:41 old work"]}
+        )
+        (self.state / "tidy-preview.md").write_text(
+            mod.PREVIEW_HEAD + "## heph (5)\nx\n"
+        )
+        self.assertEqual(mod.read_preview(), {}, "a list cut short is no list")
 
     def test_a_second_tidy_is_refused(self):
         self.heph()
@@ -1005,7 +1121,12 @@ class ReviewRound1(unittest.TestCase):
         stray = self.tmp / "stray.src"
         stray.write_text("x")
         out = io.StringIO()
-        with contextlib.redirect_stdout(out):
+        with (
+            mock.patch.object(
+                mod, "preview", return_value=True
+            ),  # past the list's gate
+            contextlib.redirect_stdout(out),
+        ):
             self.assertEqual(mod.tidy_found("archive", [stray], True), 1)
         self.assertIn(
             f"refused: {self.tmp} is not {self.state / 'archive'}", out.getvalue()
@@ -1060,6 +1181,7 @@ class ReviewRound1(unittest.TestCase):
 
     def test_heph_changed_mid_tidy_is_refused(self):
         p = self.heph()
+        self.tidy("heph")  # the dry run --apply needs
         mod = load_tidy(self.state, self.brief)
         real = mod.open_elsewhere
 
@@ -1147,6 +1269,7 @@ class ReviewRound1(unittest.TestCase):
         q = "# Queue\n\n## Done since 11-09\n- ✅ **Sun 11-15:** last week\n"
         path = self.brief / "queue.md"
         path.write_text(q)
+        self.tidy("queue")  # the dry run --apply needs
         mod = load_tidy(self.state, self.brief)
         real = mod.BriefingLock.__enter__
 

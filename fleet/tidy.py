@@ -2,7 +2,9 @@
 
 Usage:
     fleet tidy [--apply] [PART ...]   a dry run without --apply writes every line and path
-                                      that would go to tidy-preview.md in the state folder;
+                                      that would go to tidy-preview.md in the state folder,
+                                      and --apply drops only what that list shows (a part
+                                      with anything unlisted refuses);
                                       PART is one or more of heph briefs archive queue done
                                       expired (default: all)
     fleet tidy --report FILE          the fleet-cleanup timer: prune the shots (fleet shots
@@ -43,6 +45,7 @@ Briefing deletions are committed under the lock the briefing sync holds; git kee
 from __future__ import annotations
 
 import argparse
+import collections
 import contextlib
 import datetime as dt
 import fcntl
@@ -266,8 +269,9 @@ SEEN = ".heph-seen.tsv"  # each HEPH.md line's fingerprint and when a tidy first
 
 def line_keys(lines: list[str]) -> list[str]:
     """A key per line: a hash of its text and of the nearest non-blank line above it, so the
-    same text written again elsewhere is a new line, and an edit or a delete above a line
-    makes it new too (both err toward keeping)."""
+    same text written again after another line is a new line, and an edit or a delete above
+    a line makes it new too (both err toward keeping). A block moved whole keeps the age of
+    every line but its first: the same text after the same line is the same note."""
     out, prev = [], ""
     for ln in lines:
         text = ln.rstrip("\r\n")
@@ -281,31 +285,47 @@ def line_keys(lines: list[str]) -> list[str]:
     return out
 
 
+SEEN_END = (
+    "#end"  # the record's last row: "#end<TAB><rows>", so a cut-off record is no record
+)
+SEEN_MIN = 1.7e9  # 2023-11: a time before this is no time this tool wrote
+SEEN_AHEAD = 30 * 86400  # a time this far past now is no clock skew either
+
+
 def load_seen() -> dict[str, list[float]]:
-    """The first-seen record, every time kept per key; empty when it is missing or
-    unreadable, and a time that is no positive number is skipped, so such lines are new."""
+    """The first-seen record, every time kept per key. A record that is missing, unreadable,
+    cut off (no end row naming its row count) or holding one row that is no plausible time
+    is no record: every line is then new. A stored time is never moved earlier."""
     try:
         text = (STATE / SEEN).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return {}
+    rows = text.splitlines()
+    if not rows or rows[-1] != f"{SEEN_END}\t{len(rows) - 1}":
+        return {}
     out: dict[str, list[float]] = {}
-    for row in text.splitlines():
-        key, _, when = row.partition("\t")
+    for row in rows[:-1]:
+        key, tab, when = row.partition("\t")
         try:
             w = float(when)
         except ValueError:
-            continue
-        if math.isfinite(w) and w > 0:
-            out.setdefault(key, []).append(min(w, NOW))
+            return {}
+        if not (tab and key and math.isfinite(w) and SEEN_MIN <= w <= NOW + SEEN_AHEAD):
+            return {}
+        out.setdefault(key, []).append(w)
     return out
 
 
 def save_seen(keys: list[str], times: list[float]) -> None:
-    """Write the record for these lines only, so it never outgrows HEPH.md."""
+    """Write the record for these lines only, so it never outgrows HEPH.md, synced to disk
+    before it replaces the old one."""
     fd, tmp = tempfile.mkstemp(dir=STATE, prefix=".heph-seen.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.writelines(f"{k}\t{w:.0f}\n" for k, w in zip(keys, times))
+            f.write(f"{SEEN_END}\t{len(keys)}\n")
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, STATE / SEEN)
     except OSError as exc:
         with contextlib.suppress(OSError):
@@ -318,25 +338,26 @@ def save_seen(keys: list[str], times: list[float]) -> None:
 
 
 def first_seen(lines: list[str]) -> list[float]:
-    """When a tidy (or the 6-hourly report) first saw each line, recording the new ones now.
+    """When a tidy (or the 6-hourly report) first saw each line, recording the new ones.
     Only this decides a line's age: a date written in the log may name another day. A key
     found more than once (the same text after the same line) is always new: which copy was
-    there first cannot be told, so none is ever guessed old."""
+    there first cannot be told, so none is ever guessed old. A new line is stamped with the
+    latest time the record has ever held, if that is past now, so a clock stepped back can
+    never make a line look older than one seen before it."""
     keys = line_keys(lines)
     seen = load_seen()
+    stamp = max([NOW, *(w for ws in seen.values() for w in ws)])
     count: dict[str, int] = {}
     for k in keys:
         count[k] = count.get(k, 0) + 1
-    times = [NOW if count[k] > 1 else max(seen.get(k, [NOW])) for k in keys]
+    times = [stamp if count[k] > 1 else max(seen.get(k, [stamp])) for k in keys]
     save_seen(keys, times)
     return times
 
 
-def plan_heph(
-    text: str, now: dt.datetime, seen: list[float] | None = None
-) -> tuple[list[str], dict]:
+def plan_heph(text: str, now: dt.datetime, seen: list[float]) -> tuple[list[str], dict]:
     """The lines HEPH.md keeps, and a summary of what goes. A log line goes only when SEEN
-    (first_seen, one time per line; None: all new) says it has existed over HEPH_HOURS; the
+    (first_seen, one time per line) says it has existed over HEPH_HOURS; the
     head, START HERE, undated sections and standing rules stay. Raises ValueError when there
     is no START HERE block, or a newer one further down."""
     lines = text.splitlines(keepends=True)
@@ -360,7 +381,7 @@ def plan_heph(
             )
     cutoff = now - dt.timedelta(hours=HEPH_HOURS)
     old_before = cutoff.timestamp()
-    when = seen if seen is not None else [now.timestamp()] * len(lines)
+    when = seen
     keep = set(range(heads[0])) | set(range(s0, s1))
     standing = 0
     losses: list[tuple[str, int]] = []
@@ -448,7 +469,8 @@ def tidy_heph(apply: bool) -> int:
         f"({s['kept_bytes'] // 1024} KB): the head, START HERE and the log since {s['since']}; "
         f"{'drops' if apply else 'would drop'} {gone} lines in {len(s['sections_dropped'])} sections"
     )
-    preview("heph", [ln.rstrip("\r\n") for ln in s["dropped_lines"]])
+    if not preview("heph", [ln.rstrip("\r\n") for ln in s["dropped_lines"]], apply):
+        return 1
     secs = s["sections_dropped"]
     for h in secs if len(secs) <= 6 else [*secs[:3], "...", *secs[-3:]]:
         print(f"  {h[:110]}")
@@ -531,13 +553,13 @@ def rows(path: Path) -> list[list[str]]:
     return [ln.split("\t") for ln in text.splitlines() if ln.strip()]
 
 
-def protected() -> tuple[set[str], set[str], set[str]]:
+def protected() -> tuple[set[str], set[str], dict[str, float]]:
     """(names, paths) of agents whose briefs stay: every row of panes.tsv and paused.tsv, and
-    agents finished or unpaused in the last KEEP_DAYS days; and the names of agents finished
-    before that, the only ones whose task brief may go."""
+    agents finished or unpaused in the last KEEP_DAYS days; and, for agents finished before
+    that, when they last finished: only a task brief older than that may go."""
     names: set[str] = set()
     paths: set[str] = set()
-    gone: set[str] = set()
+    gone: dict[str, float] = {}
     for r in rows(STATE / "panes.tsv"):
         names.update(r[1:2])
         paths.update(f for f in r if f.endswith(".src"))
@@ -549,14 +571,14 @@ def protected() -> tuple[set[str], set[str], set[str]]:
     for r in rows(STATE / "finished.tsv"):
         when = r[6] if len(r) > 6 else ""
         try:
-            recent = dt.datetime.fromisoformat(when).timestamp() >= cutoff
+            ended = dt.datetime.fromisoformat(when).timestamp()
         except ValueError:
-            recent = True  # an unreadable time is kept, never guessed old
-        if recent:
+            ended = NOW  # an unreadable time is kept, never guessed old
+        if ended >= cutoff:
             names.update(r[1:2])
             paths.update(f for f in r if f.endswith(".src"))
-        else:
-            gone.update(r[1:2])
+        elif r[1:2]:
+            gone[r[1]] = max(gone.get(r[1], 0.0), ended)
     for r in rows(STATE / "unpaused.tsv"):
         names.update(r[:1])
     return names - {""}, paths, gone
@@ -564,8 +586,9 @@ def protected() -> tuple[set[str], set[str], set[str]]:
 
 def stale_briefs() -> list[Path]:
     """Briefs that may go: a fresh brief (pasted once at launch) untouched for KEEP_DAYS, and a
-    task brief only once its agent finished over KEEP_DAYS ago. A task brief with no registry
-    row waits for a launch, so it stays."""
+    task brief only once its agent finished over KEEP_DAYS ago, and only if the brief is no
+    newer than that finish. A task brief with no registry row waits for a launch, and one
+    written after its agent's last finish is a new brief for a reused name: both stay."""
     names, paths, gone = protected()
     cutoff = NOW - KEEP_DAYS * 86400
     out = []
@@ -575,11 +598,12 @@ def stale_briefs() -> list[Path]:
             if not m or not e.is_file(follow_symlinks=False):
                 continue
             name = m["t"] or m["f"]
+            mtime = e.stat(follow_symlinks=False).st_mtime
             if (
-                (m["t"] is not None and name not in gone)
+                (m["t"] is not None and mtime > gone.get(name, -1.0))
                 or name in names
                 or e.path in paths
-                or e.stat(follow_symlinks=False).st_mtime >= cutoff
+                or mtime >= cutoff
             ):
                 continue
             out.append(Path(e.path))
@@ -622,39 +646,105 @@ def stale_archive() -> list[Path]:
     return sorted(out)
 
 
-PREVIEW: list[str] = []
+PREVIEW: dict[str, list[str]] = {}  # this dry run's list, by part
 PREVIEW_FILE = "tidy-preview.md"
+PREVIEW_HEAD = "# fleet tidy: everything the dry run would drop\n\n"
 
 
-def preview(part: str, items: list[str]) -> None:
-    """Every line or path PART would drop, for the dry run's full list."""
-    if items:
-        PREVIEW.append(f"## {part} ({len(items)})\n")
-        PREVIEW.extend(f"{x}\n" for x in items)
-
-
-def write_preview() -> str:
-    """The dry run's full list, written to the state folder (or printed when it cannot be)."""
-    if not PREVIEW:
-        return "nothing would go"
-    out = STATE / PREVIEW_FILE
-    body = "# fleet tidy: everything the dry run would drop\n\n" + "".join(PREVIEW)
-    tmp = None
+def read_preview() -> dict[str, list[str]]:
+    """The saved dry-run list, by part. Each section names its item count, so an item that
+    is blank or looks like a heading is still read as an item. Missing or garbled: empty."""
     try:
-        # Only into the state folder; os.replace swaps a link itself, never its target.
-        if not is_state_folder(STATE):
-            raise OSError("not the state folder")
-        fd, tmp = tempfile.mkstemp(dir=STATE, prefix=".tidy-preview.", suffix=".tmp")
+        rows = (STATE / PREVIEW_FILE).read_text(
+            encoding="utf-8", errors="surrogateescape"
+        )
+    except OSError:
+        return {}
+    lines = rows.splitlines()
+    out: dict[str, list[str]] = {}
+    i = 2 if lines[:2] == PREVIEW_HEAD.splitlines() else len(lines)
+    while i < len(lines):
+        m = re.fullmatch(r"## (\w+) \((\d+)\)", lines[i])
+        if not m or i + 1 + int(m[2]) > len(lines):
+            return {}
+        out[m[1]] = lines[i + 1 : i + 1 + int(m[2])]
+        i += 1 + int(m[2])
+    return out
+
+
+def preview(part: str, items: list[str], apply: bool) -> bool:
+    """A dry run records every line or path PART would drop. With --apply, whether PART may
+    go ahead: only when each item it would drop is in the saved dry-run list, so nothing
+    goes that no one was shown (a line that crossed the age limit since then included)."""
+    if not apply:
+        PREVIEW[part] = items
+        return True
+    if not items:
+        return True
+    left = collections.Counter(read_preview().get(part, []))
+    left.subtract(items)
+    unlisted = -sum(n for n in left.values() if n < 0)
+    if unlisted:
+        print(
+            f"{part}: refused: {unlisted} of {len(items)} not in the dry run's list "
+            f"({PREVIEW_FILE}); run `fleet tidy {part}`, read it, then --apply again"
+        )
+        return False
+    return True
+
+
+def save_preview(sections: dict[str, list[str]]) -> Path:
+    out = STATE / PREVIEW_FILE
+    if not is_state_folder(
+        STATE
+    ):  # only into the state folder; os.replace swaps a link itself
+        raise OSError("not the state folder")
+    if not sections:
+        out.unlink(missing_ok=True)
+        return out
+    body = PREVIEW_HEAD + "".join(
+        f"## {part} ({len(items)})\n" + "".join(f"{x}\n" for x in items)
+        for part, items in sections.items()
+    )
+    fd, tmp = tempfile.mkstemp(dir=STATE, prefix=".tidy-preview.", suffix=".tmp")
+    try:
         with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:
             f.write(body)
         os.replace(tmp, out)
     except OSError:
-        if tmp is not None:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-        sys.stdout.write(body)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    return out
+
+
+def write_preview(ran: list[str]) -> str:
+    """Merge this dry run's list into the saved one: the parts it ran are replaced (a part
+    with nothing to drop leaves no section), the others kept. Printed when it cannot be saved."""
+    sections = {k: v for k, v in read_preview().items() if k not in ran}
+    sections |= {k: v for k, v in PREVIEW.items() if v}
+    try:
+        out = save_preview(sections)
+    except OSError:
+        sys.stdout.write(
+            "".join(
+                f"## {k} ({len(v)})\n" + "".join(f"{x}\n" for x in v)
+                for k, v in PREVIEW.items()
+                if v
+            )
+        )
         return "the full list is above"
+    if not any(PREVIEW.values()):
+        return "nothing would go"
     return f"the full list is in {out}"
+
+
+def forget_preview(applied: list[str]) -> None:
+    """After --apply, the applied parts' lists are out of date; the others stay."""
+    sections = read_preview()
+    if any(k in sections for k in applied):
+        with contextlib.suppress(OSError):
+            save_preview({k: v for k, v in sections.items() if k not in applied})
 
 
 def safe_archive(arc: Path) -> Path | None:
@@ -767,13 +857,11 @@ def tidy_found(part: str, found: list[Path], apply: bool) -> int:
         print(f"  {p.name}")
     if len(found) > 5:
         print(f"  ... and {len(found) - 5} more")
-    preview(
-        part,
-        [
-            str(p.relative_to(STATE)) if p.is_relative_to(STATE) else str(p)
-            for p in found
-        ],
-    )
+    listed = [
+        str(p.relative_to(STATE)) if p.is_relative_to(STATE) else str(p) for p in found
+    ]
+    if not preview(part, listed, apply):
+        return 1
     if not apply or not found:
         return 0
     failed = 0
@@ -858,7 +946,8 @@ def tidy_queue(apply: bool, mod) -> int:
     )
     for ln in dropped:
         print(f"  {ln[:140]}")
-    preview("queue", [ln.rstrip("\r\n") for ln in dropped])
+    if not preview("queue", [ln.rstrip("\r\n") for ln in dropped], apply):
+        return 1
     if not apply or not dropped:
         return 0
     try:
@@ -975,7 +1064,8 @@ def tidy_done(apply: bool) -> int:
     print(
         f"done: {'removes' if apply else 'would remove'} {len(files)} retired done/ files (GitHub holds the work; harvest lessons first)"
     )
-    preview("done", files)
+    if not preview("done", files, apply):
+        return 1
     if not apply or not files:
         return 0
     return git_remove(files, "Retire done/: finished work lives in GitHub")
@@ -1004,7 +1094,8 @@ def tidy_expired(apply: bool, mod) -> int:
     )
     for g, why in sorted(gone.items()):
         print(f"  {g}: {why}")
-    preview("expired", files)
+    if not preview("expired", files, apply):
+        return 1
     if not apply or not files:
         return 0
     return git_remove(files, f"Remove {len(files)} expired briefing files")
@@ -1037,7 +1128,10 @@ def report(out: Path) -> int:
         )
         data["shots_rc"] = shots.returncode
         if shots.returncode:
-            data["shots_said"] = (shots.stderr or shots.stdout).strip()[-300:]
+            said = (shots.stderr or shots.stdout).strip().splitlines()
+            data["shots_said"] = (
+                said[-1][-300:] if said else ""
+            )  # the last line: the error
     except subprocess.TimeoutExpired:
         data["shots_rc"], data["shots_said"] = 124, "timed out after 540 s"
     try:
@@ -1131,10 +1225,9 @@ def main(argv: list[str]) -> int:
         elif part == "expired":
             failed |= tidy_expired(a.apply, mod)
     if not a.apply:
-        print(f"dry run: nothing changed; {write_preview()}; add --apply to do it")
-    elif state_parts and is_state_folder(STATE):
-        with contextlib.suppress(FileNotFoundError):  # its list is out of date now
-            (STATE / PREVIEW_FILE).unlink()
+        print(f"dry run: nothing changed; {write_preview(parts)}; add --apply to do it")
+    elif is_state_folder(STATE):
+        forget_preview(parts)
     return failed
 
 
