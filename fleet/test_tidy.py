@@ -4,19 +4,21 @@ Run: python3 -I fleet/test_tidy.py
 The queue, expired and report cases need techne's cleanup.py: TECHNE_CLEANUP, else
 ~/ajsoftworks/techne. Without it they fail, unless KLEPSYDRA_NO_TECHNE=1 declares its absence."""
 
+import atexit
 import contextlib
 import datetime as dt
 import fcntl
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 NOW = time.mktime(time.strptime("2026-11-20 12:00", "%Y-%m-%d %H:%M"))  # a Friday
@@ -30,6 +32,7 @@ HAVE_TECHNE = Path(TECHNE).is_file()
 # gh that records its call and fails, a briefing slug that names no repo, and a shots prune
 # that does nothing (a test that needs another sets its own).
 SANDBOX = Path(tempfile.mkdtemp(prefix="test-tidy-"))
+atexit.register(shutil.rmtree, SANDBOX, ignore_errors=True)
 (SANDBOX / "gh").write_text(
     '#!/bin/sh\necho "$@" >> "$(dirname "$0")/gh-calls"\nexit 1\n'
 )
