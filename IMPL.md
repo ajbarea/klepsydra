@@ -1,67 +1,31 @@
-# IMPL: klepsydra#384 PR 1: Settings page shell with search and existing settings wiring
+# IMPL: klepsydra#384 PR 1 (#493): settings page, design A, round 2
 
-Branch `feat/settings-page-384` (worktree `.claude/worktrees/settings-384`), cut with `--no-track` from `origin/main` (`958dbb2`).
-Push only with an explicit refspec: `git push -u origin feat/settings-page-384:feat/settings-page-384`. Never push to main.
-Decision: Issue #384, Brief `~/.local/state/fleet-orchestrator/briefs-free/settings-384-step2.md`.
-Design reference: Design A (`docs/mockups/2026-11-18/settings-a.html` on PR #459 branch `mock-459`).
+Branch `feat/settings-page-384`, worktree `.claude/worktrees/settings-r2`.
+Push only with `git push origin feat/settings-page-384:feat/settings-page-384`. Never to main.
+Round-1 review: `~/.local/state/fleet-orchestrator/reports/settings-493-r1.md` (NOT CLEAN; agy built PR 1).
 
-## Scope & Constraints (PR 1)
-- Settings page view following Design A inside wall window (`#settings.settings-view`):
-  - Header with Back button, title, and search input (`/` to focus, `Esc` to clear search or return).
-  - Sticky section navigation.
-  - Rows are data, not markup: defined in `src/settings/registry.js` with `{ id, section, label, description, control, read, write }`.
-  - Instant apply (no Save button).
-  - Dark and light color schemes; responsive at 1920 and 390 viewport widths; full ARIA markup.
-- Wire exactly the 13 settings that exist on `main` today:
-  1. Start with Windows (Autostart toggle)
-  2. Compact layout (Segmented / toggle: Compact vs Full)
-  3. Ping chime (Toggle)
-  4. Phone wall (Toggle)
-  5. Character set (Theme select: Kourai / Professions / Dicebear)
-  6. Voices mode (Segmented: Off / Orchestrator only / Everyone)
-  7. Choose queue file (Button / path display)
-  8. Choose Needs you file (Button / path display)
-  9. Reset position (Button)
-  10. Set home here (Button)
-  11. Split with terminal (Toggle)
-  12. Card density (Segmented: Auto / Comfortable / Compact)
-  13. New session default (Select: Last used / Claude / agy / Copilot)
-- Tray menu keeps ONLY 3 items:
-  - `Open wall`
-  - `Settings...`
-  - `Quit`
-- Banned files: DO NOT touch `src/style.css`, `src/main.js`, `src/gauge.js`, or `src/gaugeview.js`.
+## Slice
+Make PR 1 merge-ready: every round-1 Blocking, Should-fix and Nit fixed, with guards
+so the classes cannot return. Opus worker (settings-r2) took it over from agy.
 
-## Done (PR 1)
-- Step 1: Research, inventory of existing settings, and Design A plan completed and approved by Athena.
-- Step 2:
-  - `src/settings/registry.js`: Data-driven registry with `SECTIONS`, `ROWS` (13 wired items), and `filterRows(rows, query)`.
-  - `src/fleet/settings.css`: Design A styles with sticky section nav, responsive layouts (1920 & 390px), dark/light theme support, accessibility indicators.
-  - `src/fleet/settings.js`: Controller mounting the view, instant apply on inputs, live search filtering (`/` focus, `Esc` clear), bidirectional sync with wall state.
-  - `src/wall.html`: Added `#settings` container and `Settings…` button in gear dropdown.
-  - `src/fleet/wall.js`: Wired view switching (`openSettings`/`closeSettings`), hash `#settings`, IPC `open-settings` event, two-way sync for density and character theme.
-  - `src-tauri/src/main.rs`: Slimmed tray menu down to exactly 3 items (`open_wall`, `settings`, `quit`), added Rust test `tray_menu_has_exactly_three_items`, exposed required commands.
-  - `src-tauri/src/fleet.rs`, `src-tauri/src/voices.rs`, `src-tauri/src/theme.rs`: Exposed Tauri commands for reading/writing prefs.
-  - `src-tauri/fleet/src/phone.rs`: Updated asset serving to include `settings/` modules.
-  - `src/settings.test.js`: Added unit tests for schema, filtering, read/write wiring, and mutation verification.
-  - `scripts/test_wall_browser.py`: Added browser test capturing 4 screenshots at 1920 and 390 in dark and light modes.
-- Verified:
-  - `node --test src/*.test.js`: 574 passed, 0 failed.
-  - `npm run lint`: Biome checked 75 files, 0 errors.
-  - `uvx ruff check`: 0 errors.
-  - `cargo fmt --all --check` & `cargo clippy -p klepsydra-fleet -- -D warnings`: clean.
-  - `cargo test -p klepsydra-fleet`: 442 passed, 0 failed.
-  - `test_wall_browser.py settings_view`: 16 passed, 0 failed.
-  - `bash statusline/test_statusline.sh`: passed.
-  - `bash hooks/test_fleet.sh`: 606 passed, 0 failed.
-  - `bash scripts/test_measure_memory.sh`: 28 passed, 0 failed.
-  - `bash scripts/test_build_windows.sh`: 14 passed, 0 failed.
-  - `make test-headless`: 125 passed, 0 failed.
-  - `make test-engine`: passed.
+## Done
+- Tray Settings... opens `wall.html#settings` on a new wall, sets the hash on an open one (fleet.rs `show_wall`); the hash is the only switch (wall.js `showView`), Back clears it.
+- Rows show what the command returned (settings.js `apply`/`viewOf`, registry `view`): autostart {on, held, label}, ping and phone read back, Voices reads keryx live (voices.rs `get_voices_mode`, bounded Reader), pickers return both paths (async, `blocking_pick_file` in spawn_blocking).
+- Split, density, Characters and New session's default are bound rows: the page calls the wall's own function (`split.set`, `pickDensity`, `chooseTheme`, `setDefault`) and each control syncs the page.
+- New session lists the + New session entries by real id; an unknown saved id still shows.
+- Ping and Split rows hide where the app refuses them (off Windows); autostart label comes from the app.
+- Tray code deleted (choice.rs, theme/voices menus, all `#[allow(dead_code)]` keep-alives); theme published at start (the deleted `theme::menu` used to do it).
+- settings.css on wall.css tokens; focus ring scoped; reduced motion; Ledger/Queue tabs hidden behind the page; APG radio groups.
+- Guards: `src/css-tokens.test.js` (every var() defined per page), `src/settings.test.js` (answers not asks, commands registered, one code path per bound row, Voices labels = Rust table, tray hash). 12/12 mutants caught (node).
+- README Settings section; tray references updated in README and docs/fleet.md.
 
 ## Next
-1. Commit changes with title `feat(wall): settings page with search, tray keeps Open, Settings, Quit (#384)`.
-2. Push with explicit refspec: `git push -u origin feat/settings-page-384:feat/settings-page-384`.
-3. Open PR with `gh pr create` (label `enhancement`, assignee `ajbarea`, short top, live vs tested declaration).
-4. Watch CI until green (`gh pr checks <pr> --watch --interval 60`).
-5. Write report to `~/.local/state/fleet-orchestrator/reports/settings-384.md` and notify Athena (`fleet send`).
+- Browser cases (`settings_view settings_rows_show_answers settings_bound_controls settings_by_hash`, both schemes, 1920 + 390) and `scripts/build-windows.sh --check` (KLEPSYDRA_STAGE=klepsydra-build-settings): queued on the heavy lock.
+- Mutation-check a browser case (page shows the ask) once it passes.
+- Independent Opus review round 2: report at the session scratchpad `review-r2.md`; fix, re-review until clean.
+- Shots to fleet-briefing/shots/2026-11-19, PR body (short top), push, CI green, `fleet send` Athena, `fleet done`.
+
+## Verify
+`node --test src/*.test.js` · `npm run -s lint` · `uvx ruff check scripts/test_wall_browser.py` ·
+`flock -o /tmp/fleet-heavy.lock timeout 900 uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py settings_view settings_rows_show_answers settings_bound_controls settings_by_hash` ·
+`KLEPSYDRA_STAGE=klepsydra-build-settings flock -o /tmp/fleet-heavy.lock timeout 2400 bash scripts/build-windows.sh --check` · `cargo test -p klepsydra-fleet` (in src-tauri).
