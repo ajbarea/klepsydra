@@ -24,7 +24,8 @@ Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a 
   START HERE refuses; STANDING/PERMANENT/binding lines stay); 6 new guards hand-mutated, all red.
   Minors left for the PR body: no registry lock in done.sh race (now locked), queue date takes
   the first MM-DD, done/expired dry run prints counts, BriefingLock duplicates prune_shots's.
-1. 📋 CI on 158d43e; then a verify pass (fresh Opus) on 7bde675..158d43e.
+1. ✅ Verify passes: 9df86e3 fixed the case-sensitive standing match; final verify clean.
+   📋 CI green on the head, then Heph reviews and merges (deferred minors are in the PR body).
 2. 📋 Pin ci.yml's techne ref to #394's merge SHA once merged.
 - Live dry run 11-20: HEPH.md 1476 → 429 lines; 175 stale briefs; archive entries; 2 queue lines.
 - Never `--apply heph` on the live file yourself; the orchestrator runs it after the dry run.
