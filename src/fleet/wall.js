@@ -1176,7 +1176,9 @@ function take(message) {
     if (pending) focusCard(pending, true);
   }
   if (typeof message?.focus === "string") {
-    leaveSettings(); // a card asked for (a click on the gauge) shows on the wall, not behind the page
+    // A card asked for (a click on the gauge) shows on the wall, not behind the page;
+    // the empty focus that comes with the tray's Settings... and Open wall leaves it be.
+    if (message.focus) leaveSettings();
     focusCard(message.focus);
   }
 }
@@ -1979,10 +1981,14 @@ settingsController = mountSettings({
   onBack: leaveSettings,
 });
 
-/** Back to the cards now: clears #settings without waiting for a hashchange. */
+/**
+ * Back to the cards now, without waiting for a hashchange: keyed on the page shown, not
+ * the hash, since the app may clear the hash before a card is asked for (its hashchange
+ * then finds the cards already shown and does nothing).
+ */
 function leaveSettings() {
-  if (location.hash !== "#settings") return;
-  history.replaceState(null, "", location.pathname + location.search);
+  if (settingsEl.hidden) return;
+  if (location.hash === "#settings") history.replaceState(null, "", location.pathname + location.search);
   showView();
 }
 
@@ -1992,7 +1998,14 @@ function showView() {
   if (settings === !settingsEl.hidden) return;
   gear.open = false;
   // A hidden Queue or Ledger, modal under 1200 px, would hold the focus: shut while the page shows.
-  if (settings) edge.hold();
+  if (settings) {
+    edge.hold();
+    // The tray's Settings... can come while a portrait, an End confirmation or a menu is
+    // open over the cards: each is dismissed as Escape would, never confirmed.
+    for (const d of document.querySelectorAll("dialog[open]")) d.close("cancel");
+    for (const p of document.querySelectorAll(":popover-open")) p.hidePopover();
+    closeMenu(false);
+  }
   settingsEl.hidden = !settings;
   bar.hidden = settings;
   mainEl.hidden = settings;

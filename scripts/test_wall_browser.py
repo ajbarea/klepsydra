@@ -6010,6 +6010,68 @@ def settings_by_hash(wall):
     wall.check(page.evaluate("document.getElementById('settings').hidden"), "Open wall (the app clears the hash) shows the cards", True)
     page.close()
 
+    # The tray's Settings... sends an empty focus with the hash (show_wall), in either order:
+    # the page stays. A card asked for from the gauge leaves the page and takes the focus,
+    # whether the app's hash clear runs before the focus or the focus comes alone.
+    page = open_app(wall, init=SETTINGS_ANSWERS, path="src/wall.html#settings")
+    page.wait_for_timeout(SETTLE_MS)
+    send(page, {"focus": ""})
+    after_new = page.evaluate("!document.getElementById('settings').hidden")
+    page.click("#settings-back")
+    page.wait_for_timeout(100)
+    page.evaluate("() => { location.hash = '#settings'; window.__channel.onmessage({ focus: '' }); }")
+    page.wait_for_timeout(SETTLE_MS)
+    after_open = page.evaluate("!document.getElementById('settings').hidden")
+    wall.check([after_new, after_open] == [True, True], "the empty focus sent with Settings... keeps the page, on a new wall and an open one", [after_new, after_open])
+    card = "demo-2-af_bella"
+    shown = "() => [document.getElementById('settings').hidden, location.hash, document.activeElement?.dataset?.key ?? null]"
+    page.evaluate("(k) => { location.hash = ''; window.__channel.onmessage({ focus: k }); }", card)
+    page.wait_for_timeout(SETTLE_MS)
+    hash_first = page.evaluate(shown)
+    page.evaluate("location.hash = '#settings'")
+    page.wait_for_timeout(SETTLE_MS)
+    send(page, {"focus": card})
+    focus_alone = page.evaluate(shown)
+    wall.check(
+        hash_first == [True, "", card] and focus_alone == [True, "", card],
+        "a card asked for from the gauge leaves the page with the focus on the card, the hash cleared first or not",
+        [hash_first, focus_alone],
+    )
+    page.close()
+
+    # The tray's Settings... over an open portrait, End confirmation, session menu or engine
+    # menu dismisses each (never confirms), so none is left over the page.
+    page = open_app(wall, init=SETTINGS_ANSWERS)
+    card = page.locator(".card[data-key='demo-2-af_bella']")
+    left = {}
+    for what in ("portrait", "end", "menu", "engines"):
+        if what == "portrait":
+            card.locator(".look").click()
+            page.wait_for_selector("#portrait[open]")
+        elif what == "end":
+            open_menu(page, card)
+            page.get_by_role("menuitem", name="End session…").click()
+            page.wait_for_selector("#end-dialog[open]")
+        elif what == "menu":
+            open_menu(page, card)
+        else:
+            page.evaluate("document.getElementById('new-menu').showPopover()")
+        page.evaluate("window.__calls = []; location.hash = '#settings'")
+        page.wait_for_selector("#settings:not([hidden]) #row-ping:not([hidden])")
+        page.wait_for_timeout(SETTLE_MS)
+        left[what] = page.evaluate(
+            """() => [[...document.querySelectorAll('dialog[open], :popover-open, #session-menu:not([hidden])')].map((e) => e.id),
+              window.__calls.filter(([c]) => c === 'end_session').length, document.activeElement.id]"""
+        )
+        page.click("#settings-back")
+        page.wait_for_timeout(SETTLE_MS)
+    wall.check(
+        all(v == [[], 0, "settings-search-input"] for v in left.values()),
+        "Settings... over a portrait, End confirmation, session menu or engine menu dismisses it, ends nothing, and focuses the search",
+        left,
+    )
+    page.close()
+
     # A Ledger open on one session comes back on that session after the page.
     page = open_app(wall, init=SETTINGS_ANSWERS)
     page.evaluate("window.__answers.ledger_today = () => fetch('/scripts/fixtures/ledger-demo.json').then((r) => r.json()).then(({ at, ...v }) => v)")

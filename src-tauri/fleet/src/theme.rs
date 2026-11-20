@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 /// prefs.json's key for the theme.
 pub const KEY: &str = "theme";
 
-/// Each theme's id and the name the tray gives it, the default first.
+/// Each theme's id and name, the default first.
 pub const THEMES: [(&str, &str); 3] = [
     ("kourai", "Kourai"),
     ("professions", "Professions"),

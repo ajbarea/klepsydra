@@ -171,16 +171,45 @@ function handlers() {
   return list.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-test("every command main.rs registers is a #[tauri::command] fn that exists", () => {
+/**
+ * Why `fn name` in `src` is not a command every system builds, or null: the attributes and
+ * doc lines right above it must hold #[tauri::command] and no #[cfg(...)].
+ */
+function commandProblem(src, name) {
+  const m = src.match(new RegExp(`((?:[ \\t]*(?:#\\[[^\\]]*\\]|///[^\\n]*)\\s*\\n)*)[ \\t]*(?:pub(?:\\([^)]*\\))? )?(?:async )?fn ${name}\\b`));
+  if (!m) return `no fn ${name}`;
+  if (!m[1].includes("#[tauri::command]")) return `fn ${name} is not a #[tauri::command]`;
+  if (/#\[cfg\(/.test(m[1])) return `fn ${name} is cfg-gated`;
+  return null;
+}
+
+/** The modules main.rs declares under #[cfg(...)], which some systems never build. */
+const gatedModules = (main) => [...main.matchAll(/#\[cfg\([^\]]*\]\s*(?:pub(?:\([^)]*\))? )?mod (\w+);/g)].map((m) => m[1]);
+
+test("the command check catches a missing, unmarked or gated fn, docs or not, and a gated module", () => {
+  const ok = "/// Says hi.\n#[tauri::command]\npub async fn hi() {}\n";
+  assert.equal(commandProblem(ok, "hi"), null);
+  assert.equal(commandProblem("#[tauri::command]\n#[allow(unused)]\nfn hi() {}\n", "hi"), null);
+  assert.match(commandProblem(ok, "bye"), /no fn bye/);
+  assert.match(commandProblem("/// Says hi.\npub fn hi() {}\n", "hi"), /not a #\[tauri::command\]/);
+  for (const gated of [
+    "#[cfg(windows)]\n#[tauri::command]\nfn hi() {}\n",
+    "#[tauri::command]\n#[cfg(windows)]\nfn hi() {}\n",
+    "#[cfg(windows)]\n/// Says hi.\n#[tauri::command]\nfn hi() {}\n",
+  ])
+    assert.match(commandProblem(gated, "hi"), /cfg-gated/, gated);
+  assert.deepEqual(gatedModules("mod a;\n#[cfg(windows)]\nmod ping;\n#[cfg(test)] pub mod t;\n"), ["ping", "t"]);
+});
+
+test("every command main.rs registers is a #[tauri::command] fn that every system builds", () => {
   // A handler naming a deleted fn breaks the app's build, which this WSL cannot run.
+  const gated = gatedModules(read("src-tauri/src/main.rs"));
   for (const h of handlers()) {
     const parts = h.split("::");
     const name = parts.pop();
+    assert.ok(!parts.length || !gated.includes(parts[0]), `${h}: mod ${parts[0]} is cfg-gated`);
     const file = parts.length ? `src-tauri/src/${parts.join("/")}.rs` : "src-tauri/src/main.rs";
-    const src = read(file);
-    // A command fn under #[cfg(...)] would exist on one system only.
-    assert.doesNotMatch(src, new RegExp(`#\\[cfg[^\\]]*\\]\\s*#\\[tauri::command\\][^{]*?fn ${name}\\b`), `${h}: fn ${name} is cfg-gated`);
-    assert.match(src, new RegExp(`#\\[tauri::command\\]\\s*(?:#\\[(?!cfg)[^\\]]*\\]\\s*)*(?:pub(?:\\([^)]*\\))? )?(?:async )?fn ${name}\\b`), `${h}: no #[tauri::command] fn ${name} in ${file}`);
+    assert.equal(commandProblem(read(file), name), null, `${h} in ${file}`);
   }
 });
 

@@ -148,12 +148,10 @@ pub fn apply_voices() {
         return;
     }
     let args = voices_args();
-    tauri::async_runtime::spawn_blocking(move || loop {
-        VOICES_RUN.starting();
-        let _ = logged("voices", None, || run(&args, VOICES_TIMEOUT, timed_out));
-        if !VOICES_RUN.finished() {
-            break;
-        }
+    tauri::async_runtime::spawn_blocking(move || {
+        VOICES_RUN.serve("voices", || {
+            let _ = logged("voices", None, || run(&args, VOICES_TIMEOUT, timed_out));
+        });
     });
 }
 

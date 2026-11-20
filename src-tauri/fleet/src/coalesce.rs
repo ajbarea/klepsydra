@@ -43,6 +43,22 @@ impl Coalesce {
         // run to it: take the gate back for it, unless a new worker has.
         self.again.load(SeqCst) && !self.running.swap(true, SeqCst)
     }
+
+    /// The worker's loop, for the caller `ask` told to start one: runs `job`
+    /// until no ask is left. A run that panics is logged and counts as done,
+    /// so the gate never stays shut on a dead worker.
+    pub fn serve(&self, what: &str, mut job: impl FnMut()) {
+        loop {
+            self.starting();
+            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&mut job));
+            if run.is_err() {
+                log::error!("{what}: the run panicked; the next ask runs it again");
+            }
+            if !self.finished() {
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -63,6 +79,27 @@ mod tests {
         c.starting();
         assert!(!c.finished(), "then it stops");
         assert!(c.ask(), "and the next ask starts a worker again");
+    }
+
+    #[test]
+    fn a_run_that_panics_leaves_the_gate_open() {
+        let c = Coalesce::default();
+        let runs = AtomicUsize::new(0);
+        assert!(c.ask());
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {})); // the panic is the test's own
+        c.serve("test", || {
+            runs.fetch_add(1, SeqCst);
+            panic!("boom");
+        });
+        std::panic::set_hook(hook);
+        assert_eq!(runs.load(SeqCst), 1);
+        assert!(c.ask(), "the next ask starts a worker again");
+        c.serve("test", || {
+            runs.fetch_add(1, SeqCst);
+        });
+        assert_eq!(runs.load(SeqCst), 2);
+        assert!(c.ask(), "and stays open after a clean run");
     }
 
     #[test]
