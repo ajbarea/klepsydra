@@ -736,6 +736,71 @@ check "jump behind a held lock: says no launch" "$out" \
 check "jump behind a held lock: window selected" "$(t display -p -t =fleet: '#{pane_id}')" "$first"
 check "jump behind a held lock: no tab" "$(tabs)" "0"
 
+echo "runtime dir fallback (#517)"
+stop_server; detach_all; : >"$WT_LOG"
+fallback_lock="/tmp/klepsydra-launch-$UID.lock"
+rm -f -- "$fallback_lock" "$work/klepsydra-launch-$UID.lock"
+
+# 1. Missing XDG_RUNTIME_DIR falls back to /tmp: holding the fallback lock blocks it,
+# while an existing runtime dir uses its own lock and is not blocked.
+( exec 9>>"$fallback_lock"; flock 9; exec sleep 30 ) &
+holder=$!
+for _ in $(seq 100); do flock -n "$fallback_lock" true || break; sleep 0.05; done
+
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work/nonexistent" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "missing runtime dir contends on fallback lock: exit 1" "$rc" "1"
+check "missing runtime dir contends on fallback lock: says so" "$out" "Another launch is still running."
+
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "existing runtime dir ignores fallback lock: exit 0" "$rc" "0"
+
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+rm -f -- "$fallback_lock"
+
+# 2. When the existing dir lock is held, missing XDG_RUNTIME_DIR takes the fallback lock
+# and succeeds; existing XDG_RUNTIME_DIR contends on the held existing lock.
+stop_server; detach_all; : >"$WT_LOG"
+( exec 9>>"$work/klepsydra-launch-$UID.lock"; flock 9; exec sleep 30 ) &
+holder=$!
+for _ in $(seq 100); do flock -n "$work/klepsydra-launch-$UID.lock" true || break; sleep 0.05; done
+
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work/nonexistent" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "missing runtime dir takes fallback lock while existing held: exit 0" "$rc" "0"
+
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "existing runtime dir contends on existing lock: exit 1" "$rc" "1"
+check "existing runtime dir contends on existing lock: says so" "$out" "Another launch is still running."
+
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+rm -f -- "$fallback_lock" "$work/klepsydra-launch-$UID.lock"
+
+# 3. Group-writable runtime dir is untrusted and falls back to /tmp.
+stop_server; detach_all; : >"$WT_LOG"
+gw_dir="$work/gw_runtime"
+mkdir -p "$gw_dir" && chmod 775 "$gw_dir"
+( exec 9>>"$fallback_lock"; flock 9; exec sleep 30 ) &
+holder=$!
+for _ in $(seq 100); do flock -n "$fallback_lock" true || break; sleep 0.05; done
+
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$gw_dir" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "group-writable runtime dir falls back to /tmp lock: exit 1" "$rc" "1"
+check "group-writable runtime dir falls back to /tmp lock: says so" "$out" "Another launch is still running."
+
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+rm -f -- "$fallback_lock"
+rm -rf -- "$gw_dir"
+
+# 4. Cold tab pending stamp is written in /tmp when XDG_RUNTIME_DIR is missing.
+stop_server; detach_all; : >"$WT_LOG"
+fallback_pending="/tmp/klepsydra-tab-pending-$UID"
+rm -f -- "$fallback_pending"
+export WT_DELAY=never
+out=$(XDG_RUNTIME_DIR="$work/nonexistent" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "missing runtime dir cold tab: exit 0" "$rc" "0"
+check "missing runtime dir cold tab: pending in /tmp" "$([[ -f "$fallback_pending" ]] && echo yes)" "yes"
+rm -f -- "$fallback_pending"
+unset WT_DELAY
+
 echo "one tab per fleet"
 stop_server; detach_all; : >"$WT_LOG"
 export WT_DELAY=0.5

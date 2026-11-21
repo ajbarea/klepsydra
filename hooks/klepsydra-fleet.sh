@@ -42,8 +42,22 @@ fi
 CAST=${KLEPSYDRA_CAST:-}
 if [[ -z $CAST && -n ${KLEPSYDRA_DIR:-} && -f $KLEPSYDRA_DIR/cast.json ]]; then CAST=$KLEPSYDRA_DIR/cast.json
 elif [[ -z $CAST && -n ${HOME:-} ]]; then CAST=$HOME/.claude/klepsydra-cast.json; fi
+# Runtime folder: XDG_RUNTIME_DIR only when it exists, is owned by this user
+# and is not group/world-writable; else /tmp (#517).
+runtime_dir() {
+  local d=${XDG_RUNTIME_DIR:-} m
+  while [[ $d == */ ]]; do d=${d%/}; done
+  if [[ -n $d && -d $d && ! -L $d && -O $d ]]; then
+    m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
+    if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
+      printf '%s\n' "$d"; return 0
+    fi
+  fi
+  printf '/tmp\n'
+}
+RUN_DIR=$(runtime_dir)
 # Every session's hooks run as separate processes, so writes take one lock.
-LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock
+LOCK=$RUN_DIR/klepsydra-fleet-$UID.lock
 PROMPT_CHARS=300
 # The events README.md registers this hook on; any other is ignored.
 EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure SubagentStart SubagentStop Stop StopFailure SessionEnd"
@@ -1093,7 +1107,7 @@ watch_ask() { # sid
   local sid=$1 file lock text row at socket pane screen asked="" seen=0 misses=0 began now
   [[ $sid =~ $UUID_RE && -n ${KLEPSYDRA_DIR:-} ]] || return 0
   file=$KLEPSYDRA_DIR/fleet/$sid.json
-  { exec {lock}>>"${XDG_RUNTIME_DIR:-/tmp}/klepsydra-ask-$UID-$sid.lock"; } 2>/dev/null || return 0
+  { exec {lock}>>"$RUN_DIR/klepsydra-ask-$UID-$sid.lock"; } 2>/dev/null || return 0
   # A watcher on its way out still holds the lock; one still watching keeps it.
   flock -w 10 "$lock" || return 0
   began=$SECONDS

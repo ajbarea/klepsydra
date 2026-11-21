@@ -51,10 +51,24 @@ COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .git
 AGY_ASK=${KLEPSYDRA_AGY_ASK:-30} # seconds for one agy listing; a launch asks with less
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
-LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
+# Runtime folder: XDG_RUNTIME_DIR only when it exists, is owned by this user
+# and is not group/world-writable; else /tmp (#517).
+runtime_dir() {
+  local d=${XDG_RUNTIME_DIR:-} m
+  while [[ $d == */ ]]; do d=${d%/}; done
+  if [[ -n $d && -d $d && ! -L $d && -O $d ]]; then
+    m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
+    if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
+      printf '%s\n' "$d"; return 0
+    fi
+  fi
+  printf '/tmp\n'
+}
+RUN_DIR=$(runtime_dir)
+LOCK=$RUN_DIR/klepsydra-launch-$UID.lock
 PROC_ROOT=/proc
 # A tab opened but not yet attached: "EPOCH KEY", KEY its socket args and target.
-PENDING=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-tab-pending-$UID
+PENDING=$RUN_DIR/klepsydra-tab-pending-$UID
 PENDING_FOR=30
 # A socket path safe to hand wt.exe, which splits its arguments at ";".
 SOCKET_RE='^/[A-Za-z0-9._/-]{1,255}$'
@@ -75,7 +89,7 @@ has_client() { [[ -n $(tmux "${@:2}" list-clients -t "$1" -F x 2>/dev/null) ]]; 
 # Serialise launches: one tab per fleet even for back-to-back clicks.
 take_lock() { # [what to say when another holds it for 10 s]
   { exec {LOCKFD}>>"$LOCK"; } 2>/dev/null || fail "Could not open $LOCK."
-  flock -w 10 "$LOCKFD" || fail "${1:-Another launch is still running.}"
+  flock -w "${KLEPSYDRA_LOCK_WAIT:-10}" "$LOCKFD" || fail "${1:-Another launch is still running.}"
 }
 
 # Check a tab can be opened, before anything is created.
@@ -559,7 +573,7 @@ leave_modes() {
 # just have finished.
 own_pane() { # socket pane pid start
   fleet_pane "$@"
-  local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
+  local file=$RUN_DIR/klepsydra-pane-$UID-${pane#%}.lock
   { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
   flock -n "$PANEFD" || fail "$busy"
   # The fleet's typing lock too (fleet/lib.sh pane_locked, #325), so these keys
