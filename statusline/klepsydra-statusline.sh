@@ -78,7 +78,21 @@ prune_hourly() { # stamp prune dir now
 PRUNE_ENDED_FOR=86400
 PRUNE_DROP_AFTER=$((30 * 86400))
 PRUNE_LITTER_AFTER=86400
-PRUNE_STAMP=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-readings-$UID.pruned
+# Runtime folder: XDG_RUNTIME_DIR only when it exists, is owned by this user
+# and is not group/world-writable; else /tmp (#517).
+runtime_dir() {
+  local d=${XDG_RUNTIME_DIR:-} m
+  while [[ $d == */ ]]; do d=${d%/}; done
+  if [[ -n $d && -d $d && ! -L $d && -O $d ]]; then
+    m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
+    if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
+      printf '%s\n' "$d"; return 0
+    fi
+  fi
+  printf '/tmp\n'
+}
+RUN_DIR=$(runtime_dir)
+PRUNE_STAMP=$RUN_DIR/klepsydra-readings-$UID.pruned
 PRUNE_LOCK=${PRUNE_STAMP%.pruned}.lock
 prune_readings() { # dir now
   local dir=$1 now=$2

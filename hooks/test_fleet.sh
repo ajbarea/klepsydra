@@ -610,6 +610,9 @@ echo "bad input"
 out=$(KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" bash "$hook" <"$fixtures/malformed.json"); rc=$?
 check "malformed: exit 0" "$rc" "0"
 check "malformed: silent" "$out" ""
+out=$(KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work/nonexistent" bash "$hook" <"$fixtures/malformed.json"); rc=$?
+check "missing runtime dir: exit 0" "$rc" "0"
+check "missing runtime dir: silent" "$out" ""
 fire user-prompt.json '.session_id = "../../evil"'
 check "a session id that is not a uuid writes nothing" "$(find "$work" -name 'evil*' | wc -l)" "0"
 out=$(fire user-prompt.json '.' KLEPSYDRA_DIR=/proc/nonexistent); rc=$?
