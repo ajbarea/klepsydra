@@ -913,6 +913,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
    calls a guardrail turned down. Comfortable: a row above the footer. */
 .ledger-line { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .receipt { min-width: 0; }
+.receipt.warn { color: var(--tone-needs); font-weight: 600; }
 .r-short { display: none; }
 .partial {
   flex: none;

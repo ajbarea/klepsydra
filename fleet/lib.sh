@@ -1834,3 +1834,18 @@ heph_note() { # WHY SID HEPH DOING
   printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$4"
   printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
 }
+
+# Max context tokens before a worker is checkpointed and relaunched.
+FLEET_CONTEXT_BUDGET=${FLEET_CONTEXT_BUDGET:-300000}
+
+# Total context tokens of the last request in transcript file TP (or session SID).
+# Sums input_tokens, cache_read_input_tokens, and cache_creation_input_tokens.
+last_request_tokens() { # TP_OR_SID
+  local tp=$1
+  [[ -f $tp ]] || tp=$(transcript "$tp")
+  [[ -n $tp && -f $tp ]] || return 1
+  tail -n 100 "$tp" 2>/dev/null | tac 2>/dev/null | jq -r '
+    select(.type == "assistant" and .message.usage != null)
+    | ((.message.usage.input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0))
+    | select(. > 0)' 2>/dev/null | head -1
+}

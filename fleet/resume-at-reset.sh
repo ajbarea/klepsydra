@@ -176,7 +176,7 @@ sent_already() { # SCREEN LINE
   [[ $above == *"$want"* ]]
 }
 
-forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
+forget() { unset "due[$1]" "seen_on[$1]" "note[$1]" "checkpointed[$1]"; }
 
 # Since when account ID has had room to move back to (back_room), kept across
 # passes and restarts in back-room-since; an account without room is dropped.
@@ -359,7 +359,7 @@ blocked() { # ID
 moved() { # PANE [NEW]
   if [[ -n ${2:-} ]]; then
     last[$2]=$NOW last[$1]=$NOW
-    unset "move_tries[$1]" "fresh_failed[$1]" "asked[$1]"
+    unset "move_tries[$1]" "fresh_failed[$1]" "asked[$1]" "checkpointed[$1]"
     forget "$1"
   else
     # A failure an hour after the last starts the count again (a new limit,
@@ -538,6 +538,19 @@ done_move() { # PANE KIND RC NEW CTX
           ;;
       esac
       ;;
+    context) # a=name b=tokens
+      case $rc in
+        0)
+          flog INFO "fresh session after context budget exceeded" pane="$p" name="$a" new_pane="${new:-none}" tokens="$b"
+          moved "$p" "$new"
+          ;;
+        1 | 4) flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc" ;;
+        *)
+          moved "$p"
+          flog WARN "could not relaunch fresh session after context budget; trying again later" pane="$p" name="$a" why="$rc"
+          ;;
+      esac
+      ;;
   esac
 }
 
@@ -710,6 +723,35 @@ one() { # PANE
         ;;
     esac
     return
+  fi
+
+  # Context budget: past FLEET_CONTEXT_BUDGET tokens, checkpoint IMPL.md and relaunch fresh.
+  local cur_sid cur_toks reg_n reg_b cp_stamp
+  if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && reg_n=$(reg_field "$p" 2) && [[ -n $reg_n ]] && idle_empty "$s"; then
+    cur_sid=$(live_session "$p")
+    if [[ -n ${checkpointed[$p]:-} ]] && cp_stamp=$(turn_done "$p"); then
+      unset "checkpointed[$p]"
+      reg_b=$(reg_field "$p" 3)
+      cur_toks=$(last_request_tokens "$cur_sid" 2>/dev/null || echo 0)
+      spawn "$p" context "$reg_n$US$cur_toks" fresh "$p" "$reg_n" "$reg_b" \
+        "exceeded context budget (${cur_toks} tokens >= ${FLEET_CONTEXT_BUDGET})" "" "" "$cp_stamp"
+      return
+    elif [[ -z ${checkpointed[$p]:-} ]] && cp_stamp=$(turn_done "$p"); then
+      cur_toks=$(last_request_tokens "$cur_sid" 2>/dev/null || echo 0)
+      if (( cur_toks >= FLEET_CONTEXT_BUDGET )); then
+        tmp=$FLEET_STATE/cp-${p#%}.txt
+        printf 'checkpoint IMPL.md and stop\n' >"$tmp"
+        got=$(inbox_deliver "$p" "$tmp")
+        rm -f -- "${tmp:?}"
+        if [[ $got == sent || $got == queued ]]; then
+          checkpointed[$p]=$NOW
+          flog WARN "context budget exceeded: asked worker to checkpoint IMPL.md and stop" pane="$p" name="$reg_n" tokens="$cur_toks" budget="$FLEET_CONTEXT_BUDGET" delivery="$got"
+        else
+          flog WARN "context budget checkpoint delivery failed; trying again next pass" pane="$p" name="$reg_n" delivery="$got"
+        fi
+        return
+      fi
+    fi
   fi
 
   if (( orch )); then

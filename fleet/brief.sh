@@ -121,6 +121,25 @@ name=$1 body=$2
 [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || { err "a brief name is lowercase letters, digits and dashes: $name"; exit 2; }
 [[ -r $body ]] || { err "no body at $body"; exit 2; }
 if grep -q '^Resources: ' "$body"; then err "$body already has the shared rules; give the body only"; exit 2; fi
+
+# Check if brief names PRs from more than one repository
+check_multi_repo() {
+  local repos n_repos
+  repos=$(
+    {
+      grep -oE '([a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+#[0-9]+|github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+/pull/[0-9]+' "$body" 2>/dev/null |
+        sed -E 's|.*github\.com/[^/]+/([^/]+)/pull/.*|\1|; s|#.*||; s|.*/||'
+      grep -ioE '([a-zA-Z0-9_-]+) (PR|pull request)' "$body" 2>/dev/null | awk '{print tolower($1)}'
+    } | tr '[:upper:]' '[:lower:]' | sort -u
+  )
+  n_repos=$(grep -c . <<<"$repos" 2>/dev/null || echo 0)
+  if (( n_repos > 1 )); then
+    flog WARN "brief names more than one repo's PR; prefer one PR per session" name="$name" repos="$(tr '\n' ' ' <<<"$repos")"
+    printf "warning: brief %s names more than one repo's PR; prefer one PR per session\n" "$name" >&2
+  fi
+}
+check_multi_repo
+
 out=$FLEET_STATE/task-$name.src
 # As the refresh: a temp file first, then the archive copy, then a checked write.
 if ! tmp=$(mktemp "$out.XXXXXX"); then

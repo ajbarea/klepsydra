@@ -62,6 +62,20 @@ test("a card's ledger line is absent when all zero, and shows a chip with no rec
   assert.equal(both.short, "+1 \u22120 lines \u00b7 2 commits \u00b7 1 PR");
 });
 
+test("context budget alert triggers on tokens per call or session total exceeding 300k", () => {
+  const normal = ledgerLine({ tokens: { input: 50_000, output: 1_000 } }, false, 50_000);
+  assert.equal(normal.warn, false);
+  assert.equal(normal.full, "50k/call \u00b7 51k tokens (0% cached)");
+
+  const bigCall = ledgerLine({ tokens: { input: 100_000 } }, false, 350_000);
+  assert.equal(bigCall.warn, true);
+  assert.equal(bigCall.full, "350k/call \u00b7 100k tokens (0% cached)");
+
+  const bigTotal = ledgerLine({ tokens: { input: 350_000 } }, false, 10_000);
+  assert.equal(bigTotal.warn, true);
+  assert.equal(bigTotal.full, "10k/call \u00b7 350k tokens (0% cached)");
+});
+
 test("the drawer's totals add every session", () => {
   const day = {
     sessions: {

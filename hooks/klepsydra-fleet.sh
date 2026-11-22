@@ -918,6 +918,10 @@ def assistant_text($line):
     elif $event == "SessionStart" and $ev.source != "compact" then .ended = null | .error = null
     else . end
 
+  | if ($call_tokens | test("^[0-9]+$")) then .call_tokens = ($call_tokens | tonumber)
+    elif ($was | objects | .call_tokens != null) then .call_tokens = $was.call_tokens
+    else . end
+
   | if .background == [] then del(.background) else . end
   | if .background_stopped == [] then del(.background_stopped) else . end
   | if .background_listed == null then del(.background_listed) else . end
@@ -1149,7 +1153,7 @@ fleet_registry_event() { # state event session source input cleared_sid
 }
 
 main() {
-  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine=""
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine="" call_tokens=""
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
@@ -1229,6 +1233,12 @@ main() {
   mkdir -p "$fleet" 2>/dev/null || return 0
   # Read before the lock: no other session waits on this one's transcript.
   [[ $event == SessionEnd ]] || remote=$(remote_lines "$transcript")
+  if [[ $event != SessionEnd && -n $transcript && -f $transcript && ( $event == Stop || $event == SessionStart || $event == Notification ) ]]; then
+    call_tokens=$(tail -n 100 "$transcript" 2>/dev/null | tac 2>/dev/null | jq -r '
+      select(.type == "assistant" and .message.usage != null)
+      | ((.message.usage.input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0))
+      | select(. > 0)' 2>/dev/null | head -1)
+  fi
   # The account the session runs on, named as the statusLine names it, from
   # the global config CLAUDE_CONFIG_DIR picks: at its start and each prompt.
   if [[ $event == SessionStart || $event == UserPromptSubmit ]]; then
@@ -1277,6 +1287,7 @@ main() {
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \
     --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" --arg orch_face "$orch_face" --arg heph_face "$HEPH_VOICE" --arg athena_face "$ATHENA_VOICE" \
+    --arg call_tokens "$call_tokens" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The
   # file's time is moved past the cast's, so one switch recolours it once.

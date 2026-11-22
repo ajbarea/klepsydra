@@ -716,6 +716,7 @@ function paintLedger(el, c) {
   line.hidden = !c.ledger;
   const receipt = el.querySelector(".receipt");
   receipt.hidden = !c.ledger?.full;
+  receipt.classList.toggle("warn", Boolean(c.ledger?.warn));
   setText(receipt.querySelector(".r-full"), c.ledger?.full);
   setText(receipt.querySelector(".r-short"), c.ledger?.short);
   receipt.title = c.ledger?.full ?? "";

@@ -4849,6 +4849,28 @@ check "#395 review: doctor reads keryx's hold before the environment" \
 rm -f "$KLEPSYDRA_DIR/fleet/s1.json" "$KLEPSYDRA_DIR/fleet/s2.json"
 rm -rf "$work/dproc/91001" "$work/dproc/91002"
 
+echo "#515: context budget and multi-repo brief"
+mkdir -p "$work/tproj"
+cat >"$work/tproj/sess1.jsonl" <<'EOF'
+{"type":"user","message":{"content":"hello"}}
+{"type":"assistant","message":{"usage":{"input_tokens":120000,"cache_read_input_tokens":180000,"cache_creation_input_tokens":5000,"output_tokens":250}}}
+EOF
+check "#515: last_request_tokens sums input, cache_read, and cache_creation" \
+  "$(FLEET_PROJECTS="$work/tproj" bash -c ". '$here/lib.sh'; last_request_tokens '$work/tproj/sess1.jsonl'")" "305000"
+
+cat >"$work/single-repo-brief.md" <<'EOF'
+Work on keryx#71 and https://github.com/ajbarea/keryx/pull/95
+EOF
+check "#515: single repo brief does not warn" \
+  "$(bash "$here/brief.sh" single-test "$work/single-repo-brief.md" 2>&1 | grep -c 'warning: brief')" "0"
+
+cat >"$work/multi-repo-brief.md" <<'EOF'
+Work on keryx#71 and klepsydra#515 PR
+EOF
+check "#515: brief naming multiple repos warns on stderr" \
+  "$(bash "$here/brief.sh" multi-test "$work/multi-repo-brief.md" 2>&1 | grep '^warning: brief multi-test names more than one')" \
+  "warning: brief multi-test names more than one repo's PR; prefer one PR per session"
+
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
   "$(jq -s 'all(has("ts") and has("level") and has("target") and has("message"))' "$FLEET_LOG")" "true"

@@ -49,21 +49,26 @@ export function cacheShare(t = {}) {
   return input === 0 ? null : n(t.cache_read) / input;
 }
 
+export const CONTEXT_BUDGET = 300000;
+
 /** The receipt's parts, in reading order, with the ones that are zero left out. */
-export function receiptParts(ledger = {}) {
+export function receiptParts(ledger = {}, callTokens = null) {
   const parts = [];
-  const added = n(ledger.lines_added);
-  const removed = n(ledger.lines_removed);
+  const added = n(ledger?.lines_added);
+  const removed = n(ledger?.lines_removed);
   if (added || removed) parts.push({ key: "lines", text: `+${compactNumber(added)} ${MINUS}${compactNumber(removed)} lines` });
-  const commits = n(ledger.commits);
+  const commits = n(ledger?.commits);
   if (commits) parts.push({ key: "commits", text: plural(commits, "commit") });
-  const prs = n(ledger.pull_requests);
+  const prs = n(ledger?.pull_requests);
   if (prs) parts.push({ key: "prs", text: plural(prs, "PR") });
-  const tokens = totalTokens(ledger.tokens);
-  if (tokens) {
-    const share = cacheShare(ledger.tokens);
+  const tokens = totalTokens(ledger?.tokens);
+  const call = n(callTokens);
+  if (tokens || call) {
+    const share = cacheShare(ledger?.tokens);
     const cached = share === null ? "" : ` (${Math.round(share * 100)}% cached)`;
-    parts.push({ key: "tokens", text: `${compactNumber(tokens)} tokens${cached}` });
+    const callPrefix = call ? `${compactNumber(call)}/call · ` : "";
+    const tokenPart = tokens ? `${compactNumber(tokens)} tokens${cached}` : "";
+    parts.push({ key: "tokens", text: `${callPrefix}${tokenPart || `${compactNumber(call)} tokens`}` });
   }
   return parts;
 }
@@ -100,13 +105,14 @@ export const PARTIAL_LABEL = "Some telemetry for this session was not received: 
  * say. `partial` (the view's ledger_partial) adds the short "partial" mark,
  * kept apart from the receipt so a compact card never trims it away.
  */
-export function ledgerLine(ledger, partial = false) {
-  if (!ledger) return null;
-  const parts = receiptParts(ledger);
-  const chip = chipLabel(ledger.guardrail_rejects);
+export function ledgerLine(ledger, partial = false, callTokens = null) {
+  if (!ledger && !callTokens) return null;
+  const parts = receiptParts(ledger, callTokens);
+  const chip = chipLabel(ledger?.guardrail_rejects);
   const mark = partial ? { text: "partial", label: PARTIAL_LABEL } : null;
+  const warn = (n(callTokens) >= CONTEXT_BUDGET) || (totalTokens(ledger?.tokens) >= CONTEXT_BUDGET);
   if (!parts.length && !chip && !mark) return null;
-  return { full: receiptText(parts), short: receiptText(compactPick(parts)), chip, partial: mark };
+  return { full: receiptText(parts), short: receiptText(compactPick(parts)), chip, partial: mark, warn };
 }
 
 // ---- The drawer's figures ----
