@@ -40,11 +40,11 @@ pub const HOOK_CAST: &str = "cast.json";
 /// and renames it, so two at once would share it.
 static CAST_WRITE: Mutex<()> = Mutex::new(());
 
-/// Whether the theme `asked` for is the one prefs.json now holds (`saved`):
-/// else why not, naming both, for the wall to say rather than quietly wear
-/// the saved one again.
-pub fn confirm(asked: &str, saved: &str) -> Result<(), String> {
-    if asked == saved {
+/// Whether the theme `asked` for is the one prefs.json now holds (`saved`)
+/// and the write succeeded (`saved_ok`): else why not, naming both, for the
+/// wall to say rather than quietly wear the saved one again.
+pub fn confirm(asked: &str, saved: &str, saved_ok: bool) -> Result<(), String> {
+    if saved_ok && asked == saved {
         Ok(())
     } else {
         Err(format!(
@@ -163,8 +163,13 @@ mod tests {
 
     #[test]
     fn a_choice_not_saved_says_so() {
-        assert_eq!(confirm("dicebear", "dicebear"), Ok(()));
-        let err = confirm("dicebear", "kourai").unwrap_err();
+        assert_eq!(confirm("dicebear", "dicebear", true), Ok(()));
+        let err_corrupt = confirm("kourai", "kourai", false).unwrap_err();
+        assert!(
+            err_corrupt.contains("still kourai, not kourai"),
+            "{err_corrupt}"
+        );
+        let err = confirm("dicebear", "kourai", false).unwrap_err();
         assert!(err.contains("still kourai, not dicebear"), "{err}");
     }
 
