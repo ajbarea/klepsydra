@@ -9,20 +9,31 @@
 # 3. Running with sufficient memory headroom (>= 4500 MiB cgroup cap and available memory).
 set -euo pipefail
 
-read -r -a sc <<< "${SHELLCHECK:-uvx --from shellcheck-py shellcheck}"
+raw_sc=${SHELLCHECK_BIN:-}
+if [[ -z $raw_sc && -n ${SHELLCHECK:-} && ${SHELLCHECK:-} != *"shellcheck.sh" ]]; then
+  raw_sc=$SHELLCHECK
+fi
+read -r -a sc <<< "${raw_sc:-uvx --from shellcheck-py shellcheck}"
 
 core_files=()
+opts=()
 suite_file=""
 for f in "$@"; do
-  if [[ $f == *fleet/test_fleet.sh ]]; then
+  if [[ $f == -* ]]; then
+    opts+=("$f")
+  elif [[ $f == *fleet/test_fleet.sh ]]; then
     suite_file=$f
   else
     core_files+=("$f")
   fi
 done
 
+has_x=0
+for o in "${opts[@]}"; do [[ $o == *-x* ]] && has_x=1; done
+(( has_x )) || opts+=("-x")
+
 if (( ${#core_files[@]} > 0 )); then
-  "${sc[@]}" -x "${core_files[@]}"
+  "${sc[@]}" "${opts[@]}" "${core_files[@]}"
 fi
 
 if [[ -n $suite_file ]]; then
@@ -54,7 +65,7 @@ if [[ -n $suite_file ]]; then
   fi
 
   if (( can_run )); then
-    "${sc[@]}" -x "$suite_file"
+    "${sc[@]}" "${opts[@]}" "$suite_file"
   else
     printf 'skip %s: %s (run with FLEET_SHELLCHECK_ALL=1, make shellcheck-suite, or leave to CI)\n' \
       "$suite_file" "$why"

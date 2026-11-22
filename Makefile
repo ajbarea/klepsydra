@@ -17,7 +17,7 @@ install-fleet:
 # holds, and ends every process the run started at its limit or on Ctrl-C.
 HEAVY = $(if $(filter 1,$(FLEET_HEAVY_HELD)),,FLEET_HEAVY_HELD=1 bash fleet/heavy.sh)
 # The files and flags CI's shell lint uses.
-SHELLCHECK ?= uvx --from shellcheck-py shellcheck
+SHELLCHECK ?= bash scripts/shellcheck.sh
 SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 
 test-fleet:
@@ -51,11 +51,11 @@ test-slice:
 	$(HEAVY) bash fleet/test_slice.sh
 
 shellcheck:
-	$(HEAVY) bash scripts/shellcheck.sh $(SHELL_FILES)
+	$(HEAVY) $(SHELLCHECK) -x $(SHELL_FILES)
 
 # Run shellcheck directly over the heavy fleet engine test suite alone (#503).
 shellcheck-suite:
-	$(HEAVY) $(SHELLCHECK) -x fleet/test_fleet.sh
+	$(SHELLCHECK) -x fleet/test_fleet.sh
 
 test-shellcheck:
 	bash scripts/test_shellcheck.sh
