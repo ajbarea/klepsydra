@@ -4856,6 +4856,31 @@ FLEET_LOG_MAX=200 FLEET_TARGET=fleet::test bash -c ". '$here/lib.sh'; for i in 1
 check "past its cap the log is renamed, and only the newest four are kept" \
   "$(find "${FLEET_LOG%/*}" -name 'fleet_*.log' | wc -l)" "4"
 
+echo "runtime_dir and boot wait (#517)"
+krd_dir="$work/real_run"
+mkdir -p "$krd_dir" && chmod 700 "$krd_dir"
+check "#517: existing runtime dir returns immediately" \
+  "$(XDG_RUNTIME_DIR="$krd_dir" runtime_dir)" "$krd_dir"
+
+check "#517: missing runtime dir with wait=0 falls back to /tmp" \
+  "$(XDG_RUNTIME_DIR="$work/missing_run" FLEET_RUNTIME_WAIT=0 runtime_dir 2>/dev/null)" "/tmp"
+
+krd_delayed="$work/delayed_run"
+rm -rf "$krd_delayed"
+( sleep 0.3; mkdir -p "$krd_delayed" && chmod 700 "$krd_delayed" ) &
+krd_out=$(XDG_RUNTIME_DIR="$krd_delayed" FLEET_RUNTIME_WAIT=2 runtime_dir 2>&1)
+check "#517: delayed runtime dir returns once created" \
+  "$(tail -n1 <<<"$krd_out")" "$krd_delayed"
+check "#517: waiting for runtime dir logs message" \
+  "$(grep -c 'waiting for runtime directory' <<<"$krd_out")" "1"
+
+krd_out=$(XDG_RUNTIME_DIR="$work/never_run" FLEET_RUNTIME_WAIT=1 runtime_dir 2>&1)
+check "#517: timed out runtime dir falls back to /tmp" \
+  "$(tail -n1 <<<"$krd_out")" "/tmp"
+check "#517: timed out runtime dir logs warning" \
+  "$(grep -cE 'warning: runtime directory|runtime directory did not appear' <<<"$krd_out")" "1"
+rm -rf "$krd_dir" "$krd_delayed"
+
 echo "the suite's own isolation"
 check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""
 check "#273: no case touched AJ's own keryx config" "$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)" "$real_keryx_sum"

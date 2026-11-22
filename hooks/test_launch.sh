@@ -737,6 +737,7 @@ check "jump behind a held lock: window selected" "$(t display -p -t =fleet: '#{p
 check "jump behind a held lock: no tab" "$(tabs)" "0"
 
 echo "runtime dir fallback (#517)"
+export FLEET_RUNTIME_WAIT=0
 stop_server; detach_all; : >"$WT_LOG"
 fallback_lock="/tmp/klepsydra-launch-$UID.lock"
 rm -f -- "$fallback_lock" "$work/klepsydra-launch-$UID.lock"
@@ -973,8 +974,11 @@ check "#292 review 3: a program started by hand in a viewer's pane dies: shown a
   "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w3") $(ti show -pqv -t "$w3" @klepsydra_dead | cut -d' ' -f2-) $(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^second words$')" \
   "1 its process exited with status 4 1"
 ti kill-pane -t "$w3" 2>/dev/null
-ti send-keys -t "$v0" Enter
-for _ in $(seq 50); do ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx -- "$v0" || break; sleep 0.1; done
+for _ in $(seq 50); do
+  ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx -- "$v0" || break
+  ti send-keys -t "$v0" Enter 2>/dev/null
+  sleep 0.1
+done
 check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -cx -- "$v0") (left: $(ti list-panes -a -F '#{pane_id}:#{pane_start_command}' 2>/dev/null | tr '\n' ' '))" "0 (left: )"
 ti kill-server 2>/dev/null; to kill-server 2>/dev/null
 rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"

@@ -51,19 +51,33 @@ COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .git
 AGY_ASK=${KLEPSYDRA_AGY_ASK:-30} # seconds for one agy listing; a launch asks with less
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
-# Runtime folder: XDG_RUNTIME_DIR only when it exists, is owned by this user
-# and is not group/world-writable; else /tmp (#517).
-runtime_dir() {
-  local d=${XDG_RUNTIME_DIR:-} m
-  while [[ $d == */ ]]; do d=${d%/}; done
-  if [[ -n $d && -d $d && ! -L $d && -O $d ]]; then
-    m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
-    if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
-      printf '%s\n' "$d"; return 0
-    fi
+# Runtime folder: sourced from fleet/lib.sh if available, else local fallback (#517).
+if ! declare -f runtime_dir >/dev/null; then
+  _lib=${KLEPSYDRA_FLEET_LIB:-}
+  if [[ -z $_lib ]]; then
+    for _c in "$(dirname "$(readlink -f "$0" 2>/dev/null || echo .)")/../fleet/lib.sh" \
+              "$(dirname "$(readlink -f "${FLEET_BIN:-${HOME:-}/.local/bin}/fleet" 2>/dev/null || echo /none)")/lib.sh" \
+              "${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/lib.sh"; do
+      [[ -f $_c ]] && { _lib=$_c; break; }
+    done
   fi
-  printf '/tmp\n'
-}
+  if [[ -n $_lib && -f $_lib ]]; then
+    # shellcheck source=fleet/lib.sh
+    . "$_lib"
+  else
+    runtime_dir() {
+      local d=${XDG_RUNTIME_DIR:-} m
+      while [[ $d == */ ]]; do d=${d%/}; done
+      if [[ -n $d && -d $d && ! -L $d && -O $d ]]; then
+        m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
+        if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
+          printf '%s\n' "$d"; return 0
+        fi
+      fi
+      printf '/tmp\n'
+    }
+  fi
+fi
 RUN_DIR=$(runtime_dir)
 LOCK=$RUN_DIR/klepsydra-launch-$UID.lock
 PROC_ROOT=/proc

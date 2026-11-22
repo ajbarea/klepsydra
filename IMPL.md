@@ -19,12 +19,10 @@ WSL sets XDG_RUNTIME_DIR=/run/user/1001 at login, but systemd-logind created tha
 ## State
 - Slice: runtime directory fallback when XDG_RUNTIME_DIR is nonexistent, missing, or group/world-writable.
 - Done:
-  - Added `runtime_dir` helper to `hooks/klepsydra-launch.sh`, `hooks/klepsydra-fleet.sh`, and `statusline/klepsydra-statusline.sh`.
-  - Routed `LOCK`, `PENDING`, and pane locks in `klepsydra-launch.sh`, `klepsydra-fleet.sh`, and `klepsydra-statusline.sh` through `RUN_DIR=$(runtime_dir)`.
-  - Added configurable `KLEPSYDRA_LOCK_WAIT` in `take_lock()`.
-  - Added 10 regression tests in `hooks/test_launch.sh` covering fallback to `/tmp` on missing or group-writable `XDG_RUNTIME_DIR`, contention on held fallback lock, avoidance of contention when existing dir is used, and cold tab pending stamp in `/tmp`.
-  - Added regression tests in `hooks/test_fleet.sh` and `statusline/test_statusline.sh` for missing runtime dir.
-  - Verified mutation check: flipping existence test `-d` went RED.
-  - Verified live launcher execution with `XDG_RUNTIME_DIR=/nonexistent` takes lock in `/tmp`.
-  - Full suite verified: Biome lint, ruff, cargo fmt, clippy, cargo test, node --test, test_statusline, test_fleet, test_launch, test_engine, test_headless, shellcheck.
-- Next: commit on branch, push, open PR with label bug, assignee ajbarea, short top, depth in details, Closes #517.
+  - Added canonical `runtime_dir` helper in `fleet/lib.sh` with polling loop and timeout fallback (`FLEET_RUNTIME_WAIT:-180`).
+  - `runtime_dir` polls until `$XDG_RUNTIME_DIR` exists and is owned by the user, or systemd user manager finishes startup (`systemctl --user is-system-running --wait`).
+  - Sourced `fleet/lib.sh` in `hooks/klepsydra-launch.sh`, `hooks/klepsydra-fleet.sh`, and `statusline/klepsydra-statusline.sh` instead of duplicating helper.
+  - Wired `runtime_dir >/dev/null` at startup of `fleet/recover.sh` before taking `.recover.lock`.
+  - Added unit tests in `fleet/test_fleet.sh` testing immediate return on existing dir, zero-wait fallback, delayed creation success, and timeout warning fallback.
+  - Fixed timing retry in `hooks/test_launch.sh` for dead pane viewer cleanup.
+- Next: run test suite, commit, push to branch, update PR #518 with review response comment.

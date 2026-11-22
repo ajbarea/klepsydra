@@ -540,7 +540,7 @@ CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="$work/p/klepsydra-copy" KLEPSYDRA_
 check "prune: nothing in another folder" "$([[ -e $work/p/klepsydra-copy/accounts/uuid-gone ]] && echo kept || echo gone)" "kept"
 check "prune: and no stamp for it" "$(find "$XDG_RUNTIME_DIR" -name '*.pruned' | wc -l)" "0"
 check "prune: nor a lock, so a render starts nothing" "$(find "$XDG_RUNTIME_DIR" -name '*.lock' | wc -l)" "0"
-display=$(KLEPSYDRA_DIR="$pd" XDG_RUNTIME_DIR="$work/nonexistent" KLEPSYDRA_NOW=1794848578 bash "$script" <<<"$live")
+display=$(KLEPSYDRA_DIR="$pd" XDG_RUNTIME_DIR="$work/nonexistent" FLEET_RUNTIME_WAIT=0 KLEPSYDRA_NOW=1794848578 bash "$script" <<<"$live")
 check "missing runtime dir: statusline echoes" "$([[ -n "$display" ]] && echo yes)" "yes"
 
 # A render does not wait for the prune, and a prune already running is left to

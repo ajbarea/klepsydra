@@ -21,6 +21,8 @@ for a in "$@"; do
   case $a in --dry-run) dry=1 ;; --no-orchestrator) orch_too=0 ;; *) err "usage: recover.sh [--dry-run] [--no-orchestrator]"; exit 2 ;; esac
 done
 if (( ! dry )); then
+  # Wait for runtime directory at boot before taking the lock (#517)
+  runtime_dir >/dev/null
   exec 9>"$FLEET_STATE/.recover.lock"
   flock -n 9 || { err "another fleet recover is running"; exit 1; }
 fi
