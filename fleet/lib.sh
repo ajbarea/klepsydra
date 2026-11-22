@@ -114,11 +114,6 @@ runtime_dir() {
             fi
             logged=1
           fi
-          if command -v systemctl >/dev/null 2>&1; then
-            if systemctl --user is-system-running --wait >/dev/null 2>&1; then
-              [[ -d $d && ! -L $d && -O $d ]] && break
-            fi
-          fi
           sleep 0.2
           [[ -d $d && ! -L $d && -O $d ]] && break
         done
