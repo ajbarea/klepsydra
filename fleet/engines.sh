@@ -15,6 +15,7 @@
 #   eng_answer SCREEN [PROMPT]      the reply under the echo of PROMPT (the last echo without one);
 #                                   no echo of PROMPT on screen gives nothing, never another turn's
 #   eng_trust_key           the key that answers a trust dialog
+#   eng_models              the sorted list of available model identifiers (one per line)
 # The lock is the point: every lane starts with write tools, the shell, MCP and
 # the browser off, and a failure to build the lock starts nothing.
 
@@ -45,6 +46,66 @@ eng_model() { # ENGINE KIND
   case $1 in
     agy) printf 'gemini-3.8-flash-high' ;;
     copilot) printf 'auto' ;;
+  esac
+}
+
+# Available model IDs for ENGINE, one per line, sorted.
+eng_models() { # ENGINE
+  case $1 in
+    agy)
+      if [[ -n ${FLEET_AGY_MODELS_FILE:-} && -r $FLEET_AGY_MODELS_FILE ]]; then
+        cat "$FLEET_AGY_MODELS_FILE"
+        return
+      fi
+      if [[ -n ${FLEET_AGY_MODELS:-} ]]; then
+        printf '%s\n' "$FLEET_AGY_MODELS" | sort -u
+        return
+      fi
+      eng_has agy || return 1
+      timeout "${FLEET_MODELS_TIMEOUT:-10}" "$(eng_bin agy)" models 2>/dev/null |
+        awk 'NF > 0 && $0 !~ /^(Fetching|\.\.\.)/ { print $1 }' | grep -v '^[[:space:]]*$' | sort -u
+      ;;
+    copilot)
+      if [[ -n ${FLEET_COPILOT_MODELS_FILE:-} && -r $FLEET_COPILOT_MODELS_FILE ]]; then
+        cat "$FLEET_COPILOT_MODELS_FILE"
+        return
+      fi
+      if [[ -n ${FLEET_COPILOT_MODELS:-} ]]; then
+        printf '%s\n' "$FLEET_COPILOT_MODELS" | sort -u
+        return
+      fi
+      eng_has copilot || return 1
+      local cdir=${COPILOT_CONFIG_DIR:-$HOME/.copilot} token=""
+      if [[ -f $cdir/config.json ]]; then
+        token=$(sed -e 's/^[[:space:]]*\/\/.*//' "$cdir/config.json" 2>/dev/null |
+          jq -r '.authTokens[]?.token // empty' 2>/dev/null | head -n 1)
+      fi
+      if [[ -n $token ]]; then
+        local api_models
+        api_models=$(timeout "${FLEET_MODELS_TIMEOUT:-5}" curl -fsS \
+          -H "Authorization: Bearer $token" \
+          -H "Editor-Version: vscode/1.95.0" \
+          -H "User-Agent: GitHubCopilot/1.0" \
+          https://api.githubcopilot.com/models 2>/dev/null | jq -r '.data[]?.id // empty' 2>/dev/null | sort -u)
+        if [[ -n $api_models ]]; then
+          printf '%s\n' "$api_models"
+          return
+        fi
+      fi
+      if [[ -f $cdir/data.db ]] && command -v python3 >/dev/null 2>&1; then
+        python3 -c "import sqlite3, json, sys
+try:
+    c = sqlite3.connect(sys.argv[1])
+    r = c.execute(\"SELECT value FROM app_state WHERE key='copilot-available-models'\").fetchone()
+    if r:
+        for m in json.loads(r[0]):
+            mid = m.get('id')
+            if mid and mid != 'auto': print(mid)
+except Exception: pass
+" "$cdir/data.db" 2>/dev/null | sort -u
+      fi
+      ;;
+    *) return 1 ;;
   esac
 }
 

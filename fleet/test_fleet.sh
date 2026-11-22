@@ -3656,6 +3656,31 @@ check "doctor: an installed engine with the lock policy shows its lanes, locked,
   "engine agy: signed in; lanes: print interactive, locked | warn print interactive"
 doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$work/nohooks" bash "$here/doctor.sh" 2>/dev/null)
 check "doctor: without the lock policy the lanes are OFF, never silently on" "$(grep -c '^warn *engine [a-z]*: .*lanes OFF' <<<"$doc")" "2"
+models_dir="$work/models_test"
+mkdir -p "$models_dir"
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" \
+  FLEET_MODELS_DIR="$models_dir" FLEET_AGY_MODELS=$'gemini-3.8-flash-high\nclaude-sonnet-4-6' bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: #513 records engine models on baseline run" \
+  "$(grep '^ok *models agy' <<<"$doc")" "ok   models agy: 2 models recorded"
+check "doctor: #513 baseline snapshot file written" \
+  "$(cat "$models_dir/models-agy.txt")" $'claude-sonnet-4-6\ngemini-3.8-flash-high'
+
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" \
+  FLEET_MODELS_DIR="$models_dir" FLEET_AGY_MODELS=$'gemini-3.8-flash-high\nclaude-sonnet-4-6' bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: #513 unchanged models report ok" \
+  "$(grep '^ok *models agy' <<<"$doc")" "ok   models agy: 2 models (unchanged)"
+
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" \
+  FLEET_MODELS_DIR="$models_dir" FLEET_AGY_MODELS=$'gemini-3.8-flash-high\nclaude-sonnet-4-6\ngemini-4-neon' bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: #513 added model (Gemini 4 Neon) reports warning to review routing" \
+  "$(grep '^warn *models agy' <<<"$doc")" "warn models agy: changed: +gemini-4-neon: review routing in docs/engines.md"
+check "doctor: #513 snapshot updated after change" \
+  "$(cat "$models_dir/models-agy.txt")" $'claude-sonnet-4-6\ngemini-3.8-flash-high\ngemini-4-neon'
+
+doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" \
+  FLEET_MODELS_DIR="$models_dir" FLEET_AGY_MODELS=$'gemini-3.8-flash-high\ngemini-4-neon' bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: #513 removed model reports warning" \
+  "$(grep '^warn *models agy' <<<"$doc")" "warn models agy: changed: -claude-sonnet-4-6: review routing in docs/engines.md"
 check "recover leaves a finished agent alone and relaunches the lost one" \
   "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | sed 's/ (.*//')" $'finished: d\nwould recover: e'
 # #261 review 4: d's finish is recorded; AJ resumes it in its pane (the same id,

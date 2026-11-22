@@ -40,6 +40,21 @@ called "past the crossover every seed was ambiguous" false by reading a
 4-column outcome row as the wrong column (friction 11-11 qml-paper). Check each
 claim against the code, the lexicon or the row before you edit anything.
 
+### Model discovery and routing review
+
+`fleet doctor` monitors the available model lists on `agy` and `Copilot`
+(persisted in `$FLEET_STATE/models-agy.txt` and `$FLEET_STATE/models-copilot.txt`).
+When vendor offerings change, doctor reports a warning:
+
+    warn models agy: changed: +gemini-4-neon: review routing in docs/engines.md
+
+When a new frontier model appears (such as the Gemini 4 Neon watch):
+1. **Empirical benchmark first.** Vendor self-reports do not substitute for
+   testing on real repo workloads (qualifier sweeps, doc linting, deep research).
+2. **Review routing.** If the new model demonstrates reliability without
+   hallucinations or premature tool denies, update `eng_order()` and `eng_model()`
+   in `fleet/engines.sh` and document the evidence in the routing table above.
+
 ### Briefing a lane
 
 - **Prompt shape.** Put the answer first in the task and ask for `path:line`

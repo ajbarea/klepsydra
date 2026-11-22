@@ -22,6 +22,8 @@
 # its headless job (#260).
 # Open Playwright MCP browsers (pid, owning session, idle time), with a warning
 # past FLEET_BROWSER_IDLE_MIN or for one whose MCP server is gone (#379).
+# Records agy's and Copilot's available models in models-<engine>.txt and reports
+# any change with a warning to review routing in docs/engines.md (#513).
 # Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
@@ -822,6 +824,40 @@ for e in "${ENGINES[@]}"; do
     report warn "engine $e" "$login; lanes: ${lanes% }"
   else
     report ok "engine $e" "$login; lanes: ${lanes% }, locked"
+  fi
+done
+
+# Model list monitoring (#513): record agy and Copilot available models,
+# and report whenever vendor model lists change (e.g. Gemini 4 Neon watch).
+for e in "${ENGINES[@]}"; do
+  eng_has "$e" || continue
+  models=$(eng_models "$e" 2>/dev/null)
+  snap=${FLEET_MODELS_DIR:-$FLEET_STATE}/models-$e.txt
+  if [[ -z $models ]]; then
+    if [[ -f $snap ]]; then
+      report ok "models $e" "could not query: keeping $(grep -c . "$snap") recorded models"
+    fi
+    continue
+  fi
+  count=$(grep -c . <<<"$models")
+  if [[ ! -f $snap ]]; then
+    mkdir -p -- "$(dirname "$snap")" 2>/dev/null
+    printf '%s\n' "$models" >"$snap"
+    report ok "models $e" "$count models recorded" count="$count"
+  else
+    added=$(comm -13 "$snap" <(printf '%s\n' "$models") | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+    removed=$(comm -23 "$snap" <(printf '%s\n' "$models") | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+    if [[ -z $added && -z $removed ]]; then
+      report ok "models $e" "$count models (unchanged)" count="$count"
+    else
+      detail=""
+      [[ -n $added ]] && detail+="+${added// / +} "
+      [[ -n $removed ]] && detail+="-${removed// / -} "
+      detail="${detail% }: review routing in docs/engines.md"
+      cp -p -- "$snap" "$snap.prev" 2>/dev/null || true
+      printf '%s\n' "$models" >"$snap"
+      report warn "models $e" "changed: $detail" count="$count" added="$added" removed="$removed"
+    fi
   fi
 done
 if [[ -n $json ]]; then
