@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck shellcheck-suite test-shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -51,4 +51,11 @@ test-slice:
 	$(HEAVY) bash fleet/test_slice.sh
 
 shellcheck:
-	$(HEAVY) $(SHELLCHECK) -x $(SHELL_FILES)
+	$(HEAVY) bash scripts/shellcheck.sh $(SHELL_FILES)
+
+# Run shellcheck directly over the heavy fleet engine test suite alone (#503).
+shellcheck-suite:
+	$(HEAVY) $(SHELLCHECK) -x fleet/test_fleet.sh
+
+test-shellcheck:
+	bash scripts/test_shellcheck.sh
