@@ -1835,17 +1835,7 @@ heph_note() { # WHY SID HEPH DOING
   printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
 }
 
-# Max context tokens before a worker is checkpointed and relaunched.
+# Tokens one request may carry (a session's whole context, re-sent with each
+# call) before the resume service asks the worker to checkpoint and start
+# fresh (#515). The wall's ledger.js CONTEXT_BUDGET holds the same number.
 FLEET_CONTEXT_BUDGET=${FLEET_CONTEXT_BUDGET:-300000}
-
-# Total context tokens of the last request in transcript file TP (or session SID).
-# Sums input_tokens, cache_read_input_tokens, and cache_creation_input_tokens.
-last_request_tokens() { # TP_OR_SID
-  local tp=$1
-  [[ -f $tp ]] || tp=$(transcript "$tp")
-  [[ -n $tp && -f $tp ]] || return 1
-  tail -n 100 "$tp" 2>/dev/null | tac 2>/dev/null | jq -r '
-    select(.type == "assistant" and .message.usage != null)
-    | ((.message.usage.input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0))
-    | select(. > 0)' 2>/dev/null | head -1
-}

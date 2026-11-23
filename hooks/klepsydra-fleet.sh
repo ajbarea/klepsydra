@@ -478,6 +478,16 @@ prune_hourly() { # stamp prune dir now
 # never a full read; nothing for a path that is not an absolute, readable .jsonl file.
 # The tail also harvests the newest assistant narration in the current turn,
 # separated from the Remote Control lines by a record separator (\x1e).
+# The context the last request carried (#515): input, cache reads and cache
+# writes of the main thread's last assistant usage, from the transcript's tail
+# (a subagent's lines carry their own, smaller context).
+context_tokens() { # transcript
+  [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
+  tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null |
+    LC_ALL=C awk 'index($0, "\"type\":\"assistant\"") && index($0, "\"usage\"") && !index($0, "\"isSidechain\":true") { l = $0 } END { if (l != "") print l }' |
+    jq -r '.message.usage | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0) | floor | select(. > 0)' 2>/dev/null
+}
+
 remote_lines() { # transcript
   [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
   tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null | LC_ALL=C awk -v keep="$REMOTE_LINES" -v max="$REMOTE_LINE_MAX" '
@@ -919,7 +929,8 @@ def assistant_text($line):
     else . end
 
   | if ($call_tokens | test("^[0-9]+$")) then .call_tokens = ($call_tokens | tonumber)
-    elif ($was | objects | .call_tokens != null) then .call_tokens = $was.call_tokens
+    elif $event == "SessionStart" then del(.call_tokens)
+    elif ($was | type) == "object" and $was.call_tokens != null then .call_tokens = $was.call_tokens
     else . end
 
   | if .background == [] then del(.background) else . end
@@ -1233,12 +1244,7 @@ main() {
   mkdir -p "$fleet" 2>/dev/null || return 0
   # Read before the lock: no other session waits on this one's transcript.
   [[ $event == SessionEnd ]] || remote=$(remote_lines "$transcript")
-  if [[ $event != SessionEnd && -n $transcript && -f $transcript && ( $event == Stop || $event == SessionStart || $event == Notification ) ]]; then
-    call_tokens=$(tail -n 100 "$transcript" 2>/dev/null | tac 2>/dev/null | jq -r '
-      select(.type == "assistant" and .message.usage != null)
-      | ((.message.usage.input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0))
-      | select(. > 0)' 2>/dev/null | head -1)
-  fi
+  [[ $event == Stop ]] && call_tokens=$(context_tokens "$transcript")
   # The account the session runs on, named as the statusLine names it, from
   # the global config CLAUDE_CONFIG_DIR picks: at its start and each prompt.
   if [[ $event == SessionStart || $event == UserPromptSubmit ]]; then

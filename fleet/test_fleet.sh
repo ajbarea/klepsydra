@@ -3207,6 +3207,64 @@ state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":tr
 check "review 4: pasted as AJ began a line, nothing is sent and none of his line is taken" \
   "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: $(<"$work/alert3.txt")] 1"
 t kill-window -t "$p"
+echo "#515: the context budget: checkpoint, then a fresh session"
+login a; login b; reading a Personal 10 5000; reading b RIT 10 4000
+ctx_file() { # PANE TOKENS STAMP: the hook's file for the session live in PANE, idle at a turn's end
+  jq -n --arg p "$1" --argjson t "$2" --arg at "$3" \
+    '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], call_tokens: $t, prompt: {at: $at}, turn_at: $at}' \
+    >"$KLEPSYDRA_DIR/fleet/$SID.json"
+}
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane ctx '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+ctx_file "$p" 300000 t1
+printf '%s\tctx\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "#515: at the budget, at a finished turn, the worker is asked to write its resume state, and nothing moves yet" \
+  "$(grep -c '^SUBMIT Your context is past the fleet.s budget: your last request carried 300000 tokens (budget 300000)' "$work/ctx.log") $(wc -c <"$work/moved")" "1 0"
+check "#515: logged with its size" "$(jq -r 'select(.message | startswith("context budget: asked")) | [.pane, .name, .tokens, .result] | join(" ")' "$FLEET_LOG")" "$p ctx 300000 sent"
+state ctx '{"above":["⏺ Done. done 11:50 AM"],"clear":true}'
+mover "$((noon + 60))"
+check "#515: the same turn's end (the ask not yet taken up) neither relaunches nor asks again" \
+  "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/ctx.log")" "0 1"
+ctx_file "$p" 310000 t2
+mover "$((noon + 120))"
+check "#515: once the checkpoint turn has ended, a fresh session takes the pane" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-a ctx "
+check "#515: its brief says why" "$(grep -c 'passed the context budget (310000 of 300000 tokens a request) and wrote its resume state' "$work/moved-brief")" "1"
+check "#515: logged" "$(logged 'context budget: a fresh session took over')" "$p "
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane ctxlow '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+ctx_file "$p" 299999 t1
+printf '%s\tctxlow\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"; mover "$((noon + 60))"
+check "#515: one token under the budget, nothing is asked or moved" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
+jq 'del(.call_tokens)' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp" && mv -- "$work/ctx.tmp" "$KLEPSYDRA_DIR/fleet/$SID.json"
+mover "$((noon + 120))"
+check "#515: nor for a session an older hook never measured" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane ctxbusy '{"above":["⏺ working"],"busy":true}'); settle
+ctx_file "$p" 400000 t1
+printf '%s\tctxbusy\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$noon"
+check "#515: not into a running turn" "$(grep -cE 'SUBMIT|ESC' "$work/ctxbusy.log") $(wc -c <"$work/moved")" "0 0"
+state ctxbusy '{"above":["⏺ Done. done 11:50 AM"]}'
+t send-keys -t "$p" -l "AJ: one more thing"; settle
+mover "$((noon + 60))"
+check "#515: nor over a line AJ is typing" "$(grep -c '^SUBMIT' "$work/ctxbusy.log") [$(input_text "$(screen "$p")")]" "0 [AJ: one more thing]"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane ctxun '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+ctx_file "$p" 900000 t1
+mover "$noon"
+check "#515: a session no brief registered (AJ's own) is never asked" "$(grep -c '^SUBMIT' "$work/ctxun.log") $(wc -c <"$work/moved")" "0 0"
+t kill-window -t "$p" 2>/dev/null
+check "#515: the wall warns at the same budget the resume service acts on" \
+  "$(grep -oE 'CONTEXT_BUDGET = [0-9]+' "$here/../src/fleet/ledger.js" | grep -oE '[0-9]+')" "$(bash -c '. "$1/lib.sh"; echo "$FLEET_CONTEXT_BUDGET"' _ "$here")"
+
 echo "the watcher holds panes limited when it starts (#246)"
 : >"$FLEET_LOG"
 lp=$(pane wlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'); settle
@@ -4849,27 +4907,17 @@ check "#395 review: doctor reads keryx's hold before the environment" \
 rm -f "$KLEPSYDRA_DIR/fleet/s1.json" "$KLEPSYDRA_DIR/fleet/s2.json"
 rm -rf "$work/dproc/91001" "$work/dproc/91002"
 
-echo "#515: context budget and multi-repo brief"
-mkdir -p "$work/tproj"
-cat >"$work/tproj/sess1.jsonl" <<'EOF'
-{"type":"user","message":{"content":"hello"}}
-{"type":"assistant","message":{"usage":{"input_tokens":120000,"cache_read_input_tokens":180000,"cache_creation_input_tokens":5000,"output_tokens":250}}}
-EOF
-check "#515: last_request_tokens sums input, cache_read, and cache_creation" \
-  "$(FLEET_PROJECTS="$work/tproj" bash -c ". '$here/lib.sh'; last_request_tokens '$work/tproj/sess1.jsonl'")" "305000"
-
-cat >"$work/single-repo-brief.md" <<'EOF'
-Work on keryx#71 and https://github.com/ajbarea/keryx/pull/95
-EOF
-check "#515: single repo brief does not warn" \
-  "$(bash "$here/brief.sh" single-test "$work/single-repo-brief.md" 2>&1 | grep -c 'warning: brief')" "0"
-
-cat >"$work/multi-repo-brief.md" <<'EOF'
-Work on keryx#71 and klepsydra#515 PR
-EOF
-check "#515: brief naming multiple repos warns on stderr" \
-  "$(bash "$here/brief.sh" multi-test "$work/multi-repo-brief.md" 2>&1 | grep '^warning: brief multi-test names more than one')" \
-  "warning: brief multi-test names more than one repo's PR; prefer one PR per session"
+echo "#515: a brief naming more than one repo's items"
+mkdir -p "$work/repos/keryx/.git" "$work/repos/klepsydra/.git"
+printf '%s\n' 'Work on keryx#71 and https://github.com/ajbarea/keryx/pull/95.' 'Read the PR, open a PR, review the issue#3 and PR#4 notes.' >"$work/one-repo.md"
+check "#515: one repo's items, and words before PR or a #, are no warning" \
+  "$(FLEET_REPOS_ROOT="$work/repos" bash "$here/brief.sh" one-repo "$work/one-repo.md" 2>&1 >/dev/null | grep -c 'warning: brief')" "0"
+printf '%s\n' 'Review ajbarea/keryx#99, then https://github.com/ajbarea/klepsydra/issues/515.' >"$work/two-repo.md"
+check "#515: two repos' items warn, naming both" \
+  "$(FLEET_REPOS_ROOT="$work/repos" bash "$here/brief.sh" two-repo "$work/two-repo.md" 2>&1 >/dev/null | grep '^warning: brief')" \
+  "warning: brief two-repo names issues or PRs in keryx, klepsydra; one PR-sized item a session keeps its context small (chain briefs instead)"
+check "#515: and the brief is still written" "$(test -s "$FLEET_STATE/task-two-repo.src" && echo yes)" "yes"
+rm -f -- "$FLEET_STATE/task-one-repo.src" "$FLEET_STATE/task-two-repo.src"
 
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \

@@ -47,7 +47,7 @@ FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a work
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said checkpointed
 declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
@@ -541,13 +541,14 @@ done_move() { # PANE KIND RC NEW CTX
     context) # a=name b=tokens
       case $rc in
         0)
-          flog INFO "fresh session after context budget exceeded" pane="$p" name="$a" new_pane="${new:-none}" tokens="$b"
+          flog INFO "context budget: a fresh session took over" pane="$p" name="$a" new_pane="${new:-none}" tokens="$b"
           moved "$p" "$new"
           ;;
-        1 | 4) flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc" ;;
         *)
+          # Refused (AJ typed, the pane was busy) or failed: the old session
+          # stays, and a later pass asks it again.
           moved "$p"
-          flog WARN "could not relaunch fresh session after context budget; trying again later" pane="$p" name="$a" why="$rc"
+          flog WARN "context budget: the fresh session did not start; the old one stays" pane="$p" name="$a" why="$rc"
           ;;
       esac
       ;;
@@ -725,32 +726,34 @@ one() { # PANE
     return
   fi
 
-  # Context budget: past FLEET_CONTEXT_BUDGET tokens, checkpoint IMPL.md and relaunch fresh.
-  local cur_sid cur_toks reg_n reg_b cp_stamp
-  if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && reg_n=$(reg_field "$p" 2) && [[ -n $reg_n ]] && idle_empty "$s"; then
-    cur_sid=$(live_session "$p")
-    if [[ -n ${checkpointed[$p]:-} ]] && cp_stamp=$(turn_done "$p"); then
+  # Context budget (#515): a worker whose last request carried
+  # FLEET_CONTEXT_BUDGET tokens or more (call_tokens, which the fleet hook
+  # records at each turn's end) is asked, at a finished turn and an empty
+  # prompt, to write its resume state and stop. When a later turn has ended
+  # (its stamp differs from the one asked at), it starts fresh from its brief.
+  local cur_sid cur_toks cp_stamp
+  if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && inbox_name=$(reg_field "$p" 2) && [[ -n $inbox_name ]] &&
+    idle_empty "$s" && cp_stamp=$(turn_done "$p") && cur_sid=$(live_session "$p") &&
+    cur_toks=$(jq -er '.call_tokens | numbers | floor' "$KLEPSYDRA_DIR/fleet/$cur_sid.json" 2>/dev/null); then
+    if [[ -n ${checkpointed[$p]:-} && ${checkpointed[$p]} != "$cp_stamp" ]]; then
       unset "checkpointed[$p]"
-      reg_b=$(reg_field "$p" 3)
-      cur_toks=$(last_request_tokens "$cur_sid" 2>/dev/null || echo 0)
-      spawn "$p" context "$reg_n$US$cur_toks" fresh "$p" "$reg_n" "$reg_b" \
-        "exceeded context budget (${cur_toks} tokens >= ${FLEET_CONTEXT_BUDGET})" "" "" "$cp_stamp"
+      spawn "$p" context "$inbox_name$US$cur_toks" fresh "$p" "$inbox_name" "$(reg_field "$p" 3)" \
+        "passed the context budget ($cur_toks of $FLEET_CONTEXT_BUDGET tokens a request) and wrote its resume state" "" "" "$cp_stamp"
       return
-    elif [[ -z ${checkpointed[$p]:-} ]] && cp_stamp=$(turn_done "$p"); then
-      cur_toks=$(last_request_tokens "$cur_sid" 2>/dev/null || echo 0)
-      if (( cur_toks >= FLEET_CONTEXT_BUDGET )); then
-        tmp=$FLEET_STATE/cp-${p#%}.txt
-        printf 'checkpoint IMPL.md and stop\n' >"$tmp"
-        got=$(inbox_deliver "$p" "$tmp")
-        rm -f -- "${tmp:?}"
-        if [[ $got == sent || $got == queued ]]; then
-          checkpointed[$p]=$NOW
-          flog WARN "context budget exceeded: asked worker to checkpoint IMPL.md and stop" pane="$p" name="$reg_n" tokens="$cur_toks" budget="$FLEET_CONTEXT_BUDGET" delivery="$got"
-        else
-          flog WARN "context budget checkpoint delivery failed; trying again next pass" pane="$p" name="$reg_n" delivery="$got"
-        fi
-        return
-      fi
+    elif [[ -z ${checkpointed[$p]:-} ]] && (( cur_toks >= FLEET_CONTEXT_BUDGET )); then
+      local ask
+      ask=$(mktemp)
+      printf '%s\n' "Your context is past the fleet's budget: your last request carried $cur_toks tokens (budget $FLEET_CONTEXT_BUDGET), re-sent with every call. Finish the step you are on, write your resume state to IMPL.md (slice, done, next, verify), commit and push it, then end your turn. A fresh session takes over from IMPL.md." >"$ask"
+      got=$(inbox_deliver "$p" "$ask")
+      rm -f -- "${ask:?}"
+      case $got in
+        sent | queued)
+          checkpointed[$p]=$cp_stamp
+          flog WARN "context budget: asked the worker to write its resume state and stop" pane="$p" name="$inbox_name" tokens="$cur_toks" budget="$FLEET_CONTEXT_BUDGET" result="$got"
+          ;;
+        *) flog WARN "context budget: the ask was not delivered; trying again next pass" pane="$p" name="$inbox_name" tokens="$cur_toks" result="$got" ;;
+      esac
+      return
     fi
   fi
 

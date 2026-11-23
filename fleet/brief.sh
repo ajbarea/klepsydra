@@ -122,23 +122,20 @@ name=$1 body=$2
 [[ -r $body ]] || { err "no body at $body"; exit 2; }
 if grep -q '^Resources: ' "$body"; then err "$body already has the shared rules; give the body only"; exit 2; fi
 
-# Check if brief names PRs from more than one repository
-check_multi_repo() {
-  local repos n_repos
-  repos=$(
-    {
-      grep -oE '([a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+#[0-9]+|github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+/pull/[0-9]+' "$body" 2>/dev/null |
-        sed -E 's|.*github\.com/[^/]+/([^/]+)/pull/.*|\1|; s|#.*||; s|.*/||'
-      grep -ioE '([a-zA-Z0-9_-]+) (PR|pull request)' "$body" 2>/dev/null | awk '{print tolower($1)}'
-    } | tr '[:upper:]' '[:lower:]' | sort -u
-  )
-  n_repos=$(grep -c . <<<"$repos" 2>/dev/null || echo 0)
-  if (( n_repos > 1 )); then
-    flog WARN "brief names more than one repo's PR; prefer one PR per session" name="$name" repos="$(tr '\n' ' ' <<<"$repos")"
-    printf "warning: brief %s names more than one repo's PR; prefer one PR per session\n" "$name" >&2
-  fi
+# One PR-sized item a session (#515): a body that names issues or PRs in more
+# than one repo (REPO#N, REPO #N, OWNER/REPO#N or a github.com link) is a warning. A
+# name counts only when it is a repo under FLEET_REPOS_ROOT, so "the PR" is no repo.
+repos_named() { # BODY
+  local root=${FLEET_REPOS_ROOT:-$HOME/ajsoftworks} r
+  grep -oE '(github\.com/[A-Za-z0-9_.-]+/)[A-Za-z0-9_.-]+/(pull|issues)/[0-9]+|([A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+ ?#[0-9]+' -- "$1" 2>/dev/null |
+    sed -E 's|^github\.com/[^/]+/([^/]+)/.*|\1|; s| ?#.*||; s|.*/||' | LC_ALL=C sort -u |
+    while IFS= read -r r; do [[ -e $root/$r/.git ]] && printf '%s\n' "$r"; done
 }
-check_multi_repo
+repos=$(repos_named "$body")
+if (( $(grep -c . <<<"$repos") > 1 )); then
+  flog WARN "brief names more than one repo's issues or PRs; one PR-sized item a session" name="$name" repos="$(paste -sd' ' - <<<"$repos")"
+  printf "warning: brief %s names issues or PRs in %s; one PR-sized item a session keeps its context small (chain briefs instead)\n" "$name" "$(paste -sd' ' - <<<"$repos" | sed 's/ /, /g')" >&2
+fi
 
 out=$FLEET_STATE/task-$name.src
 # As the refresh: a temp file first, then the archive copy, then a checked write.

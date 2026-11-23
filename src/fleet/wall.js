@@ -719,7 +719,7 @@ function paintLedger(el, c) {
   receipt.classList.toggle("warn", Boolean(c.ledger?.warn));
   setText(receipt.querySelector(".r-full"), c.ledger?.full);
   setText(receipt.querySelector(".r-short"), c.ledger?.short);
-  receipt.title = c.ledger?.full ?? "";
+  receipt.title = c.ledger?.why ? `${c.ledger.full}\n${c.ledger.why}` : (c.ledger?.full ?? "");
   const partial = el.querySelector(".partial");
   show(partial, c.ledger?.partial?.text);
   partial.title = c.ledger?.partial?.label ?? "";
