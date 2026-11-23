@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck shellcheck-suite test-shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck test-shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -16,7 +16,8 @@ install-fleet:
 # value takes it. fleet/heavy.sh says when it waits, refuses a lock its caller
 # holds, and ends every process the run started at its limit or on Ctrl-C.
 HEAVY = $(if $(filter 1,$(FLEET_HEAVY_HELD)),,FLEET_HEAVY_HELD=1 bash fleet/heavy.sh)
-# The files and flags CI's shell lint uses.
+# The files and flags CI's shell lint uses. The runner checks a file too big for
+# the room left without dataflow analysis, rather than be killed (#503).
 SHELLCHECK ?= bash scripts/shellcheck.sh
 SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 
@@ -53,9 +54,6 @@ test-slice:
 shellcheck:
 	$(HEAVY) $(SHELLCHECK) -x $(SHELL_FILES)
 
-# Run shellcheck directly over the heavy fleet engine test suite alone (#503).
-shellcheck-suite:
-	$(SHELLCHECK) -x fleet/test_fleet.sh
-
+# The runner's own tests: stubs only, no tmux, so no lock.
 test-shellcheck:
 	bash scripts/test_shellcheck.sh

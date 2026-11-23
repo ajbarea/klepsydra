@@ -1,73 +1,71 @@
 #!/usr/bin/env bash
-# scripts/shellcheck.sh: Run shellcheck with a memory guard for large suites (#503).
-# fleet/test_fleet.sh alone requires ~3.4 to 4.0 GB of RAM in ShellCheck's dataflow analysis,
-# which exceeds the 3.6 GB worker slice cap and causes an OOM kill (exit 137).
-#
-# Core files are always checked. The heavy test suite is checked when:
-# 1. FLEET_SHELLCHECK_ALL is set (e.g. FLEET_SHELLCHECK_ALL=1)
-# 2. Running in CI (CI=true or GITHUB_ACTIONS=true)
-# 3. Running with sufficient memory headroom (>= 4500 MiB cgroup cap and available memory).
-set -euo pipefail
+# scripts/shellcheck.sh [OPTION...] FILE...: `make shellcheck`'s runner (#503).
+# ShellCheck's dataflow analysis of fleet/test_fleet.sh alone peaks at 3.4 GB, past
+# the room a worker has on WSL, where the kernel kills it (exit 137). Without that
+# analysis the same file takes about 240 MB and a few seconds, so a file over
+# FLEET_SHELLCHECK_BIG_LINES is checked without it (--extended-analysis=false)
+# when the least room over this process's cgroups, and MemAvailable, is under
+# FLEET_SHELLCHECK_NEED_MIB, with a note: every check but the dataflow ones
+# (SC2030, SC2031 and the like) still runs, and CI runs them all. Full analysis
+# always on CI (CI or GITHUB_ACTIONS set) or with FLEET_SHELLCHECK_ALL=1.
+# Exits with shellcheck's status: a file checked is never reported as skipped.
+set -uo pipefail
 
-raw_sc=${SHELLCHECK_BIN:-}
-if [[ -z $raw_sc && -n ${SHELLCHECK:-} && ${SHELLCHECK:-} != *"shellcheck.sh" ]]; then
-  raw_sc=$SHELLCHECK
-fi
-read -r -a sc <<< "${raw_sc:-uvx --from shellcheck-py shellcheck}"
+read -r -a sc <<<"${SHELLCHECK_BIN:-uvx --from shellcheck-py shellcheck}"
+need_mib=${FLEET_SHELLCHECK_NEED_MIB:-4000}
+big_lines=${FLEET_SHELLCHECK_BIG_LINES:-3000}
 
-core_files=()
-opts=()
-suite_file=""
+opts=() small=() big=()
 for f in "$@"; do
   if [[ $f == -* ]]; then
     opts+=("$f")
-  elif [[ $f == *fleet/test_fleet.sh ]]; then
-    suite_file=$f
+  elif (( $(wc -l <"$f" 2>/dev/null || echo 0) > big_lines )); then
+    big+=("$f")
   else
-    core_files+=("$f")
+    small+=("$f")
   fi
 done
 
-has_x=0
-for o in "${opts[@]}"; do [[ $o == *-x* ]] && has_x=1; done
-(( has_x )) || opts+=("-x")
-
-if (( ${#core_files[@]} > 0 )); then
-  "${sc[@]}" "${opts[@]}" "${core_files[@]}"
-fi
-
-if [[ -n $suite_file ]]; then
-  can_run=1
-  why=""
-  if [[ ${FLEET_SHELLCHECK_ALL:-} == 1 || ${FLEET_SHELLCHECK_ALL:-} == true || \
-        ${CI:-} == true || ${GITHUB_ACTIONS:-} == true ]]; then
-    can_run=1
-  else
-    # Check cgroup v2 memory limit for this process
-    proc_root=${FLEET_PROC:-/proc}
-    cg=$(awk -F: '$1 == "0" { print $3 }' "$proc_root/self/cgroup" 2>/dev/null || true)
-    cgroup_root=${FLEET_CGROUP_ROOT:-/sys/fs/cgroup}
-    if [[ -n $cg && -r "$cgroup_root$cg/memory.max" ]]; then
-      max=$(cat "$cgroup_root$cg/memory.max" 2>/dev/null || true)
-      if [[ $max =~ ^[0-9]+$ ]] && (( max < 4500 * 1048576 )); then
-        can_run=0
-        why="cgroup memory.max is $((max / 1048576)) MiB (below 4500 MiB needed for $suite_file)"
+# The least memory this process may still take, in MiB: each cgroup from its own
+# up to the root caps it (memory.max less memory.current), and so does the machine.
+room_mib() {
+  local root=${FLEET_CGROUP_ROOT:-/sys/fs/cgroup} cg d max cur least=""
+  cg=$(awk -F: '$1 == "0" { print $3; exit }' "${FLEET_PROC:-/proc}/self/cgroup" 2>/dev/null)
+  if [[ -n $cg ]]; then
+    d=$root${cg%/}
+    while [[ $d == "$root"* ]]; do
+      max=$(cat -- "$d/memory.max" 2>/dev/null) cur=$(cat -- "$d/memory.current" 2>/dev/null)
+      if [[ $max =~ ^[0-9]+$ ]]; then
+        [[ $cur =~ ^[0-9]+$ ]] || cur=0
+        (( max - cur < 0 )) && cur=$max
+        (( ${#least} == 0 || (max - cur) / 1048576 < least )) && least=$(( (max - cur) / 1048576 ))
       fi
-    fi
-    if (( can_run )); then
-      meminfo=${FLEET_MEMINFO:-/proc/meminfo}
-      avail=$(awk '/MemAvailable:/ { print $2 }' "$meminfo" 2>/dev/null || true)
-      if [[ $avail =~ ^[0-9]+$ ]] && (( avail < 4500 * 1024 )); then
-        can_run=0
-        why="available memory is $((avail / 1024)) MiB (below 4500 MiB needed for $suite_file)"
-      fi
-    fi
+      [[ $d == "$root" ]] && break
+      d=${d%/*}
+    done
   fi
+  local avail
+  avail=$(awk '/^MemAvailable:/ { print int($2 / 1024); exit }' "${FLEET_MEMINFO:-/proc/meminfo}" 2>/dev/null)
+  [[ $avail =~ ^[0-9]+$ ]] && (( ${#least} == 0 || avail < least )) && least=$avail
+  printf '%s' "${least:-unknown}"
+}
 
-  if (( can_run )); then
-    "${sc[@]}" "${opts[@]}" "$suite_file"
+rc=0
+(( ${#small[@]} )) && { "${sc[@]}" "${opts[@]}" "${small[@]}" || rc=$?; }
+if (( ${#big[@]} )); then
+  full=0 room=""
+  if [[ ${FLEET_SHELLCHECK_ALL:-} == 1 || -n ${CI:-} || -n ${GITHUB_ACTIONS:-} ]]; then
+    full=1
   else
-    printf 'skip %s: %s (run with FLEET_SHELLCHECK_ALL=1, make shellcheck-suite, or leave to CI)\n' \
-      "$suite_file" "$why"
+    room=$(room_mib)
+    [[ $room =~ ^[0-9]+$ ]] && (( room >= need_mib )) && full=1
+  fi
+  if (( full )); then
+    "${sc[@]}" "${opts[@]}" "${big[@]}" || rc=$?
+  else
+    printf 'note: %s checked without dataflow analysis: %s MiB of room, under the %s MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)\n' \
+      "${big[*]}" "$room" "$need_mib" >&2
+    "${sc[@]}" "${opts[@]}" --extended-analysis=false "${big[@]}" || rc=$?
   fi
 fi
+exit "$rc"

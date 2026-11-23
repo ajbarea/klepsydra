@@ -1,35 +1,20 @@
-# IMPL: klepsydra#503: make shellcheck memory guard for large test suite
+# IMPL: #503 make shellcheck finishes inside a worker's memory (PR #521)
 
-Branch fix/shellcheck-memory-503 (worktree .claude/worktrees/shellcheck-503), cut from origin/main 7ed5e88.
-Never push to main.
-
-## Slice
-- Guard `make shellcheck` against OOM termination under the fleet's 3.6 GB worker slice cap.
-- Check core files (hooks, statusline, scripts, fleet scripts) cleanly and check the heavy monolithic test suite (`fleet/test_fleet.sh`) when memory headroom permits or in CI (`CI=true` / `FLEET_SHELLCHECK_ALL=1`).
-- Provide dedicated `make shellcheck-suite` target to run shellcheck directly on `fleet/test_fleet.sh` under the heavy lock.
+Branch fix/shellcheck-memory-503 (agy's, reworked by Opus agy-review-k 11-23).
+Push: `git push origin fix/shellcheck-memory-503:fix/shellcheck-memory-503`. Never push to main.
 
 ## Done
-- `scripts/shellcheck.sh`:
-  - Created wrapper with memory headroom guard.
-  - Partitions arguments into core files and heavy test suite (`fleet/test_fleet.sh`).
-  - Checks core files unconditionally.
-  - Evaluates cgroup v2 `memory.max` (via `/sys/fs/cgroup`) and `/proc/meminfo` `MemAvailable`.
-  - When memory headroom is under 4500 MiB (such as inside `fleet-workers.slice` capped at 3628 MiB), skips `test_fleet.sh` with an informative note unless `FLEET_SHELLCHECK_ALL=1` or `CI=true`.
-  - Allows full execution in CI where unconstrained runner memory is available.
-- `Makefile`:
-  - Updated `shellcheck` target to route through `scripts/shellcheck.sh $(SHELL_FILES)`.
-  - Added `shellcheck-suite` target for running directly on `fleet/test_fleet.sh`.
-  - Added `test-shellcheck` target to run unit tests.
-- `scripts/test_shellcheck.sh`:
-  - Added unit tests covering core file execution, cgroup memory constraint skip, MemAvailable constraint skip, `FLEET_SHELLCHECK_ALL=1` override, and `CI=true` override.
+- agy: skip fleet/test_fleet.sh when the process's own cgroup or MemAvailable is under 4500 MiB.
+- Opus r1 rework (agy's version would still OOM here: it read only its own scope, 5 GiB, while
+  fleet-workers.slice above it caps 3.6 GiB; and a skip let lint go unrun with exit 0):
+  - Measured: `--extended-analysis=false` on test_fleet.sh peaks at 236 MB in 5.6 s (3.4 GB with
+    dataflow). A file over 3000 lines is now checked that way when the least room over every
+    cgroup up to the root (max - current) and MemAvailable is under 4000 MiB, with a note; never
+    skipped. CI, or FLEET_SHELLCHECK_ALL=1, runs the full check. Exit = shellcheck's.
+  - test_fleet.sh:1141 `return "$rc"`: the one finding reduced mode raised on main.
+  - shellcheck-suite target dropped (FLEET_SHELLCHECK_ALL=1 make shellcheck does it); the runner's
+    tests run in CI (Shell lint runner tests), 10 cases with a fake cgroup tree.
+- Live: `make shellcheck` here exits 0 at 1.4 GB peak (note: 1145 MiB of room).
 
 ## Next
-- Verify `git diff` and commit with conventional commit.
-- Push branch `fix/shellcheck-memory-503`.
-- Open PR with team ceremony.
-- Post Elenchus bug-class self-review.
-
-## Verify
-- `make -C /home/ajbar/ajsoftworks/klepsydra/.claude/worktrees/shellcheck-503 test-shellcheck`: 5 passed, 0 failed.
-- `make -C /home/ajbar/ajsoftworks/klepsydra/.claude/worktrees/shellcheck-503 shellcheck`: clean exit 0.
-- `uvx --from shellcheck-py shellcheck scripts/shellcheck.sh scripts/test_shellcheck.sh`: clean exit 0.
+- CI green, fresh-reader verify, merge (restore main's IMPL.md first).
