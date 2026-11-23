@@ -16,7 +16,9 @@ Live check on the Debian 13 / XFCE PC (RIT), and fix what it finds.
 ## Verified
 Live, Debian 13 XFCE X11: + New session (cold and warm), Open terminal (switches tmux window; restores a minimized terminal), `KLEPSYDRA_TERMINAL=nope` (error on + and on Open terminal, nothing created). Suites: cargo fmt/clippy/test workspace, node 508, test-launch 285, test_fleet 599, test-headless 125, statusline, shellcheck, Biome.
 
+Merged main (15 commits) at 1619197; IMPL.md kept as the branch's. On the merged tree: cargo 113+439+7, node 584, test-launch 321, test_fleet 599, test-headless 125, statusline 143, browser 33, shellcheck, Biome; live after a reboot: + New session twice from cold, Open terminal restores a minimized terminal.
+
 ## Next
-1. CI green on push (ubuntu and windows-latest cargo test).
+1. CI green on push (ubuntu and windows-latest cargo test); the PR was CONFLICTING (IMPL.md) until the merge, so CI had not run on 78fc55c.
 2. Not done live: End, Interrupt, Folder, GitHub on Linux (covered by tests only).
 3. Follow-ups, not in this PR: the deb declares no tmux/xdotool/xdg-utils/x11-utils; launch log lines say "wsl" on Linux; `managed_window` takes the first managed window of a multi-window terminal process.
