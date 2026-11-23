@@ -12,14 +12,22 @@ export const ARM_MS = 1000;
 /** The tmux socket's name under which the launcher keeps its sessions (launch.rs FLEET_SOCKET). */
 export const FLEET_SOCKET = "klepsydra";
 
-/** Whether session `s` runs in klepsydra's tmux with a known Claude process: the panes the launcher types into. */
-export function inFleet(s) {
+/**
+ * Whether session `s` names a tmux pane and a known Claude process as
+ * launch::target() reads them; pane_args() refuses a zero pid. The distro is
+ * the launcher call's to judge: a native Linux session has none.
+ */
+export function paneKnown(s) {
   const uint = (n, max) => Number.isInteger(n) && n >= 0 && n <= max;
   const str = (v) => typeof v === "string";
-  // launch::target() needs these, and pane_args() refuses a zero pid.
-  const named = str(s?.tmux?.socket) && str(s?.tmux?.pane) && str(s?.distro);
+  const named = str(s?.tmux?.socket) && str(s?.tmux?.pane);
   const known = uint(s?.claude?.pid, 0xffff_ffff) && s.claude.pid > 0 && uint(s?.claude?.start, Number.MAX_SAFE_INTEGER);
-  return named && known && s.tmux.socket.split("/").pop() === FLEET_SOCKET;
+  return named && known;
+}
+
+/** Whether session `s` runs in klepsydra's tmux with a known Claude process: the panes the launcher types into. */
+export function inFleet(s) {
+  return paneKnown(s) && s.tmux.socket.split("/").pop() === FLEET_SOCKET;
 }
 
 /**

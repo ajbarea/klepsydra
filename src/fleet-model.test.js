@@ -351,10 +351,14 @@ test("a card holds what the wall shows", () => {
   assert.deepEqual(card(session({ name: null }), CAST, NOW).jump, { enabled: false, why: "no session name yet" });
   const inTmux = { name: null, tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, claude: { pid: 2231, start: 8717628 }, distro: "Ubuntu" };
   assert.deepEqual(card(session(inTmux), CAST, NOW).jump, { enabled: true, why: null }, "tmux finds an unnamed session by its pane");
-  for (const missing of ["tmux", "claude", "distro"]) {
+  for (const missing of ["tmux", "claude"]) {
     assert.deepEqual(card(session({ ...inTmux, [missing]: null }), CAST, NOW).jump,
       { enabled: false, why: "no session name yet" }, `without ${missing}`);
   }
+  assert.deepEqual(card(session({ ...inTmux, distro: null }), CAST, NOW).jump, { enabled: true, why: null },
+    "a native Linux session records no distro and is found by its pane");
+  assert.deepEqual(card(session({ ...inTmux, claude: { pid: 0, start: 1 } }), CAST, NOW).jump,
+    { enabled: false, why: "no session name yet" }, "the launcher refuses a zero pid");
   assert.deepEqual(card(session({ ...inTmux, status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.deepEqual(card(session({ status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.equal(card(session({ status: "error", error: "API Error: Rate limit reached" }), CAST, NOW).error,

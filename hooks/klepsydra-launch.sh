@@ -90,6 +90,15 @@ find_linux_terminal() {
   return 1
 }
 
+# Why find_linux_terminal found none: KLEPSYDRA_TERMINAL by name when it is set.
+no_terminal() {
+  if [[ -n ${KLEPSYDRA_TERMINAL:-} ]]; then
+    printf 'KLEPSYDRA_TERMINAL is %s, which is not a command that can be run.' "$KLEPSYDRA_TERMINAL"
+  else
+    printf 'No terminal emulator found (e.g. xfce4-terminal, gnome-terminal, x-terminal-emulator, xterm).'
+  fi
+}
+
 # Check a tab can be opened, before anything is created.
 tab_preflight() {
   if is_wsl; then
@@ -97,7 +106,7 @@ tab_preflight() {
     [[ ${WSL_DISTRO_NAME:-} =~ ^[A-Za-z0-9._-]{1,64}$ ]] ||
       fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
   else
-    find_linux_terminal >/dev/null || fail "No terminal emulator found (e.g. xfce4-terminal, gnome-terminal, x-terminal-emulator, xterm)."
+    find_linux_terminal >/dev/null || fail "$(no_terminal)"
   fi
 }
 
@@ -145,7 +154,7 @@ open_tab() { # target tmux-socket-args...
     # closed so a tab never outlives the lock.
     local title="${TITLE_ARGS[1]:-$TAB_TITLE}"
     local -a termcmd
-    term=$(find_linux_terminal) || { undo; fail "No terminal emulator found."; }
+    term=$(find_linux_terminal) || { undo; fail "$(no_terminal)"; }
     case ${term##*/} in
       xfce4-terminal) termcmd=("$term" --disable-server -T "$title" -x) ;;
       gnome-terminal) termcmd=("$term" --tab --title="$title" --) ;;
@@ -399,10 +408,30 @@ check_pane() { # socket pane pid start
     fail "That session's tmux pane now belongs to another session."
 }
 
-# On a native Linux desktop, raise the terminal window that shows `session`: the
-# window of the first ancestor of its tmux client that owns one (the fleet's
-# tab and a hand-started tmux alike). Best effort: Wayland and a missing
-# xdotool leave the window where it is, as WSL does.
+# The top-level window of process `pid` that the window manager manages: the
+# one with WM_STATE, which a minimized window keeps (xfwm4 unmaps it, so a
+# visible-only search misses it, and an unmanaged leader window takes
+# windowactivate with exit 0). Without xprop, the visible window alone.
+managed_window() { # pid
+  local wid
+  if command -v xprop >/dev/null 2>&1; then
+    while read -r wid; do
+      [[ $wid =~ ^[0-9]+$ ]] || continue
+      if xprop -id "$wid" WM_STATE 2>/dev/null | grep -Eq 'window state: (Normal|Iconic)'; then
+        printf '%s' "$wid"
+        return 0
+      fi
+    done < <(xdotool search --pid "$1" 2>/dev/null)
+    return 1
+  fi
+  wid=$(xdotool search --onlyvisible --pid "$1" 2>/dev/null | head -n1)
+  [[ -n $wid ]] && printf '%s' "$wid"
+}
+
+# On a native Linux desktop, raise the terminal window that shows `session`,
+# restoring it when minimized: the window of the first ancestor of its tmux
+# client that owns one (the fleet's tab and a hand-started tmux alike). Best
+# effort: Wayland and a missing xdotool leave the window where it is, as WSL does.
 raise_window() { # session tmux-socket-args...
   is_wsl && return 0
   command -v xdotool >/dev/null 2>&1 || return 0
@@ -412,7 +441,7 @@ raise_window() { # session tmux-socket-args...
     pid=$cpid
     for _ in $(seq 10); do
       [[ $pid =~ ^[1-9][0-9]*$ ]] || break
-      wid=$(xdotool search --onlyvisible --pid "$pid" 2>/dev/null | head -n1)
+      wid=$(managed_window "$pid")
       if [[ -n $wid ]]; then xdotool windowactivate "$wid" >/dev/null 2>&1; return 0; fi
       proc_stat "$pid" || break
       pid=${stat[1]}

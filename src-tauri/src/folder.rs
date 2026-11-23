@@ -4,22 +4,21 @@
 
 use serde_json::Value;
 
-/// Session `id`'s work folder and its distro, as the latest snapshot has them.
-pub fn folder_of(snapshot: &Value, id: &str) -> Option<(String, String)> {
+/// Session `id`'s work folder and its distro (none on native Linux), as the
+/// latest snapshot has them.
+pub fn folder_of(snapshot: &Value, id: &str) -> Option<(String, Option<String>)> {
     let s = klepsydra_fleet::lookup::session(snapshot, id)?;
     let dir = s.get("where")?.get("dir")?.as_str()?;
-    let distro = s.get("distro")?.as_str()?;
-    plain_dir(dir).then(|| (dir.to_string(), distro.to_string()))
+    plain_dir(dir).then(|| (dir.to_string(), crate::launch::recorded_distro(s)))
 }
 
 /// Session `id`'s GitHub page as the latest snapshot has it, or with `branch`
 /// that branch's page, each part of its name encoded as encodeURIComponent
 /// would: the wall's links, but taken from the app's own record. With the
-/// session's distro, which opens it.
-pub fn github_of(snapshot: &Value, id: &str, branch: bool) -> Option<(String, String)> {
+/// session's distro (none on native Linux), which opens it.
+pub fn github_of(snapshot: &Value, id: &str, branch: bool) -> Option<(String, Option<String>)> {
     let s = klepsydra_fleet::lookup::session(snapshot, id)?;
-    let distro = s.get("distro")?.as_str()?.to_string();
-    page_of(s, branch).map(|url| (url, distro))
+    page_of(s, branch).map(|url| (url, crate::launch::recorded_distro(s)))
 }
 
 fn page_of(s: &Value, branch: bool) -> Option<String> {
@@ -81,10 +80,15 @@ mod tests {
             folder_of(&snap, "a"),
             Some((
                 "/home/aj/ajsoftworks/klepsydra/.claude/worktrees/x".into(),
-                "Ubuntu".into()
+                Some("Ubuntu".into())
             ))
         );
-        for id in ["b", "c", "d", "e", "missing"] {
+        assert_eq!(
+            folder_of(&snap, "e"),
+            Some(("/home/aj".into(), None)),
+            "native Linux records no distro"
+        );
+        for id in ["b", "c", "d", "missing"] {
             assert_eq!(folder_of(&snap, id), None, "{id}");
         }
     }
@@ -102,7 +106,7 @@ mod tests {
             github_of(&snap, "a", false),
             Some((
                 "https://github.com/ajbarea/klepsydra".into(),
-                "Ubuntu".into()
+                Some("Ubuntu".into())
             ))
         );
         assert_eq!(
@@ -112,7 +116,11 @@ mod tests {
         assert_eq!(url("b", false), None, "only github.com");
         assert_eq!(url("c", true), None, "no branch on record");
         assert_eq!(url("d", true), None, "a control character");
-        assert_eq!(url("e", false), None, "no distro to open it from");
+        assert_eq!(
+            github_of(&snap, "e", false),
+            Some(("https://github.com/ajbarea/klepsydra".into(), None)),
+            "native Linux records no distro"
+        );
         assert_eq!(url("missing", false), None);
     }
 

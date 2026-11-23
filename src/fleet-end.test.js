@@ -23,9 +23,6 @@ test("the menu mirrors launch::target(): strings and numbers of the right type, 
     "no pane": { ...live, tmux: { socket: fleet.tmux.socket } },
     "pane not a string": { ...live, tmux: { ...fleet.tmux, pane: 3 } },
     "socket not a string": { ...live, tmux: { ...fleet.tmux, socket: 7 } },
-    "no distro": { ...live, distro: undefined },
-    "distro null": { ...live, distro: null },
-    "distro not a string": { ...live, distro: 1 },
     "no pid": { ...live, claude: { start: 9 } },
     "pid a string": { ...live, claude: { pid: "7", start: 9 } },
     "pid zero": { ...live, claude: { pid: 0, start: 9 } },
@@ -37,6 +34,13 @@ test("the menu mirrors launch::target(): strings and numbers of the right type, 
     "start negative": { ...live, claude: { pid: 7, start: -9 } },
   };
   for (const [what, s] of Object.entries(broken)) assert.deepEqual(sessionActions(s), { menu: false, interrupt: false }, what);
+});
+
+test("a native Linux session, which records no distro, gets the menu: the launcher call judges the distro", () => {
+  const live = { ...fleet, status: "working" };
+  for (const distro of [undefined, null]) {
+    assert.deepEqual(sessionActions({ ...live, distro }), { menu: true, interrupt: true }, `distro ${distro}`);
+  }
 });
 
 test("a model card carries its actions and the menu button's accessible name", () => {

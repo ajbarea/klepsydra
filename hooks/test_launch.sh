@@ -770,12 +770,27 @@ exit "${XDG_RC:-0}"
 EOF
 cat >"$lbin/.xdotool" <<'EOF'
 #!/usr/bin/env bash
-# search --onlyvisible --pid PID answers 4242 for XDO_PID alone; windowactivate is logged.
+# search [--onlyvisible] --pid PID answers for XDO_PID alone: all windows are
+# the unmanaged leader 4241 and the terminal's own 4242; visible only, 4242,
+# unless XDO_HIDDEN (a minimized window is unmapped). windowactivate is logged.
 printf '%s\n' "$*" >>"$XDO_LOG"
-[[ $1 == search && $4 == "$XDO_PID" ]] && echo 4242
+if [[ $1 == search && $2 == --onlyvisible ]]; then
+  [[ $4 == "$XDO_PID" && -z ${XDO_HIDDEN:-} ]] && echo 4242
+elif [[ $1 == search ]]; then
+  [[ $3 == "$XDO_PID" ]] && printf '4241\n4242\n'
+fi
 exit 0
 EOF
-chmod +x "$lbin/.xdg" "$lbin/.xdotool"
+cat >"$lbin/.xprop" <<'EOF'
+#!/usr/bin/env bash
+# xprop -id WID WM_STATE: 4242 is in state XPROP_STATE (Normal by default); any other window has none.
+if [[ $2 == 4242 ]]; then
+  printf 'WM_STATE(WM_STATE):\n\t\twindow state: %s\n\t\ticon window: 0x0\n' "${XPROP_STATE:-Normal}"
+else
+  printf 'WM_STATE:  not found.\n'
+fi
+EOF
+chmod +x "$lbin/.xdg" "$lbin/.xdotool" "$lbin/.xprop"
 export TERM_LOG="$work/term.log" XDG_LOG="$work/xdg.log" XDO_LOG="$work/xdo.log"
 lx() { env -u WSL_DISTRO_NAME KLEPSYDRA_PROC="$lproc" PATH="$lbin:$lbase" "$@"; }
 pending="$work/klepsydra-tab-pending-$UID"
@@ -787,6 +802,7 @@ check "linux: no terminal found: says so" "$out" "No terminal emulator found (e.
 check "linux: no terminal found: nothing was created" "$(t list-sessions 2>/dev/null | wc -l)" "0"
 out=$(lx env KLEPSYDRA_TERMINAL=no-such-term bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "linux: KLEPSYDRA_TERMINAL that is missing fails, never another terminal" "$rc $(t list-sessions 2>/dev/null | wc -l)" "1 0"
+check "linux: KLEPSYDRA_TERMINAL that is missing is named" "$out" "KLEPSYDRA_TERMINAL is no-such-term, which is not a command that can be run."
 
 # The order: xfce4-terminal, gnome-terminal, konsole, kitty, alacritty, x-terminal-emulator, xterm.
 order=(xfce4-terminal gnome-terminal konsole kitty alacritty x-terminal-emulator xterm)
@@ -853,6 +869,19 @@ check "linux jump: asks about the client, then its parent, and activates the par
 : >"$XDO_LOG"
 out=$(lx env XDO_PID=1999999 bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
 check "linux jump: no window found: still selects the window, activates nothing" "$rc $(grep -c windowactivate "$XDO_LOG")" "0 0"
+# With xprop: the managed window (WM_STATE), minimized too, never the leader.
+cp "$lbin/.xprop" "$lbin/xprop"
+for state in Normal Iconic; do
+  : >"$XDO_LOG"
+  hidden=""; [[ $state == Iconic ]] && hidden=1
+  out=$(lx env XDO_PID="$cparent" XDO_HIDDEN="$hidden" XPROP_STATE="$state" bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+  check "linux jump: a $state terminal is raised by its managed window, not the leader" \
+    "$rc $(grep windowactivate "$XDO_LOG" | tr '\n' '|')" "0 windowactivate 4242|"
+done
+: >"$XDO_LOG"
+out=$(lx env XDO_PID="$cparent" XPROP_STATE=Withdrawn bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: a withdrawn window is not raised" "$rc $(grep -c windowactivate "$XDO_LOG")" "0 0"
+rm -f "$lbin/xprop"
 rm -f "$lbin/xdotool"
 out=$(lx bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
 check "linux jump: no xdotool: still exit 0" "$rc $out" "0 Selected the session's tmux window."

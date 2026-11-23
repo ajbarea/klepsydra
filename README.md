@@ -345,6 +345,15 @@ sudo apt install ./src-tauri/target/release/bundle/deb/klepsydra_0.1.0_amd64.deb
 Run `klepsydra` once. It registers itself in `~/.config/autostart`, so it starts
 with every later login.
 
+The wall's buttons need tmux, `xdotool` and `xdg-open`, and `xprop` to restore
+a minimized terminal (`sudo apt install tmux xdotool xdg-utils x11-utils`).
+**+ New session** opens the first of xfce4-terminal, gnome-terminal, konsole,
+kitty, alacritty, x-terminal-emulator and xterm on PATH, or only the one
+`KLEPSYDRA_TERMINAL` names. **Open terminal** selects the session's tmux
+window, then raises the terminal that shows it, restoring it when minimized
+(without `xprop`, only a terminal already on screen). Folder and GitHub open
+through `xdg-open`.
+
 The tray icon needs a StatusNotifierItem host. On XFCE that is the Status Tray
 panel plugin (`xfce4-panel --add=systray`). Stock GNOME has none and needs an
 AppIndicator extension. Without a host the gauge still runs, but the tray menu,

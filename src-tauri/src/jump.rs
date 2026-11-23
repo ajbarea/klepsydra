@@ -455,7 +455,7 @@ mod tests {
         let t = |socket: &str| Target {
             socket: socket.into(),
             pane: "%1".into(),
-            distro: "Ubuntu".into(),
+            distro: Some("Ubuntu".into()),
             pid: 1,
             start: 1,
         };

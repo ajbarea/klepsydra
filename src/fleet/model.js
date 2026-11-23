@@ -8,7 +8,7 @@ import { ledgerLine } from "./ledger.js";
 
 export { voiceName };
 import { speakingNow } from "./speaking.js";
-import { listWords, sessionActions } from "./end.js";
+import { listWords, paneKnown, sessionActions } from "./end.js";
 import { wrapupLine, sessionRoute } from "./wrapup.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
@@ -337,7 +337,7 @@ export function stripItems(sessions, cast, nowMs, before, speaking = null) {
 /** Whether the card can jump to the session's terminal, and why not: by its name, or by its tmux pane and Claude process. */
 function jumpable(s) {
   if (s.status === "ended") return { enabled: false, why: "session ended" };
-  if (!s.name && !(s.tmux && s.claude && s.distro)) return { enabled: false, why: "no session name yet" };
+  if (!s.name && !paneKnown(s)) return { enabled: false, why: "no session name yet" };
   return { enabled: true, why: null };
 }
 
