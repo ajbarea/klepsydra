@@ -55,11 +55,11 @@ STATE_FILE=$FLEET_STATE/resume-state
 US=$'\x1f' # the field separator: a tab is IFS whitespace, so empty fields would collapse
 
 load_state() {
-  local server p d s r l n m k f a h
+  local server p d s r l n m k f a h c
   [[ -r $STATE_FILE ]] || return 0
   server=$(t display-message -p '#{pid}' 2>/dev/null)
   [[ -n $server && $(head -1 "$STATE_FILE") == "#server $server" ]] || return 0
-  while IFS=$US read -r p d s r l n m k f a h; do
+  while IFS=$US read -r p d s r l n m k f a h c; do
     [[ $p == %* ]] || continue
     [[ -n $d ]] && due[$p]=$d
     [[ -n $s ]] && seen_on[$p]=$s
@@ -71,6 +71,7 @@ load_state() {
     [[ -n $f ]] && fresh_failed[$p]=$f
     [[ -n $a ]] && asked[$p]=$a
     [[ -n $h ]] && held_said[$p]=$h
+    [[ -n $c ]] && checkpointed[$p]=$c
   done <"$STATE_FILE"
 }
 
@@ -81,8 +82,8 @@ save_state() {
   {
     printf '#server %s\n' "$server"
     for p in $(fleet_panes); do
-      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
-        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}" "${held_said[$p]:-}"
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
+        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}" "${held_said[$p]:-}" "${checkpointed[$p]:-}"
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
@@ -176,7 +177,7 @@ sent_already() { # SCREEN LINE
   [[ $above == *"$want"* ]]
 }
 
-forget() { unset "due[$1]" "seen_on[$1]" "note[$1]" "checkpointed[$1]"; }
+forget() { unset "due[$1]" "seen_on[$1]" "note[$1]"; }
 
 # Since when account ID has had room to move back to (back_room), kept across
 # passes and restarts in back-room-since; an account without room is dropped.
@@ -728,19 +729,24 @@ one() { # PANE
 
   # Context budget (#515): a worker whose last request carried
   # FLEET_CONTEXT_BUDGET tokens or more (call_tokens, which the fleet hook
-  # records at each turn's end) is asked, at a finished turn and an empty
-  # prompt, to write its resume state and stop. When a later turn has ended
-  # (its stamp differs from the one asked at), it starts fresh from its brief.
+  # records at each turn's end) is asked once, at a finished turn and an empty
+  # prompt, to write its resume state and stop. checkpointed[] keeps "SID STAMP"
+  # (the session and turn asked at) across passes and restarts; once a later
+  # turn of that session has ended, a fresh session takes the pane. Only that
+  # move succeeding (moved PANE NEW) or a new session in the pane clears it, so a
+  # move put off or failed is tried again (move_hold_ok) without asking again.
   local cur_sid cur_toks cp_stamp
   if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && inbox_name=$(reg_field "$p" 2) && [[ -n $inbox_name ]] &&
-    idle_empty "$s" && cp_stamp=$(turn_done "$p") && cur_sid=$(live_session "$p") &&
+    idle_empty "$s" && cur_sid=$(live_session "$p") && cp_stamp=$(turn_done "$p" "$cur_sid") &&
     cur_toks=$(jq -er '.call_tokens | numbers | floor' "$KLEPSYDRA_DIR/fleet/$cur_sid.json" 2>/dev/null); then
-    if [[ -n ${checkpointed[$p]:-} && ${checkpointed[$p]} != "$cp_stamp" ]]; then
-      unset "checkpointed[$p]"
-      spawn "$p" context "$inbox_name$US$cur_toks" fresh "$p" "$inbox_name" "$(reg_field "$p" 3)" \
-        "passed the context budget ($cur_toks of $FLEET_CONTEXT_BUDGET tokens a request) and wrote its resume state" "" "" "$cp_stamp"
+    [[ -n ${checkpointed[$p]:-} && ${checkpointed[$p]%% *} != "$cur_sid" ]] && unset "checkpointed[$p]"
+    if [[ -n ${checkpointed[$p]:-} ]]; then
+      if [[ ${checkpointed[$p]#* } != "$cp_stamp" ]] && move_hold_ok "$p"; then
+        spawn "$p" context "$inbox_name$US$cur_toks" fresh "$p" "$inbox_name" "$(reg_field "$p" 3)" \
+          "passed the context budget ($cur_toks of $FLEET_CONTEXT_BUDGET tokens a request) and wrote its resume state" "" "" "$cp_stamp"
+      fi
       return
-    elif [[ -z ${checkpointed[$p]:-} ]] && (( cur_toks >= FLEET_CONTEXT_BUDGET )); then
+    elif (( cur_toks >= FLEET_CONTEXT_BUDGET )); then
       local ask
       ask=$(mktemp)
       printf '%s\n' "Your context is past the fleet's budget: your last request carried $cur_toks tokens (budget $FLEET_CONTEXT_BUDGET), re-sent with every call. Finish the step you are on, write your resume state to IMPL.md (slice, done, next, verify), commit and push it, then end your turn. A fresh session takes over from IMPL.md." >"$ask"
@@ -748,7 +754,7 @@ one() { # PANE
       rm -f -- "${ask:?}"
       case $got in
         sent | queued)
-          checkpointed[$p]=$cp_stamp
+          checkpointed[$p]="$cur_sid $cp_stamp"
           flog WARN "context budget: asked the worker to write its resume state and stop" pane="$p" name="$inbox_name" tokens="$cur_toks" budget="$FLEET_CONTEXT_BUDGET" result="$got"
           ;;
         *) flog WARN "context budget: the ask was not delivered; trying again next pass" pane="$p" name="$inbox_name" tokens="$cur_toks" result="$got" ;;

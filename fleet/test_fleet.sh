@@ -3209,32 +3209,60 @@ check "review 4: pasted as AJ began a line, nothing is sent and none of his line
 t kill-window -t "$p"
 echo "#515: the context budget: checkpoint, then a fresh session"
 login a; login b; reading a Personal 10 5000; reading b RIT 10 4000
-ctx_file() { # PANE TOKENS STAMP: the hook's file for the session live in PANE, idle at a turn's end
-  jq -n --arg p "$1" --argjson t "$2" --arg at "$3" \
-    '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], call_tokens: $t, prompt: {at: $at}, turn_at: $at}' \
+ctx_file() { # PANE TOKENS STAMP [STATE]: the hook's file for the session live in PANE
+  jq -n --arg p "$1" --argjson t "$2" --arg at "$3" --arg st "${4:-done}" \
+    '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: [], call_tokens: $t, prompt: {at: $at}, turn_at: $at}' \
     >"$KLEPSYDRA_DIR/fleet/$SID.json"
 }
+ctx_idle='{"above":["⏺ Done. done 11:50 AM"],"rc":"on"}'
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
-p=$(pane ctx '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+p=$(pane ctx "$ctx_idle"); settle
 ctx_file "$p" 300000 t1
 printf '%s\tctx\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 mover "$noon"
 check "#515: at the budget, at a finished turn, the worker is asked to write its resume state, and nothing moves yet" \
   "$(grep -c '^SUBMIT Your context is past the fleet.s budget: your last request carried 300000 tokens (budget 300000)' "$work/ctx.log") $(wc -c <"$work/moved")" "1 0"
 check "#515: logged with its size" "$(jq -r 'select(.message | startswith("context budget: asked")) | [.pane, .name, .tokens, .result] | join(" ")' "$FLEET_LOG")" "$p ctx 300000 sent"
-state ctx '{"above":["⏺ Done. done 11:50 AM"],"clear":true}'
+state ctx "$ctx_idle"
 mover "$((noon + 60))"
-check "#515: the same turn's end (the ask not yet taken up) neither relaunches nor asks again" \
+check "#515: the turn it was asked at (the ask not yet taken up) neither relaunches nor asks again" \
   "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/ctx.log")" "0 1"
-ctx_file "$p" 310000 t2
-mover "$((noon + 120))"
-check "#515: once the checkpoint turn has ended, a fresh session takes the pane" "$(head -2 "$work/moved" | tr '\n' ' ')" "$work/cfg-a ctx "
+state ctx '{"above":["⏺ working"],"busy":true,"rc":"on"}'; ctx_file "$p" 305000 t2 working
+mover "$((noon + 120))"; mover "$((noon + 180))"
+check "#515: passes while the checkpoint turn runs (each its own process) keep the ask on record" \
+  "$(cut -d$'\x1f' -f12 <(grep -F "$p" "$FLEET_STATE/resume-state")) $(wc -c <"$work/moved")" "$SID t1/t1 0"
+state ctx "$ctx_idle"; ctx_file "$p" 310000 t2
+mover "$((noon + 240))"
+check "#515: once the checkpoint turn has ended, a fresh session takes the pane, asked once" \
+  "$(head -2 "$work/moved" | tr '\n' ' ')$(grep -c '^SUBMIT' "$work/ctx.log")" "$work/cfg-a ctx 1"
 check "#515: its brief says why" "$(grep -c 'passed the context budget (310000 of 300000 tokens a request) and wrote its resume state' "$work/moved-brief")" "1"
 check "#515: logged" "$(logged 'context budget: a fresh session took over')" "$p "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
+: >"$FLEET_LOG"; : >"$work/moved"; : >"$work/ctx-fails"; rm -f "$FLEET_STATE/resume-state"
+printf '%s\n' '#!/usr/bin/env bash' "echo x >>'$work/ctx-fails'" 'exit 3' >"$work/launch-fail.sh"
+chmod +x "$work/launch-fail.sh"
+p=$(pane ctxf "$ctx_idle"); settle
+ctx_file "$p" 400000 t1
+printf '%s\tctxf\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+ctxf() { LAUNCH="$work/launch-fail.sh" FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW
+ctxf "$noon"; state ctxf "$ctx_idle"; ctx_file "$p" 410000 t2
+for i in 1 2 3 4; do ctxf "$((noon + 60 * i))"; done
+check "#515: a relaunch that keeps failing is held like any move, and the worker is not asked again" \
+  "$(grep -c '^SUBMIT' "$work/ctxf.log") $(wc -l <"$work/ctx-fails")" "1 2"
+ctxf "$((noon + 60 * 5 + 900))"
+check "#515: past the hold it is tried again, still without a new ask" "$(grep -c '^SUBMIT' "$work/ctxf.log") $(wc -l <"$work/ctx-fails")" "1 3"
+jq '.session_id = "y"' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp"
+SID3=33333333-2222-4333-8444-555555555555
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"; ctx_file "$p" 120000 t9; mv -- "$KLEPSYDRA_DIR/fleet/$SID.json" "$KLEPSYDRA_DIR/fleet/$SID3.json"
+mover "$((noon + 60 * 30))"
+check "#515: a new session in the pane (a /clear) drops the record" \
+  "$(cut -d$'\x1f' -f12 <(grep -F "$p" "$FLEET_STATE/resume-state"))[$(wc -c <"$work/moved")]" "[0]"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SID3.json" "$work/ctx.tmp"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
-p=$(pane ctxlow '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+p=$(pane ctxlow "$ctx_idle"); settle
 ctx_file "$p" 299999 t1
 printf '%s\tctxlow\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 mover "$noon"; mover "$((noon + 60))"
@@ -3245,23 +3273,23 @@ check "#515: nor for a session an older hook never measured" "$(grep -c '^SUBMIT
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
-p=$(pane ctxbusy '{"above":["⏺ working"],"busy":true}'); settle
+p=$(pane ctxbusy '{"above":["⏺ working"],"busy":true,"rc":"on"}'); settle
 ctx_file "$p" 400000 t1
 printf '%s\tctxbusy\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 mover "$noon"
 check "#515: not into a running turn" "$(grep -cE 'SUBMIT|ESC' "$work/ctxbusy.log") $(wc -c <"$work/moved")" "0 0"
-state ctxbusy '{"above":["⏺ Done. done 11:50 AM"]}'
+state ctxbusy "$ctx_idle"
 t send-keys -t "$p" -l "AJ: one more thing"; settle
 mover "$((noon + 60))"
 check "#515: nor over a line AJ is typing" "$(grep -c '^SUBMIT' "$work/ctxbusy.log") [$(input_text "$(screen "$p")")]" "0 [AJ: one more thing]"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
-p=$(pane ctxun '{"above":["⏺ Done. done 11:50 AM"]}'); settle
+p=$(pane ctxun "$ctx_idle"); settle
 ctx_file "$p" 900000 t1
 mover "$noon"
 check "#515: a session no brief registered (AJ's own) is never asked" "$(grep -c '^SUBMIT' "$work/ctxun.log") $(wc -c <"$work/moved")" "0 0"
-t kill-window -t "$p" 2>/dev/null
+t kill-window -t "$p" 2>/dev/null; rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#515: the wall warns at the same budget the resume service acts on" \
   "$(grep -oE 'CONTEXT_BUDGET = [0-9]+' "$here/../src/fleet/ledger.js" | grep -oE '[0-9]+')" "$(bash -c '. "$1/lib.sh"; echo "$FLEET_CONTEXT_BUDGET"' _ "$here")"
 

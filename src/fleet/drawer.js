@@ -113,8 +113,8 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     for (const s of sessions()) {
       const id = identity(s, cast());
       // What tells two cards of one character apart: the session's name, else its repo.
-      // A character the wall cast (crate picks) names no voice: the Ledger names the card's.
-      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) });
+      // A card wearing the character the wall cast (crate picks), not its own voice's: the Ledger names the card's.
+      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voiceKey === s.pick });
     }
     // A session gone from the wall keeps the character the crate recorded in today's file.
     for (const [sid, pick] of Object.entries(day?.picks ?? {})) {

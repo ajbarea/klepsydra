@@ -1150,9 +1150,9 @@ wrapup_pending() { # SID
 # (klepsydra's) says done, or stopped with only background work, and lists no
 # background work still running, and no wrap-up answer is owed. Prints the session's stamp from the same
 # read, for prompt_stamp comparisons.
-turn_done() { # PANE
-  local sid
-  sid=$(live_session "$1") || return 1
+turn_done() { # PANE [SID]: SID when the caller already has PANE's live session
+  local sid=${2:-}
+  [[ -n $sid ]] || sid=$(live_session "$1") || return 1
   ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and ((.background // []) | length) == 0) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
