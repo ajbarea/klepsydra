@@ -17,7 +17,9 @@ export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_BROWSERS=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
-real_keryx_start=$(date -u +%s)
+# A copy as it was, so a change can be told apart from a toggle (#516).
+real_keryx_copy="$work/real-keryx-config.json"
+cp -p -- "$real_keryx_config" "$real_keryx_copy" 2>/dev/null || :
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 # Never AJ's briefing: `fleet done` writes an undelivered report into this queue file (#445).
 export FLEET_QUEUE_MD="$work/queue.md"
@@ -83,45 +85,44 @@ check() {
 }
 has() { grep -qF -- "$2" <<<"$1" && echo yes || echo no; } # TEXT NEEDLE
 
-# Finds a keryx quit or off line in daemon.log within [start_epoch, end_epoch] (#516).
-keryx_quit_event() { # start_epoch end_epoch [log_path...]
-  local start=$1 end=$2
+# The "quit requested" line keryx's daemon logs (daemon.log, JSON lines) within
+# SLACK seconds of epoch AT, which `keryx off` writes right after config.json (#516).
+keryx_quit_event() { # AT SLACK [LOG...]
+  local at=$1 slack=$2 f
   shift 2
   local -a logs=()
   if (( $# )); then
     logs=("$@")
   else
-    local f
     for f in "${XDG_STATE_HOME:-$HOME/.local/state}/keryx/log/daemon.log" \
-             "${XDG_STATE_HOME:-$HOME/.local/state}/keryx/log/daemon.log.1" \
-             "${XDG_CACHE_HOME:-$HOME/.cache}/keryx/daemon.log"; do
+             "${XDG_STATE_HOME:-$HOME/.local/state}/keryx/log/daemon.log.1"; do
       [[ -r $f ]] && logs+=("$f")
     done
   fi
   (( ${#logs[@]} )) || return 1
-  jq -n -r --argjson start "$start" --argjson end "$end" '
+  jq -n -r --argjson at "$at" --argjson slack "$slack" '
     inputs
-    | select(.ts? and (.message? | test("quit requested|quit\\b|turned off")))
-    | (.ts | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch 0) as $t
-    | select($t >= ($start - 2) and $t <= ($end + 2))
+    | select(.message? == "quit requested" and (.ts? | type) == "string")
+    | (.ts | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $t
+    | select($t != null and $t >= $at - $slack and $t <= $at + $slack)
     | "\(.ts) \(.message)"
   ' "${logs[@]}" 2>/dev/null | head -1
 }
 
-# Verifies AJ's live keryx config was untouched, skipping with a note only if keryx
-# quit or was toggled off during the run's window (#273, #516).
-check_keryx_isolation() { # [cfg orig_sum start log_path name]
-  local cfg=${1:-$real_keryx_config} orig_sum=${2:-$real_keryx_sum} start=${3:-$real_keryx_start}
-  local cur_sum cur_time event name=${5:-"#273: no case touched AJ's own keryx config"}
+# AJ's live keryx config is untouched (#273). A change is let pass, with a note,
+# only when it is keryx's own toggle: no key but `enabled` differs from the copy
+# taken at the start, and the daemon logged its quit within seconds of the write
+# (#516). A case that leaked into the file changes some other key, or none quits.
+check_keryx_isolation() { # [CFG ORIG_SUM ORIG_COPY LOG NAME]
+  local cfg=${1:-$real_keryx_config} orig_sum=${2:-$real_keryx_sum} orig=${3:-$real_keryx_copy}
+  local name=${5:-"#273: no case touched AJ's own keryx config"} cur_sum mtime event
   cur_sum=$(sha256sum "$cfg" 2>/dev/null | cut -d' ' -f1)
-  if [[ "$cur_sum" == "$orig_sum" ]]; then
-    check "$name" "$cur_sum" "$orig_sum"
-    return 0
-  fi
-  cur_time=$(date -u +%s)
-  event=$(keryx_quit_event "$start" "$cur_time" ${4+"$4"})
-  if [[ -n $event ]]; then
-    echo "  skip $name: AJ's live keryx was quit/toggled mid-run ($event)"
+  if [[ "$cur_sum" != "$orig_sum" && -n $cur_sum && -r $orig ]] &&
+    [[ $(jq -cS 'del(.enabled)' "$orig" 2>/dev/null) == "$(jq -cS 'del(.enabled)' "$cfg" 2>/dev/null)" ]] &&
+    [[ $(jq -c 'type' "$cfg" 2>/dev/null) == '"object"' ]] &&
+    mtime=$(stat -c %Y -- "$cfg" 2>/dev/null) &&
+    event=$(keryx_quit_event "$mtime" 5 ${4:+"$4"}) && [[ -n $event ]]; then
+    printf '  skip %s: AJ turned keryx off mid-run (only "enabled" changed; %s)\n' "$name" "$event"
     return 0
   fi
   check "$name" "$cur_sum" "$orig_sum"
@@ -4455,31 +4456,38 @@ check "#273 review: the newest keryx across both accounts' caches is used (0.12.
 vreset; rm -f "$kcalls"
 
 echo "keryx isolation check (#516)"
-# 1. Unchanged config passes
-kiso_cfg="$work/fake_keryx.json"
-echo '{"enabled": true}' >"$kiso_cfg"
-kiso_sum=$(sha256sum "$kiso_cfg" | cut -d' ' -f1)
-kiso_start=$(date -u +%s)
-check_keryx_isolation "$kiso_cfg" "$kiso_sum" "$kiso_start" "" "#516: unchanged config passes isolation check"
-
-# 2. Changed config with quit/off logged in window skips with note
-echo '{"enabled": false}' >"$kiso_cfg"
-kiso_log="$work/fake_daemon.log"
-kiso_ts=$(date -u +"%Y-%m-%dT%H:%M:%S.123Z")
-echo "{\"ts\": \"$kiso_ts\", \"message\": \"quit requested\"}" >"$kiso_log"
-kiso_out=$(check_keryx_isolation "$kiso_cfg" "$kiso_sum" "$kiso_start" "$kiso_log" "#516: changed config with quit")
-check "#516: config changed by keryx quit mid-run skips with note" "$(grep -c 'skip.*AJ.*quit/toggled mid-run' <<<"$kiso_out")" "1"
-
-# 3. Changed config with quit outside window fails
-echo '{"ts": "2020-01-01T00:00:00.000Z", "message": "quit requested"}' >"$kiso_log"
-kiso_out=$(GITHUB_ACTIONS="" check_keryx_isolation "$kiso_cfg" "$kiso_sum" "$kiso_start" "$kiso_log" "#516: quit outside window" 2>&1)
-check "#516: config changed without quit in window fails" "$(grep -c 'FAIL.*quit outside window' <<<"$kiso_out")" "1"
-
-# 4. Changed config with empty log fails
-: >"$kiso_log"
-kiso_out=$(GITHUB_ACTIONS="" check_keryx_isolation "$kiso_cfg" "$kiso_sum" "$kiso_start" "$kiso_log" "#516: empty log" 2>&1)
-check "#516: config changed with empty log fails" "$(grep -c 'FAIL.*empty log' <<<"$kiso_out")" "1"
-rm -f "$kiso_cfg" "$kiso_log"
+kiso_cfg="$work/kiso-config.json" kiso_orig="$work/kiso-orig.json" kiso_log="$work/kiso-daemon.log"
+kiso_iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.047Z; }
+kiso_quit() { printf '{"ts": "%s", "level": "INFO", "logger": "keryx", "message": "quit requested"}\n' "$(kiso_iso "$1")"; }
+kiso_run() { # CONFIG_TEXT LOG_TEXT NAME [ORIG_TEXT]: the check's output, as it would print
+  printf '%s\n' "${4:-{\"enabled\": true, \"speak_only\": [\"%1\"]\}}" >"$kiso_orig"
+  printf '%s\n' "$1" >"$kiso_cfg"
+  touch -d @1795400000 -- "$kiso_cfg"
+  printf '%s' "$2" >"$kiso_log"
+  GITHUB_ACTIONS="" check_keryx_isolation "$kiso_cfg" "$(sha256sum "$kiso_orig" | cut -d' ' -f1)" "$kiso_orig" "$kiso_log" "$3" 2>&1
+}
+kiso_off='{"enabled": false, "speak_only": ["%1"]}'
+kiso_out=$(kiso_run '{"enabled": true, "speak_only": ["%1"]}' "" "kiso same")
+check "#516: an unchanged config passes" "$(grep -c '^  ok   kiso same' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "$(kiso_quit 1795400001)" "kiso toggle")
+check "#516: only enabled flipped, with keryx's quit a second after the write, is a skip with a note" \
+  "$(grep -c '^  skip kiso toggle: AJ turned keryx off mid-run' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run '{"enabled": false, "speak_only": []}' "$(kiso_quit 1795400001)" "kiso leak")
+check "#516: another key changed fails even with a quit beside the write (the leak #273 guards)" \
+  "$(grep -c '^  FAIL kiso leak' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "$(kiso_quit 1795400060)" "kiso far")
+check "#516: a quit a minute away from the write fails" "$(grep -c '^  FAIL kiso far' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "$(kiso_quit 1577836800)" "kiso old")
+check "#516: a quit from another day fails" "$(grep -c '^  FAIL kiso old' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "" "kiso nolog")
+check "#516: no quit logged fails" "$(grep -c '^  FAIL kiso nolog' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" '{"ts": "'"$(kiso_iso 1795400001)"'", "message": "quit  0 chars -> {}"}' "kiso other")
+check "#516: only the daemon's own quit line counts, not another line naming quit" "$(grep -c '^  FAIL kiso other' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "not json" "$(kiso_quit 1795400001)" "kiso broken")
+check "#516: a config that no longer parses fails" "$(grep -c '^  FAIL kiso broken' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "still not json" "$(kiso_quit 1795400001)" "kiso both" "not json")
+check "#516: a config unreadable before and after, but changed, fails" "$(grep -c '^  FAIL kiso both' <<<"$kiso_out")" "1"
+rm -f -- "$kiso_cfg" "$kiso_orig" "$kiso_log"
 
 echo "briefing sync"
 git init -q --bare "$work/brief-remote.git"
