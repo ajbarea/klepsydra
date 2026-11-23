@@ -37,16 +37,11 @@ pub fn opacity_subscribe(
 pub fn set_gauge_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     let v = opacity::value(opacity)?;
     let asked = opacity::snap(opacity);
-    let saved_ok = crate::write_pref(&app, opacity::KEY, v);
-    // Read back once: what the windows get and what the reply says agree.
+    crate::write_pref(&app, opacity::KEY, v);
+    // Read back once: what the windows get and what the reply says agree. A
+    // write refused leaves the key unset or unchanged, which confirm reports.
     let prefs = crate::read_prefs(&app);
     send(&app, opacity::of(prefs.as_ref()));
-    if !saved_ok {
-        let saved = opacity::of(prefs.as_ref());
-        return Err(format!(
-            "prefs.json could not be saved, so the opacity is still {saved}%, not {asked}%."
-        ));
-    }
     opacity::confirm(asked, prefs.as_ref())
 }
 

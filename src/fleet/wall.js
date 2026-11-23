@@ -1668,6 +1668,7 @@ function syncFullText() {
 }
 if (served) document.fonts?.ready.then(syncFullText);
 
+const densityNote = document.getElementById("density-note");
 function choose(value) {
   choice = parseDensity(value);
   for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
@@ -1676,7 +1677,11 @@ function choose(value) {
 
 densityPicker.addEventListener("change", (e) => {
   choose(e.target.value);
-  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+  if (inTauri)
+    window.__TAURI__.core.invoke("set_wall_density", { density: choice }).then(
+      () => setText(densityNote, ""),
+      (err) => setText(densityNote, `Not saved: ${err}`),
+    );
 });
 let resizeTimer = 0;
 addEventListener("resize", () => {

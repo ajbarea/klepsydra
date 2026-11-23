@@ -44,12 +44,16 @@ static CAST_WRITE: Mutex<()> = Mutex::new(());
 /// and the write succeeded (`saved_ok`): else why not, naming both, for the
 /// wall to say rather than quietly wear the saved one again.
 pub fn confirm(asked: &str, saved: &str, saved_ok: bool) -> Result<(), String> {
-    if saved_ok && asked == saved {
-        Ok(())
-    } else {
+    if !saved_ok {
+        Err(format!(
+            "prefs.json could not be saved, so {asked} is not kept after a restart."
+        ))
+    } else if asked != saved {
         Err(format!(
             "prefs.json could not be saved, so the theme is still {saved}, not {asked}."
         ))
+    } else {
+        Ok(())
     }
 }
 
@@ -164,12 +168,10 @@ mod tests {
     #[test]
     fn a_choice_not_saved_says_so() {
         assert_eq!(confirm("dicebear", "dicebear", true), Ok(()));
+        // A corrupt prefs.json reads as the default: asking for the default is still not a save.
         let err_corrupt = confirm("kourai", "kourai", false).unwrap_err();
-        assert!(
-            err_corrupt.contains("still kourai, not kourai"),
-            "{err_corrupt}"
-        );
-        let err = confirm("dicebear", "kourai", false).unwrap_err();
+        assert!(err_corrupt.contains("kourai is not kept"), "{err_corrupt}");
+        let err = confirm("dicebear", "kourai", true).unwrap_err();
         assert!(err.contains("still kourai, not dicebear"), "{err}");
     }
 

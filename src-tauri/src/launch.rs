@@ -985,19 +985,22 @@ pub fn new_session_prefs(app: tauri::AppHandle) -> Value {
     serde_json::json!({ "default": id(DEFAULT_ENGINE), "last": id(LAST_ENGINE) })
 }
 
+/// Ok when prefs.json took the write, else the words the wall shows.
+fn saved_or_say(saved: bool) -> Result<(), String> {
+    if saved {
+        Ok(())
+    } else {
+        Err("prefs.json could not be saved, so the default is not kept.".to_string())
+    }
+}
+
 /// Save `id` as + New session's default, or with none go back to the last used.
 #[tauri::command]
 pub fn set_new_session_default(app: tauri::AppHandle, id: Option<String>) -> Result<(), String> {
     match id {
         Some(id) if !pref_id_ok(&id) => Err(format!("That is not an engine: {id}")),
-        Some(id) => {
-            crate::write_pref(&app, DEFAULT_ENGINE, Value::String(id));
-            Ok(())
-        }
-        None => {
-            crate::write_pref(&app, DEFAULT_ENGINE, Value::Null);
-            Ok(())
-        }
+        Some(id) => saved_or_say(crate::write_pref(&app, DEFAULT_ENGINE, Value::String(id))),
+        None => saved_or_say(crate::write_pref(&app, DEFAULT_ENGINE, Value::Null)),
     }
 }
 
@@ -1105,6 +1108,13 @@ pub async fn agy_models(app: tauri::AppHandle) -> Result<Vec<AgyModel>, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_default_prefs_json_refused_is_an_error_the_wall_shows() {
+        assert_eq!(saved_or_say(true), Ok(()));
+        let err = saved_or_say(false).unwrap_err();
+        assert!(err.contains("could not be saved"), "{err}");
+    }
     use serde_json::json;
     use std::time::Instant;
 

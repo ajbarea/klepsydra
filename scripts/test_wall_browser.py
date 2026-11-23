@@ -1200,6 +1200,7 @@ window.__TAURI__ = { core: {
     if (cmd === 'new_session_prefs') { window.__calls.push([cmd, args]); return Promise.resolve(window.__nsprefs ?? { default: null, last: null }); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
+    if (window.__fails && window.__fails[cmd]) { window.__calls.push([cmd, args]); return Promise.reject(window.__fails[cmd]); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
@@ -5138,6 +5139,26 @@ def theme_renames_the_queue_keeper(wall):
     page.close()
 
 
+def refused_saves_say_so(wall):
+    """A density or + New session default that prefs.json refused says so in
+    the bar, as a refused theme does, and the next save that takes clears it
+    (#484: a corrupt prefs.json reads as the defaults, so silence looked saved)."""
+    page = open_app(wall)
+    density = "prefs.json could not be saved, so the density is not kept."
+    page.evaluate("(m) => { window.__fails = { set_wall_density: m }; }", density)
+    open_gear(page)
+    pick(page, ".density input[value=compact]")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
+    wall.check(got == [f"Not saved: {density}", True], "a refused density save says why in the bar", got)
+    page.evaluate("window.__fails = null")
+    pick(page, ".density input[value=comfortable]")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
+    wall.check(got == ["", False], "the next density save that takes clears the note", got)
+    page.close()
+
+
 def theme_save_flushes_and_says_when_refused(wall):
     """A choice still waiting to be saved is saved at once when the picker
     loses focus (a click on the tray's Quit takes it away), and only once; a
@@ -5808,6 +5829,7 @@ def main() -> int:
             theme_everywhere,
             theme_renames_the_queue_keeper,
             theme_save_flushes_and_says_when_refused,
+            refused_saves_say_so,
             theme_first_paint,
             strip_first_paint,
             strip_keeper_states,

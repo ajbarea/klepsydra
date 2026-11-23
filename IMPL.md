@@ -1,35 +1,20 @@
-# IMPL: klepsydra#484 - Theme save reports success on corrupt prefs.json when default is picked
+# IMPL: #484 a prefs.json that cannot take a save says so (PR #522)
 
-Branch `fix/theme-save-corrupt-prefs-484` (worktree `.claude/worktrees/theme-save-484`), cut from `origin/main` 7ed5e88.
-Push only: `git push -u origin fix/theme-save-corrupt-prefs-484`. Never push to main.
-
-## Slice
-Prevent theme and preference setters from reporting false success when `prefs.json` is corrupt or unwritable.
-`write_pref` and `write_pref_at` return `bool` indicating whether persistence succeeded; `theme::confirm` verifies `saved_ok` alongside value equality.
+Branch fix/theme-save-corrupt-prefs-484 (agy's, reviewed and fixed by Opus agy-review-k 11-23).
+Push: `git push origin fix/theme-save-corrupt-prefs-484:fix/theme-save-corrupt-prefs-484`. Never push to main.
 
 ## Done
-- `src-tauri/src/main.rs`:
-  - `write_pref` and `write_pref_at` return `bool` (`true` when written and renamed successfully; `false` on unreadable JSON or IO error).
-  - Added unit test `a_corrupt_prefs_file_is_refused_and_left_intact` verifying `{` in `prefs.json` returns `false` and leaves file untouched.
-- `src-tauri/fleet/src/theme.rs`:
-  - Updated `confirm(asked, saved, saved_ok) -> Result<(), String>`: requires `saved_ok && asked == saved`, so selecting the default theme on a corrupt/unwritten file returns an error instead of false success.
-  - Updated unit test `a_choice_not_saved_says_so` verifying unwritten default theme returns error.
-- `src-tauri/src/theme.rs`:
-  - `set_theme`: passes `write_pref` return value `saved_ok` to `theme::confirm`.
-- `src-tauri/src/opacity.rs`:
-  - `set_gauge_opacity`: checks `saved_ok` from `write_pref`.
-- `src-tauri/src/fleet.rs`:
-  - `set_wall_density`: checks `write_pref` return value.
-- `src-tauri/src/voices.rs`:
-  - `on_menu`: checks `saved_ok` from `write_pref` before acknowledging mode change.
+- agy: write_pref/write_pref_at return whether the save took; set_theme, set_wall_density and
+  the Voices menu check it.
+- Opus r1:
+  - set_new_session_default (same class) returned Ok on a refused save: now an error the
+    wall's + New session note already shows.
+  - set_wall_density's error was swallowed by the wall (`.catch(() => {})`): a density-note
+    in the bar now says "Not saved: ..." and clears on the next save that takes.
+  - theme::confirm: a refused save of the default read "still kourai, not kourai"; it now says
+    the choice is not kept.
+  - opacity: agy's extra branch repeated what opacity::confirm already reports; removed.
+- Tests: theme confirm, saved_or_say, browser case refused_saves_say_so.
 
 ## Next
-- Push branch `fix/theme-save-corrupt-prefs-484` and open PR with label `bug` and assignee `ajbarea`.
-- Post Elenchus bug-class self-review on PR.
-- Update desktop log and continue full auto.
-
-## Verify
-- `cargo fmt --all --check`: clean.
-- `cargo check -p klepsydra-fleet --all-targets`: clean.
-- `cargo test -p klepsydra-fleet`: 439 passed, 0 failed.
-- `npm run lint`: 76 files clean.
+- CI (cargo test), wall browser suite locally, fresh-reader verify, merge.
