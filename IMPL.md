@@ -20,23 +20,20 @@ Push: `git push origin feat/context-budget-515:feat/context-budget-515`. Never p
   only names that are repos under FLEET_REPOS_ROOT: 14 of 133, each truly multi-repo.
 - drawer.js (agy): kept; the old `id.voice === null` test was always false (voiceName is never null).
 
-## Round 2 (fresh Opus reader) - IN PROGRESS, PARKED 11-23 for the Personal 5h reset
-Commit "wip(fleet): r2" holds the structural fix, NOT yet green:
-- checkpointed[] = "SID STAMP", persisted as resume-state field 12, removed from forget();
-  cleared only by moved PANE NEW or a new session in the pane; relaunch gated on move_hold_ok;
-  turn_done PANE [SID]; drawer cast only when id.voiceKey === s.pick.
-- Isolated run of the #515 resume block: 9 pass, 6 FAIL. First pass sends no ask (0 0 wanted 1 0):
-  something before the context block still returns on pass 1 (rc "on" was added; check what else,
-  e.g. the Remote Control turn-on or another branch); with no ask, later cases cascade.
-- Repro: S=/tmp/claude-1001/-home-ajbar-ajsoftworks/44c5c2dd-fed7-4f68-a74b-08c16458756e/scratchpad;
-  sed -n '/^echo "#515: the context budget: checkpoint/,/^check "#515: the wall warns/p' fleet/test_fleet.sh | sed '$d' >$S/scen_r2.sh;
-  flock -o /tmp/fleet-heavy.lock timeout 900 env SCEN=$S/scen_r2.sh bash $S/harness.sh
-  (harness.sh = the suite header + helpers; `here=` points at this worktree).
+## Round 2 (fresh Opus reader): fixed
+- checkpointed[] = "SID STAMP", resume-state field 12, out of forget(); cleared only by
+  moved PANE NEW or a new session in the pane; relaunch gated on move_hold_ok and kept across a
+  put-off or failed move (no second ask); turn_done PANE [SID]; drawer cast only when the card
+  wore the pick (id.voiceKey === s.pick).
+- Isolated #515 resume block 15/15 (each pass its own --once process, with a busy pass between
+  ask and turn end); mutations killed: forget clears it (4 red), no load (7), no move_hold_ok (2),
+  no session drop (1). hooks 610/0, node 586/0, shellcheck clean (reduced mode = main's findings).
+- Tests need a warm-up pass: an idle pane's first pass turns Remote Control on and returns.
 
 ## Next
-1. Make the 6 cases pass (start with why pass 1 does not reach the context block).
-2. hooks/test_fleet.sh (610/0 at abcf242) and node tests again; push; CI.
-3. Fresh-reader round 3 with the open list above; rewrite PR body (claim drift); merge only when clean.
+1. Fresh reader round 3; rewrite PR body (claim drift); CI; merge when clean.
 
 ## Verify
-- `bash hooks/test_fleet.sh`, `node --test src/*.test.js`, the isolated block above, then `make test-fleet`.
+- Isolated block: sed -n '/^echo "#515: the context budget: checkpoint/,/^check "#515: the wall warns/p'
+  fleet/test_fleet.sh | sed '$d' >scen.sh; SCEN=scen.sh bash harness.sh (suite header + helpers),
+  under flock -o /tmp/fleet-heavy.lock. Then `make test-fleet`.

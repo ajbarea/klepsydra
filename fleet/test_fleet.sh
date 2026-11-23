@@ -3219,6 +3219,7 @@ ctx_idle='{"above":["⏺ Done. done 11:50 AM"],"rc":"on"}'
 p=$(pane ctx "$ctx_idle"); settle
 ctx_file "$p" 300000 t1
 printf '%s\tctx\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
 mover "$noon"
 check "#515: at the budget, at a finished turn, the worker is asked to write its resume state, and nothing moves yet" \
   "$(grep -c '^SUBMIT Your context is past the fleet.s budget: your last request carried 300000 tokens (budget 300000)' "$work/ctx.log") $(wc -c <"$work/moved")" "1 0"
@@ -3233,8 +3234,8 @@ check "#515: passes while the checkpoint turn runs (each its own process) keep t
   "$(cut -d$'\x1f' -f12 <(grep -F "$p" "$FLEET_STATE/resume-state")) $(wc -c <"$work/moved")" "$SID t1/t1 0"
 state ctx "$ctx_idle"; ctx_file "$p" 310000 t2
 mover "$((noon + 240))"
-check "#515: once the checkpoint turn has ended, a fresh session takes the pane, asked once" \
-  "$(head -2 "$work/moved" | tr '\n' ' ')$(grep -c '^SUBMIT' "$work/ctx.log")" "$work/cfg-a ctx 1"
+check "#515: once the checkpoint turn has ended, a fresh session takes the pane (launch.sh picks its account), asked once" \
+  "[$(head -1 "$work/moved")] $(sed -n 2p "$work/moved") $(grep -c '^SUBMIT Your context' "$work/ctx.log")" "[] ctx 1"
 check "#515: its brief says why" "$(grep -c 'passed the context budget (310000 of 300000 tokens a request) and wrote its resume state' "$work/moved-brief")" "1"
 check "#515: logged" "$(logged 'context budget: a fresh session took over')" "$p "
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
@@ -3245,6 +3246,7 @@ chmod +x "$work/launch-fail.sh"
 p=$(pane ctxf "$ctx_idle"); settle
 ctx_file "$p" 400000 t1
 printf '%s\tctxf\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
 ctxf() { LAUNCH="$work/launch-fail.sh" FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW
 ctxf "$noon"; state ctxf "$ctx_idle"; ctx_file "$p" 410000 t2
 for i in 1 2 3 4; do ctxf "$((noon + 60 * i))"; done
@@ -3265,6 +3267,7 @@ t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 p=$(pane ctxlow "$ctx_idle"); settle
 ctx_file "$p" 299999 t1
 printf '%s\tctxlow\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
 mover "$noon"; mover "$((noon + 60))"
 check "#515: one token under the budget, nothing is asked or moved" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
 jq 'del(.call_tokens)' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp" && mv -- "$work/ctx.tmp" "$KLEPSYDRA_DIR/fleet/$SID.json"
@@ -3276,6 +3279,7 @@ t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 p=$(pane ctxbusy '{"above":["⏺ working"],"busy":true,"rc":"on"}'); settle
 ctx_file "$p" 400000 t1
 printf '%s\tctxbusy\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
 mover "$noon"
 check "#515: not into a running turn" "$(grep -cE 'SUBMIT|ESC' "$work/ctxbusy.log") $(wc -c <"$work/moved")" "0 0"
 state ctxbusy "$ctx_idle"
