@@ -100,17 +100,18 @@ keryx_quit_event() { # AT SLACK [LOG...]
     done
   fi
   (( ${#logs[@]} )) || return 1
-  jq -n -r --argjson at "$at" --argjson slack "$slack" '
-    inputs
+  # Line by line (-R, fromjson?), so a line that is not JSON is skipped, not the end of the read.
+  jq -n -R -r --argjson at "$at" --argjson slack "$slack" 'first(
+    inputs | fromjson? | objects
     | select(.message? == "quit requested" and (.ts? | type) == "string")
     | (.ts | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $t
     | select($t != null and $t >= $at - $slack and $t <= $at + $slack)
     | "\(.ts) \(.message)"
-  ' "${logs[@]}" 2>/dev/null | head -1
+  )' "${logs[@]}" 2>/dev/null
 }
 
 # AJ's live keryx config is untouched (#273). A change is let pass, with a note,
-# only when it is keryx's own toggle: no key but `enabled` differs from the copy
+# only when it is keryx's own toggle off: no key but `enabled` (now false) differs from the copy
 # taken at the start, and the daemon logged its quit within seconds of the write
 # (#516). A case that leaked into the file changes some other key, or none quits.
 check_keryx_isolation() { # [CFG ORIG_SUM ORIG_COPY LOG NAME]
@@ -119,7 +120,7 @@ check_keryx_isolation() { # [CFG ORIG_SUM ORIG_COPY LOG NAME]
   cur_sum=$(sha256sum "$cfg" 2>/dev/null | cut -d' ' -f1)
   if [[ "$cur_sum" != "$orig_sum" && -n $cur_sum && -r $orig ]] &&
     [[ $(jq -cS 'del(.enabled)' "$orig" 2>/dev/null) == "$(jq -cS 'del(.enabled)' "$cfg" 2>/dev/null)" ]] &&
-    [[ $(jq -c 'type' "$cfg" 2>/dev/null) == '"object"' ]] &&
+    [[ $(jq -c 'type' "$cfg" 2>/dev/null) == '"object"' && $(jq -c '.enabled' "$cfg" 2>/dev/null) == false ]] &&
     mtime=$(stat -c %Y -- "$cfg" 2>/dev/null) &&
     event=$(keryx_quit_event "$mtime" 5 ${4:+"$4"}) && [[ -n $event ]]; then
     printf '  skip %s: AJ turned keryx off mid-run (only "enabled" changed; %s)\n' "$name" "$event"
@@ -4485,6 +4486,10 @@ kiso_out=$(kiso_run "$kiso_off" '{"ts": "'"$(kiso_iso 1795400001)"'", "message":
 check "#516: only the daemon's own quit line counts, not another line naming quit" "$(grep -c '^  FAIL kiso other' <<<"$kiso_out")" "1"
 kiso_out=$(kiso_run "not json" "$(kiso_quit 1795400001)" "kiso broken")
 check "#516: a config that no longer parses fails" "$(grep -c '^  FAIL kiso broken' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "not json at all"$'\n'"$(kiso_quit 1795400001)" "kiso garbage")
+check "#516: a log line that is not JSON is skipped, not the end of the read" "$(grep -c '^  skip kiso garbage' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run '{"enabled": true, "speak_only": ["%1"]}' "$(kiso_quit 1795400001)" "kiso on" '{"enabled": false, "speak_only": ["%1"]}')
+check "#516: turned on (a quit beside it from a daemon swap) is no toggle off, and fails" "$(grep -c '^  FAIL kiso on' <<<"$kiso_out")" "1"
 kiso_out=$(kiso_run "still not json" "$(kiso_quit 1795400001)" "kiso both" "not json")
 check "#516: a config unreadable before and after, but changed, fails" "$(grep -c '^  FAIL kiso both' <<<"$kiso_out")" "1"
 rm -f -- "$kiso_cfg" "$kiso_orig" "$kiso_log"

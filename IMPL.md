@@ -10,6 +10,10 @@ Push: `git push origin fix/keryx-isolation-516:fix/keryx-isolation-516`. Never p
   parses as an object, and the daemon's own `quit requested` line within 5 s of the file's mtime
   (`keryx off` writes config.json, then sends quit). Stale ~/.cache/keryx path dropped (unused since 11-02).
 - 9 cases, each guard mutation-checked (5/5 red); real daemon.log finds the 11-20 15:50:17Z quit.
+- Opus r2 reader: code mergeable. Its minors fixed: the log is read line by line (a non-JSON
+  line no longer ends the read; `first()` instead of head), and only a toggle OFF (enabled now
+  false) is skipped. 11 cases, new guards mutation-checked. Deferred: exporting XDG_CACHE_HOME
+  suite-wide (doctor reads it; needs its own full-suite run).
 
 ## Next
 - CI green, fresh-reader verify, merge (restore main's IMPL.md first).
