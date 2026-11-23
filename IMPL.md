@@ -1,34 +1,25 @@
-# IMPL: klepsydra#513: doctor: report when agy or Copilot model lists change (Gemini 4 Neon watch)
+# IMPL: #513 doctor reports agy and Copilot model-list changes (PR #520)
 
-Branch feat/model-watch-513 (worktree .claude/worktrees/model-watch-513), cut from origin/main 7ed5e88.
-Never push to main.
-
-## Slice
-- Record agy and Copilot available models in `$FLEET_STATE/models-<engine>.txt`.
-- When vendor model lists change, emit a warning from `fleet doctor` indicating additions/removals and prompting routing review in `docs/engines.md`.
+Branch feat/model-watch-513 (agy's, reviewed and fixed by Opus agy-review-k 11-23).
+Push: `git push origin feat/model-watch-513:feat/model-watch-513`. Never push to main.
 
 ## Done
-- `fleet/engines.sh`:
-  - Added `eng_models` interface function to query model lists for `agy` (`agy models 2>/dev/null`) and `copilot` (`https://api.githubcopilot.com/models` API with fallback to `~/.copilot/data.db`).
-  - Added mock environment variable support (`FLEET_AGY_MODELS`, `FLEET_AGY_MODELS_FILE`, `FLEET_COPILOT_MODELS`, `FLEET_COPILOT_MODELS_FILE`) for deterministic testing.
-- `fleet/doctor.sh`:
-  - Added model list monitoring loop over available engines.
-  - Snapshot persistence in `$FLEET_MODELS_DIR/models-$e.txt` (default `$FLEET_STATE/models-$e.txt`).
-  - Compares previous snapshot via `comm -13` / `comm -23`.
-  - Reports `ok` on baseline capture and unchanged states (`N models (unchanged)`).
-  - Reports `warn` on changes with `+added -removed` and advice to review routing in `docs/engines.md`.
-- `docs/engines.md`:
-  - Added `### Model discovery and routing review` section detailing empirical validation steps before workload rerouting when new models (such as Gemini 4 Neon) appear.
-- `fleet/test_fleet.sh`:
-  - Added test cases covering baseline model recording, unchanged status, model additions (+gemini-4-neon), and model removals.
+- agy: eng_models (agy models; Copilot via its OAuth token to api.githubcopilot.com with a
+  spoofed VS Code Editor-Version, else data.db); doctor snapshot + one-run warning.
+- Opus r1 fixes:
+  - Security: no token read, no private API call. Copilot's list comes from its CLI's own
+    cache (data.db opened read-only). Live: 7 ids, 36 ms.
+  - Performance: doctor runs every 5 min; the list is asked at most every 6 h
+    (FLEET_MODELS_EVERY_S). Live doctor 5.9 s first run, 4.7 s the next (agy call skipped).
+  - UX: the warning held only one run, so the timer cleared it before anyone saw it; it now
+    holds 3 days (FLEET_MODELS_WARN_S, a models-<e>.changed file).
+  - One sort/comm collation (LC_ALL=C); the parsers tested on real `agy models` output and a
+    real-schema data.db.
+- 12 cases pass in isolation.
 
 ## Next
-- Verify with `make shellcheck` and tests.
-- Commit conventional commit and push branch `feat/model-watch-513`.
-- Open PR with team ceremony (under 150 words visible top, small plain table, `<details>` folded depth, `ajbarea` assignee, label, closing keyword).
-- Post Elenchus bug-class self-review.
+- CI green, fresh-reader verify, merge (restore main's IMPL.md first).
 
 ## Verify
-- `make -C /home/ajbar/ajsoftworks/klepsydra/.claude/worktrees/model-watch-513 shellcheck`
-- `make -C /home/ajbar/ajsoftworks/klepsydra/.claude/worktrees/model-watch-513 test-engine`
-- Target doctor test execution in `test_fleet.sh`
+- `FLEET_MODELS_DIR=$(mktemp -d) bash fleet/doctor.sh | grep models` (live).
+- `make test-fleet` (takes the heavy lock itself).

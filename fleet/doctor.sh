@@ -22,8 +22,8 @@
 # its headless job (#260).
 # Open Playwright MCP browsers (pid, owning session, idle time), with a warning
 # past FLEET_BROWSER_IDLE_MIN or for one whose MCP server is gone (#379).
-# Records agy's and Copilot's available models in models-<engine>.txt and reports
-# any change with a warning to review routing in docs/engines.md (#513).
+# agy's and Copilot's model lists, kept in models-<engine>.txt: a change is a
+# warning to review routing in docs/engines.md for 3 days (#513).
 # Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
@@ -827,37 +827,39 @@ for e in "${ENGINES[@]}"; do
   fi
 done
 
-# Model list monitoring (#513): record agy and Copilot available models,
-# and report whenever vendor model lists change (e.g. Gemini 4 Neon watch).
+# Each engine's model list (#513): asked at most every FLEET_MODELS_EVERY_S (a
+# list changes in weeks, and the doctor timer runs every few minutes), kept in
+# models-<engine>.txt. A change is a warning for FLEET_MODELS_WARN_S, so the
+# timer's next runs do not clear it before anyone reads it.
+models_every=${FLEET_MODELS_EVERY_S:-21600} models_warn=${FLEET_MODELS_WARN_S:-259200}
 for e in "${ENGINES[@]}"; do
   eng_has "$e" || continue
-  models=$(eng_models "$e" 2>/dev/null)
   snap=${FLEET_MODELS_DIR:-$FLEET_STATE}/models-$e.txt
-  if [[ -z $models ]]; then
-    if [[ -f $snap ]]; then
-      report ok "models $e" "could not query: keeping $(grep -c . "$snap") recorded models"
-    fi
-    continue
-  fi
-  count=$(grep -c . <<<"$models")
-  if [[ ! -f $snap ]]; then
-    mkdir -p -- "$(dirname "$snap")" 2>/dev/null
-    printf '%s\n' "$models" >"$snap"
-    report ok "models $e" "$count models recorded" count="$count"
+  seen=${snap%.txt}.changed
+  if [[ -s $snap ]] && (( $(date +%s) - $(stat -c %Y -- "$snap") < models_every )); then
+    :
+  elif ! models=$(eng_models "$e") || [[ -z $models ]]; then
+    [[ -s $snap ]] || { report ok "models $e" "could not read its model list yet"; continue; }
+    touch -- "$snap" # asked; try again after the interval, not on every run
+  elif [[ ! -s $snap ]]; then
+    mkdir -p -- "${snap%/*}" && printf '%s\n' "$models" >"$snap"
   else
-    added=$(comm -13 "$snap" <(printf '%s\n' "$models") | tr '\n' ' ' | sed 's/[[:space:]]*$//')
-    removed=$(comm -23 "$snap" <(printf '%s\n' "$models") | tr '\n' ' ' | sed 's/[[:space:]]*$//')
-    if [[ -z $added && -z $removed ]]; then
-      report ok "models $e" "$count models (unchanged)" count="$count"
-    else
+    added=$(LC_ALL=C comm -13 "$snap" - <<<"$models" 2>/dev/null | paste -sd' ' -)
+    removed=$(LC_ALL=C comm -23 "$snap" - <<<"$models" 2>/dev/null | paste -sd' ' -)
+    if [[ -n $added$removed ]]; then
       detail=""
       [[ -n $added ]] && detail+="+${added// / +} "
       [[ -n $removed ]] && detail+="-${removed// / -} "
-      detail="${detail% }: review routing in docs/engines.md"
-      cp -p -- "$snap" "$snap.prev" 2>/dev/null || true
-      printf '%s\n' "$models" >"$snap"
-      report warn "models $e" "changed: $detail" count="$count" added="$added" removed="$removed"
+      printf '%s\n' "${detail% }" >"$seen"
+      cp -p -- "$snap" "$snap.prev" 2>/dev/null
     fi
+    printf '%s\n' "$models" >"$snap"
+  fi
+  count=$(grep -c . -- "$snap")
+  if [[ -s $seen ]] && (( $(date +%s) - $(stat -c %Y -- "$seen") < models_warn )); then
+    report warn "models $e" "changed $(date -r "$seen" '+%m-%d %H:%M'): $(<"$seen"): review routing in docs/engines.md" count="$count"
+  else
+    report ok "models $e" "$count models" count="$count"
   fi
 done
 if [[ -n $json ]]; then

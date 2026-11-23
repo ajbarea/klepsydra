@@ -50,62 +50,38 @@ eng_model() { # ENGINE KIND
 }
 
 # Available model IDs for ENGINE, one per line, sorted.
-eng_models() { # ENGINE
+eng_models() { # ENGINE: the model ids ENGINE offers now, sorted, one a line
+  eng_models_raw "$1" | grep -v '^[[:space:]]*$' | LC_ALL=C sort -u
+  (( ${PIPESTATUS[0]} == 0 ))
+}
+
+# Each engine's own list: agy asks its server (`agy models`, about a second);
+# Copilot's is the list its CLI cached at its last start (data.db, read-only),
+# so no login token is read here. FLEET_<ENGINE>_MODELS (one id a line) stands in, for tests.
+eng_models_raw() { # ENGINE
+  local fake
+  case $1 in
+    agy) fake=${FLEET_AGY_MODELS-} ;;
+    copilot) fake=${FLEET_COPILOT_MODELS-} ;;
+    *) return 1 ;;
+  esac
+  if [[ -n $fake ]]; then printf '%s\n' "$fake"; return; fi
+  eng_has "$1" || return 1
   case $1 in
     agy)
-      if [[ -n ${FLEET_AGY_MODELS_FILE:-} && -r $FLEET_AGY_MODELS_FILE ]]; then
-        cat "$FLEET_AGY_MODELS_FILE"
-        return
-      fi
-      if [[ -n ${FLEET_AGY_MODELS:-} ]]; then
-        printf '%s\n' "$FLEET_AGY_MODELS" | sort -u
-        return
-      fi
-      eng_has agy || return 1
       timeout "${FLEET_MODELS_TIMEOUT:-10}" "$(eng_bin agy)" models 2>/dev/null |
-        awk 'NF > 0 && $0 !~ /^(Fetching|\.\.\.)/ { print $1 }' | grep -v '^[[:space:]]*$' | sort -u
+        awk -F'\t' 'NF >= 2 && $1 ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ { print $1 }'
       ;;
     copilot)
-      if [[ -n ${FLEET_COPILOT_MODELS_FILE:-} && -r $FLEET_COPILOT_MODELS_FILE ]]; then
-        cat "$FLEET_COPILOT_MODELS_FILE"
-        return
-      fi
-      if [[ -n ${FLEET_COPILOT_MODELS:-} ]]; then
-        printf '%s\n' "$FLEET_COPILOT_MODELS" | sort -u
-        return
-      fi
-      eng_has copilot || return 1
-      local cdir=${COPILOT_CONFIG_DIR:-$HOME/.copilot} token=""
-      if [[ -f $cdir/config.json ]]; then
-        token=$(sed -e 's/^[[:space:]]*\/\/.*//' "$cdir/config.json" 2>/dev/null |
-          jq -r '.authTokens[]?.token // empty' 2>/dev/null | head -n 1)
-      fi
-      if [[ -n $token ]]; then
-        local api_models
-        api_models=$(timeout "${FLEET_MODELS_TIMEOUT:-5}" curl -fsS \
-          -H "Authorization: Bearer $token" \
-          -H "Editor-Version: vscode/1.95.0" \
-          -H "User-Agent: GitHubCopilot/1.0" \
-          https://api.githubcopilot.com/models 2>/dev/null | jq -r '.data[]?.id // empty' 2>/dev/null | sort -u)
-        if [[ -n $api_models ]]; then
-          printf '%s\n' "$api_models"
-          return
-        fi
-      fi
-      if [[ -f $cdir/data.db ]] && command -v python3 >/dev/null 2>&1; then
-        python3 -c "import sqlite3, json, sys
-try:
-    c = sqlite3.connect(sys.argv[1])
-    r = c.execute(\"SELECT value FROM app_state WHERE key='copilot-available-models'\").fetchone()
-    if r:
-        for m in json.loads(r[0]):
-            mid = m.get('id')
-            if mid and mid != 'auto': print(mid)
-except Exception: pass
-" "$cdir/data.db" 2>/dev/null | sort -u
-      fi
+      local db=${COPILOT_CONFIG_DIR:-$HOME/.copilot}/data.db
+      [[ -r $db ]] || return 1
+      timeout "${FLEET_MODELS_TIMEOUT:-10}" python3 -I -c 'import json, sqlite3, sys, urllib.parse
+c = sqlite3.connect("file:" + urllib.parse.quote(sys.argv[1]) + "?mode=ro", uri=True)
+r = c.execute("SELECT value FROM app_state WHERE key = ?", ("copilot-available-models",)).fetchone()
+for m in json.loads(r[0]) if r else []:
+    if isinstance(m, dict) and m.get("id") not in (None, "auto"):
+        print(m["id"])' "$db" 2>/dev/null
       ;;
-    *) return 1 ;;
   esac
 }
 

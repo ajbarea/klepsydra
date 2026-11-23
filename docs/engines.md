@@ -42,18 +42,19 @@ claim against the code, the lexicon or the row before you edit anything.
 
 ### Model discovery and routing review
 
-`fleet doctor` monitors the available model lists on `agy` and `Copilot`
-(persisted in `$FLEET_STATE/models-agy.txt` and `$FLEET_STATE/models-copilot.txt`).
-When vendor offerings change, doctor reports a warning:
+`fleet doctor` keeps each engine's model list in
+`$FLEET_STATE/models-agy.txt` and `models-copilot.txt`: agy's from `agy models`,
+Copilot's from the list its CLI cached at its last start (`~/.copilot/data.db`).
+It asks at most every 6 hours (`FLEET_MODELS_EVERY_S`). A change is a warning for
+3 days (`FLEET_MODELS_WARN_S`), so the doctor timer does not clear it unread:
 
-    warn models agy: changed: +gemini-4-neon: review routing in docs/engines.md
+    warn models agy: changed 11-25 09:10: +gemini-4-neon: review routing in docs/engines.md
 
-When a new frontier model appears (such as the Gemini 4 Neon watch):
-1. **Empirical benchmark first.** Vendor self-reports do not substitute for
-   testing on real repo workloads (qualifier sweeps, doc linting, deep research).
-2. **Review routing.** If the new model demonstrates reliability without
-   hallucinations or premature tool denies, update `eng_order()` and `eng_model()`
-   in `fleet/engines.sh` and document the evidence in the routing table above.
+When a new model appears:
+1. **Measure it on our own work first.** A vendor's benchmarks are not evidence
+   for this fleet: run it on real items (qualifier sweeps, doc lint, research).
+2. **Then review routing.** If it holds up, update `eng_order()` and
+   `eng_model()` in `fleet/engines.sh` and record the evidence in the table above.
 
 ### Briefing a lane
 
