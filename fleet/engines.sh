@@ -52,7 +52,7 @@ eng_model() { # ENGINE KIND
 # Available model IDs for ENGINE, one per line, sorted.
 eng_models() { # ENGINE: the model ids ENGINE offers now, sorted, one a line
   eng_models_raw "$1" | grep -v '^[[:space:]]*$' | LC_ALL=C sort -u
-  (( ${PIPESTATUS[0]} == 0 ))
+  (( PIPESTATUS[0] == 0 ))
 }
 
 # Each engine's own list: agy asks its server (`agy models`, about a second);
@@ -69,11 +69,13 @@ eng_models_raw() { # ENGINE
   eng_has "$1" || return 1
   case $1 in
     agy)
-      timeout "${FLEET_MODELS_TIMEOUT:-10}" "$(eng_bin agy)" models 2>/dev/null |
-        awk -F'\t' 'NF >= 2 && $1 ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ { print $1 }'
+      # Whole, or not at all: a listing cut short by an error would read as models gone.
+      local out
+      out=$(timeout "${FLEET_MODELS_TIMEOUT:-10}" "$(eng_bin agy)" models 2>/dev/null) || return 1
+      awk -F'\t' 'NF >= 2 && $1 ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ { print $1 }' <<<"$out"
       ;;
     copilot)
-      local db=${COPILOT_CONFIG_DIR:-$HOME/.copilot}/data.db
+      local db=${COPILOT_HOME:-$HOME/.copilot}/data.db # Copilot's own variable for its folder
       [[ -r $db ]] || return 1
       timeout "${FLEET_MODELS_TIMEOUT:-10}" python3 -I -c 'import json, sqlite3, sys, urllib.parse
 c = sqlite3.connect("file:" + urllib.parse.quote(sys.argv[1]) + "?mode=ro", uri=True)

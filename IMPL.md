@@ -15,7 +15,11 @@ Push: `git push origin feat/model-watch-513:feat/model-watch-513`. Never push to
     holds 3 days (FLEET_MODELS_WARN_S, a models-<e>.changed file).
   - One sort/comm collation (LC_ALL=C); the parsers tested on real `agy models` output and a
     real-schema data.db.
-- 12 cases pass in isolation.
+- Opus r2 (fresh reader) fixes: SC2004/SC2016 (CI lint); agy's failing or partial listing now
+  fails whole (awk was last in the pipe, so an error read as models gone); one .asked stamp sets
+  the interval for every attempt, so a lister that never succeeded is not asked every run; a list
+  unread for two intervals is a warning; COPILOT_HOME (Copilot's own variable); atomic snapshot.
+- 16 cases pass in isolation; doctor.sh and engines.sh shellcheck clean.
 
 ## Next
 - CI green, fresh-reader verify, merge (restore main's IMPL.md first).

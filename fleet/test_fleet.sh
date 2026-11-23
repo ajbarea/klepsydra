@@ -3679,7 +3679,26 @@ check "doctor: #513 a model gone is a warning too" "$(mdoc $'gemini-3.8-flash-hi
   "warn models agy: changed WHEN: -claude-sonnet-4-6: review routing in docs/engines.md"
 check "doctor: #513 within FLEET_MODELS_EVERY_S the list is not asked again" \
   "$(mdoc $'only-one' FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0; cat "$models_dir/models-agy.txt")" $'ok   models agy: 2 models\ngemini-3.8-flash-high\ngemini-4-neon'
+rm -f -- "$models_dir/models-agy.asked"
+# A lister that fails: asked once an interval, its list kept whole, and said once it is stale.
+printf '%s\n' '#!/usr/bin/env bash' "echo x >>'$work/agy-calls'" 'printf "gemini-3.8-flash-high\tGemini\n"' 'exit 1' >"$work/fail-agy"
+chmod +x "$work/fail-agy"
+: >"$work/agy-calls"; rm -f -- "$models_dir/models-agy.asked"
+check "doctor: #513 a listing that fails partway changes nothing (not read as models gone)" \
+  "$(mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0; cat "$models_dir/models-agy.txt")" $'ok   models agy: 2 models\ngemini-3.8-flash-high\ngemini-4-neon'
+mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0 >/dev/null
+mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0 >/dev/null
+check "doctor: #513 and is asked once within FLEET_MODELS_EVERY_S, failed or not" "$(wc -l <"$work/agy-calls")" "1"
+touch -d '-3 hours' -- "$models_dir/models-agy.txt" "$models_dir/models-agy.asked"
+check "doctor: #513 a list unread for two intervals says so" \
+  "$(mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0 | sed -E 's/since [0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/since WHEN/')" \
+  "warn models agy: not read since WHEN (its listing failed): changes go unseen"
+rm -rf -- "${models_dir:?}"; mkdir -p "$models_dir"; : >"$work/agy-calls"
+mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 >/dev/null
+check "doctor: #513 with no list yet, a failing lister is not asked on every run" \
+  "$(mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600; wc -l <"$work/agy-calls")" $'ok   models agy: its model list has not been read yet\n1'
 # The parsers, on what the engines really print and store (agy `agy models` 11-23; Copilot CLI 1.0 data.db).
+# shellcheck disable=SC2016 # the stub's $1 is its own
 printf '%s\n' '#!/usr/bin/env bash' '[[ $1 == models ]] || exit 2' "printf 'Fetching available models...\\n'" \
   "printf 'gemini-3.8-flash-high\\tGemini 3.8 Flash (High)\\nclaude-sonnet-4-6\\tClaude Sonnet 4.6 (Thinking)\\ngpt-oss-120b-medium\\tGPT-OSS 120B (Medium)\\n'" \
   >"$work/fake-agy"
@@ -3692,9 +3711,9 @@ c = sqlite3.connect(sys.argv[1]); c.execute("CREATE TABLE app_state (key TEXT PR
 c.execute("INSERT INTO app_state VALUES (?, ?)", ("copilot-available-models", json.dumps([{"id": "auto"}, {"id": "gpt-5.2", "name": "GPT-5.2"}, {"id": "claude-haiku-4.5"}])))
 c.commit()' "$work/copilot-home/data.db"
 check "doctor: #513 Copilot's cached list gives its ids, without auto" \
-  "$(FLEET_COPILOT=/bin/true COPILOT_CONFIG_DIR="$work/copilot-home" bash -c '. "$1/engines.sh"; eng_models copilot' _ "$here")" $'claude-haiku-4.5\ngpt-5.2'
+  "$(FLEET_COPILOT=/bin/true COPILOT_HOME="$work/copilot-home" bash -c '. "$1/engines.sh"; eng_models copilot' _ "$here")" $'claude-haiku-4.5\ngpt-5.2'
 check "doctor: #513 Copilot with no cache gives nothing and fails" \
-  "$(FLEET_COPILOT=/bin/true COPILOT_CONFIG_DIR="$work/none" bash -c '. "$1/engines.sh"; eng_models copilot; echo "rc=$?"' _ "$here")" "rc=1"
+  "$(FLEET_COPILOT=/bin/true COPILOT_HOME="$work/none" bash -c '. "$1/engines.sh"; eng_models copilot; echo "rc=$?"' _ "$here")" "rc=1"
 check "recover leaves a finished agent alone and relaunches the lost one" \
   "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | sed 's/ (.*//')" $'finished: d\nwould recover: e'
 # #261 review 4: d's finish is recorded; AJ resumes it in its pane (the same id,
