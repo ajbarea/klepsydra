@@ -3294,6 +3294,15 @@ ctx_file "$p" 900000 t1
 mover "$noon"
 check "#515: a session no brief registered (AJ's own) is never asked" "$(grep -c '^SUBMIT' "$work/ctxun.log") $(wc -c <"$work/moved")" "0 0"
 t kill-window -t "$p" 2>/dev/null; rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"
+refused() { # RC: move_tries and move_failed set after a move refused with RC, from the service's own helpers
+  bash -c 'declare -A move_tries move_failed last asked fresh_failed due seen_on note; NOW=100
+    eval "$(sed -n "/^moved() {/,/^}/p;/^forget() {/p;/^move_refused() {/,/^}/p" "$1")"
+    move_refused "%7" "$2"; echo "${move_tries[%7]:-0} ${move_failed[%7]:-none}"' _ "$here/resume-at-reset.sh" "$1"
+}
+check "#515 review: a move AJ refused before it started costs nothing; a launch he undid waits as a second failure; any other failure counts once" \
+  "$(refused 1) | $(refused 4) | $(refused 3)" "0 none | 2 100 | 1 100"
+check "#515 review: every kind of move hands its refusals to that one rule" \
+  "$(grep -c 'move_refused "$p" "$rc"' "$here/resume-at-reset.sh")" "3"
 check "#515: the wall warns at the same budget the resume service acts on" \
   "$(grep -oE 'CONTEXT_BUDGET = [0-9]+' "$here/../src/fleet/ledger.js" | grep -oE '[0-9]+')" "$(bash -c '. "$1/lib.sh"; echo "$FLEET_CONTEXT_BUDGET"' _ "$here")"
 

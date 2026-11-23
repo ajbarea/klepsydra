@@ -30,8 +30,13 @@ Push: `git push origin feat/context-budget-515:feat/context-budget-515`. Never p
   no session drop (1). hooks 610/0, node 586/0, shellcheck clean (reduced mode = main's findings).
 - Tests need a warm-up pass: an idle pane's first pass turns Remote Control on and returns.
 
+## Round 3 (fresh reader): one Should-fix, fixed
+- A relaunch AJ undid (fresh rc 4) counted as one try (the other kinds: two), and rc 1 as a
+  failure: the refusal rule is now one helper, move_refused, that back, pre, limit and context
+  call (unit test over rc 1/3/4, plus a check that every kind calls it). A `held` ask is recorded.
+
 ## Next
-1. Fresh reader round 3; rewrite PR body (claim drift); CI; merge when clean.
+1. Fresh verify pass on the round-3 fix; rewrite PR body (claim drift); CI; merge when clean.
 
 ## Verify
 - Isolated block: sed -n '/^echo "#515: the context budget: checkpoint/,/^check "#515: the wall warns/p'

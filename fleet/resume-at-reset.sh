@@ -461,6 +461,16 @@ launching() { # PANE: launch.sh is starting it (a marker under 15 min old)
 }
 
 # Apply the result RC (and NEW pane) of PANE's move of KIND, CTX as spawn got it.
+# A move that did not happen (RC from fresh or heph_move), one rule for every
+# kind: AJ typed before it started (1) costs nothing; a launch AJ undid (4) cost
+# a session, so it waits as after a second failure; anything else is a failure.
+move_refused() { # PANE RC
+  (( $2 == 1 )) && return 0
+  moved "$1"
+  (( $2 == 4 && move_tries[$1] < 2 )) && move_tries[$1]=2
+  return 0
+}
+
 done_move() { # PANE KIND RC NEW CTX
   local p=$1 kind=$2 rc=$3 new=$4 a b c d got
   local e
@@ -475,9 +485,7 @@ done_move() { # PANE KIND RC NEW CTX
         fi
         moved "$p" "$new"
       else
-        (( rc == 1 )) || moved "$p"
-        # A launch AJ undid (4) cost a session: wait as after a second failure.
-        (( rc == 4 && move_tries[$p] < 2 )) && move_tries[$p]=2
+        move_refused "$p" "$rc"
         if [[ $kind == back ]]; then
           flog WARN "could not move back to the preferred account; trying again later" pane="$p" to="$b" orchestrator="$c" why="$rc" tries="${move_tries[$p]:-0}"
           # A worker that stopped for the move (READY-TO-MOVE) waits on nothing:
@@ -496,11 +504,7 @@ done_move() { # PANE KIND RC NEW CTX
           moved "$p" "$new"
           ;;
         1 | 4)
-          # A launch that AJ undid (4) cost a session: wait as after a failure.
-          if (( rc == 4 )); then
-            moved "$p"
-            (( move_tries[$p] < 2 )) && move_tries[$p]=2
-          fi
+          move_refused "$p" "$rc"
           flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc"
           ;;
         *)
@@ -546,10 +550,10 @@ done_move() { # PANE KIND RC NEW CTX
           moved "$p" "$new"
           ;;
         *)
-          # Refused (AJ typed, the pane was busy) or failed: the old session
-          # stays, and a later pass asks it again.
-          moved "$p"
-          flog WARN "context budget: the fresh session did not start; the old one stays" pane="$p" name="$a" why="$rc"
+          # Refused or failed: the old session stays, and a later pass (held by
+          # move_hold_ok) relaunches it, with no second ask.
+          move_refused "$p" "$rc"
+          flog WARN "context budget: the fresh session did not start; the old one stays" pane="$p" name="$a" why="$rc" tries="${move_tries[$p]:-0}"
           ;;
       esac
       ;;
@@ -753,7 +757,7 @@ one() { # PANE
       got=$(inbox_deliver "$p" "$ask")
       rm -f -- "${ask:?}"
       case $got in
-        sent | queued)
+        sent | queued | held) # held: in the box unsent; once sent, its turn is the checkpoint
           checkpointed[$p]="$cur_sid $cp_stamp"
           flog WARN "context budget: asked the worker to write its resume state and stop" pane="$p" name="$inbox_name" tokens="$cur_toks" budget="$FLEET_CONTEXT_BUDGET" result="$got"
           ;;
