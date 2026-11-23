@@ -407,7 +407,7 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
                 }
                 if let Ok(v) = serde_json::to_value(snapshot) {
                     crate::phone::publish(&app, &v);
-                    app.state::<Fleet>().publish(v);
+                    app.state::<Fleet>().publish(for_wall(v));
                 }
             }
             wait = POLL;
@@ -415,6 +415,15 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
             klepsydra_fleet::ledger::lock(&stamp).stamp_alive(unix_now());
         }
     });
+}
+
+/// Snapshot `v` as the wall reads it: with `native`, so its cards offer a
+/// pane action only where launch::target() finds the pane.
+fn for_wall(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.insert("native".into(), Value::Bool(crate::launch::NATIVE));
+    }
+    v
 }
 
 /// Show the card wall with session `focus`'s card in view. The wall is made
@@ -505,6 +514,13 @@ mod tests {
         ] {
             assert_eq!(session_of(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn the_walls_snapshot_says_whether_the_app_reaches_tmux_itself() {
+        let v = for_wall(serde_json::json!({"sessions": [{"session_id": "a"}]}));
+        assert_eq!(v["native"], Value::Bool(cfg!(not(windows))));
+        assert_eq!(v["sessions"][0]["session_id"], "a");
     }
 
     #[test]

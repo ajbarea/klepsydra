@@ -19,6 +19,14 @@ test("the menu is offered only to a live session in klepsydra's tmux with a know
 test("the menu mirrors launch::target(): strings and numbers of the right type, or no menu", () => {
   const live = { ...fleet, status: "working" };
   assert.equal(sessionActions(live).menu, true);
+  // Through wsl.exe (the Windows app) target_on() needs the session's distro.
+  const noDistro = {
+    "no distro": { ...live, distro: undefined },
+    "distro null": { ...live, distro: null },
+    "distro not a string": { ...live, distro: 1 },
+  };
+  for (const [what, s] of Object.entries(noDistro)) assert.deepEqual(sessionActions(s, false), { menu: false, interrupt: false }, what);
+  for (const [what, s] of Object.entries(noDistro)) assert.deepEqual(sessionActions(s), { menu: false, interrupt: false }, `${what}, no flag`);
   const broken = {
     "no pane": { ...live, tmux: { socket: fleet.tmux.socket } },
     "pane not a string": { ...live, tmux: { ...fleet.tmux, pane: 3 } },
@@ -33,20 +41,28 @@ test("the menu mirrors launch::target(): strings and numbers of the right type, 
     "start a string": { ...live, claude: { pid: 7, start: "9" } },
     "start negative": { ...live, claude: { pid: 7, start: -9 } },
   };
-  for (const [what, s] of Object.entries(broken)) assert.deepEqual(sessionActions(s), { menu: false, interrupt: false }, what);
+  for (const native of [false, true]) {
+    for (const [what, s] of Object.entries(broken)) assert.deepEqual(sessionActions(s, native), { menu: false, interrupt: false }, `${what} ${native}`);
+  }
 });
 
-test("a native Linux session, which records no distro, gets the menu: the launcher call judges the distro", () => {
+test("on native Linux (the snapshot's native flag) a session records no distro and still gets the menu", () => {
   const live = { ...fleet, status: "working" };
-  for (const distro of [undefined, null]) {
-    assert.deepEqual(sessionActions({ ...live, distro }), { menu: true, interrupt: true }, `distro ${distro}`);
+  for (const distro of [undefined, null, 1, "Ubuntu"]) {
+    assert.deepEqual(sessionActions({ ...live, distro }, true), { menu: true, interrupt: true }, `distro ${distro}`);
   }
+  assert.deepEqual(sessionActions({ ...live, distro: null }, "true"), { menu: false, interrupt: false }, "only a true flag");
+  assert.equal(sessionActions({ ...live, distro: null, tmux: { socket: "/tmp/tmux-1001/default", pane: "%3" } }, true).menu, false,
+    "still only in klepsydra's tmux");
 });
 
 test("a model card carries its actions and the menu button's accessible name", () => {
   const c = card({ session_id: "a", status: "working", ...fleet, where: { repo: "r" } }, {}, Date.now());
   assert.equal(c.actions.menu, true);
   assert.equal(c.menuLabel, `Session actions for ${c.name}`);
+  const linux = { session_id: "a", status: "working", ...fleet, distro: null };
+  assert.equal(card(linux, {}, Date.now()).actions.menu, false, "through wsl.exe");
+  assert.equal(card(linux, {}, Date.now(), null, true).actions.menu, true, "the card passes the native flag on");
 });
 
 test("the confirm names the character, the repo and what happens", () => {

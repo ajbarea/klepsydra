@@ -592,7 +592,8 @@ check_pane() { # socket pane pid start
 # The top-level window of process `pid` that the window manager manages: the
 # one with WM_STATE, which a minimized window keeps (xfwm4 unmaps it, so a
 # visible-only search misses it, and an unmanaged leader window takes
-# windowactivate with exit 0). Without xprop, the visible window alone.
+# windowactivate with exit 0). Without xprop, or when no window of it reports
+# WM_STATE (a window manager that sets none), the visible window alone.
 managed_window() { # pid
   local wid
   if command -v xprop >/dev/null 2>&1; then
@@ -603,7 +604,6 @@ managed_window() { # pid
         return 0
       fi
     done < <(xdotool search --pid "$1" 2>/dev/null)
-    return 1
   fi
   wid=$(xdotool search --onlyvisible --pid "$1" 2>/dev/null | head -n1)
   [[ -n $wid ]] && printf '%s' "$wid"

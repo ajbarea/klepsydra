@@ -14,20 +14,21 @@ export const FLEET_SOCKET = "klepsydra";
 
 /**
  * Whether session `s` names a tmux pane and a known Claude process as
- * launch::target() reads them; pane_args() refuses a zero pid. The distro is
- * the launcher call's to judge: a native Linux session has none.
+ * launch::target_on() reads them: the Windows app needs the session's
+ * distro, and on a native Linux build (`native`, the snapshot's flag) a
+ * session has none. pane_args() refuses a zero pid.
  */
-export function paneKnown(s) {
+export function paneKnown(s, native = false) {
   const uint = (n, max) => Number.isInteger(n) && n >= 0 && n <= max;
   const str = (v) => typeof v === "string";
-  const named = str(s?.tmux?.socket) && str(s?.tmux?.pane);
+  const named = str(s?.tmux?.socket) && str(s?.tmux?.pane) && (str(s?.distro) || native === true);
   const known = uint(s?.claude?.pid, 0xffff_ffff) && s.claude.pid > 0 && uint(s?.claude?.start, Number.MAX_SAFE_INTEGER);
   return named && known;
 }
 
 /** Whether session `s` runs in klepsydra's tmux with a known Claude process: the panes the launcher types into. */
-export function inFleet(s) {
-  return paneKnown(s) && s.tmux.socket.split("/").pop() === FLEET_SOCKET;
+export function inFleet(s, native = false) {
+  return paneKnown(s, native) && s.tmux.socket.split("/").pop() === FLEET_SOCKET;
 }
 
 /**
@@ -35,8 +36,8 @@ export function inFleet(s) {
  * klepsydra's tmux whose Claude process is known (the launcher refuses the rest);
  * Interrupt only while it works.
  */
-export function sessionActions(s) {
-  const menu = s?.status !== "ended" && inFleet(s);
+export function sessionActions(s, native = false) {
+  const menu = s?.status !== "ended" && inFleet(s, native);
   return { menu, interrupt: menu && s.status === "working" };
 }
 

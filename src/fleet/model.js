@@ -338,9 +338,9 @@ export function stripItems(sessions, cast, nowMs, before, speaking = null) {
 }
 
 /** Whether the card can jump to the session's terminal, and why not: by its name, or by its tmux pane and Claude process. */
-function jumpable(s) {
+function jumpable(s, native) {
   if (s.status === "ended") return { enabled: false, why: "session ended" };
-  if (!s.name && !paneKnown(s)) return { enabled: false, why: "no session name yet" };
+  if (!s.name && !paneKnown(s, native)) return { enabled: false, why: "no session name yet" };
   return { enabled: true, why: null };
 }
 
@@ -609,14 +609,14 @@ export function engineInfo(engine, model) {
   };
 }
 
-/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
-export function card(s, cast, nowMs, request = null) {
+/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown, and `native` its flag for a native Linux app, which reaches tmux itself. */
+export function card(s, cast, nowMs, request = null, native = false) {
   const who = identity(s, cast);
   const wrapup = wrapupLine(s, request, nowMs);
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
-  const jump = jumpable(s);
+  const jump = jumpable(s, native);
   const marks = crewMarks(crew);
   const eng = s.engine ? s.engine.trim().toLowerCase() : (s.session_id ? "claude" : null);
   const rawModel = s.model?.display_name || s.model?.id || (typeof s.model === "string" ? s.model : null) || s.statusline?.model?.display_name || s.statusline?.model?.id || null;
@@ -682,8 +682,8 @@ export function card(s, cast, nowMs, request = null) {
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump,
     clear: s.status === "ended" || s.status === "silent",
-    actions: sessionActions(s),
-    wrapupRoute: sessionRoute(s),
+    actions: sessionActions(s, native),
+    wrapupRoute: sessionRoute(s, native),
     wrapup,
     remote: remoteLink(s.remote_url),
     // The account it runs on; the wall shows it only while cards differ in it (accountsDiffer).

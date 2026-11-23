@@ -75,12 +75,17 @@ fn distro_ok(d: &str) -> bool {
 }
 
 /// Whether this build runs the launcher itself rather than through wsl.exe.
-const NATIVE: bool = cfg!(not(windows));
+/// The wall gets it with each snapshot (fleet.rs `for_wall`).
+pub const NATIVE: bool = cfg!(not(windows));
 
-/// A session's distro as its record has it: null on native Linux, which has
-/// no WSL_DISTRO_NAME.
-pub fn recorded_distro(s: &Value) -> Option<String> {
-    s.get("distro").and_then(Value::as_str).map(String::from)
+/// Session `s`'s distro as its record has it, on a native Linux build
+/// (`native`) or through wsl.exe: the inner None on native Linux, which has
+/// no WSL_DISTRO_NAME; the outer None through wsl.exe, where a record without
+/// one names no session klepsydra can reach. The wall's `paneKnown` (end.js)
+/// judges the same way.
+pub fn session_distro(s: &Value, native: bool) -> Option<Option<String>> {
+    let distro = s.get("distro").and_then(Value::as_str).map(String::from);
+    (distro.is_some() || native).then_some(distro)
 }
 
 /// wsl.exe's `-d DISTRO` for a session's `distro`, the one check every call
@@ -244,10 +249,7 @@ fn target_on(snapshot: &Value, id: &str, native: bool) -> Option<Target> {
     let s = klepsydra_fleet::lookup::session(snapshot, id)?;
     let tmux = s.get("tmux")?;
     let claude = s.get("claude")?;
-    let distro = recorded_distro(s);
-    if distro.is_none() && !native {
-        return None;
-    }
+    let distro = session_distro(s, native)?;
     Some(Target {
         socket: tmux.get("socket")?.as_str()?.into(),
         pane: tmux.get("pane")?.as_str()?.into(),
@@ -694,7 +696,7 @@ fn explorer_opened(said: Result<String, String>) -> Result<String, String> {
 pub async fn open_folder(app: tauri::AppHandle, id: String) -> Result<String, String> {
     let (dir, distro) = app
         .state::<crate::fleet::Fleet>()
-        .with_latest(|v| crate::folder::folder_of(v, &id))
+        .with_latest(|v| crate::folder::folder_of(v, &id, NATIVE))
         .flatten()
         .ok_or("klepsydra does not know this session's folder.")?;
     let args = folder_args(&dir, distro.as_deref())?;
@@ -737,7 +739,7 @@ pub async fn open_github(
 ) -> Result<String, String> {
     let (url, distro) = app
         .state::<crate::fleet::Fleet>()
-        .with_latest(|v| crate::folder::github_of(v, &id, branch))
+        .with_latest(|v| crate::folder::github_of(v, &id, branch, NATIVE))
         .flatten()
         .ok_or("klepsydra does not know this session's GitHub page.")?;
     let args = github_args(&url, distro.as_deref())?;
@@ -1834,10 +1836,11 @@ mod tests {
                 );
             }
         }
-        let (dir, distro) = crate::folder::folder_of(&snap, "n").expect("its folder");
+        let (dir, distro) = crate::folder::folder_of(&snap, "n", true).expect("its folder");
         assert_eq!(folder_args(&dir, distro.as_deref()).is_ok(), NATIVE);
         for branch in [false, true] {
-            let (url, distro) = crate::folder::github_of(&snap, "n", branch).expect("its page");
+            let (url, distro) =
+                crate::folder::github_of(&snap, "n", branch, true).expect("its page");
             assert_eq!(
                 github_args(&url, distro.as_deref()).is_ok(),
                 NATIVE,

@@ -894,8 +894,9 @@ exit 0
 EOF
 cat >"$lbin/.xprop" <<'EOF'
 #!/usr/bin/env bash
-# xprop -id WID WM_STATE: 4242 is in state XPROP_STATE (Normal by default); any other window has none.
-if [[ $2 == 4242 ]]; then
+# xprop -id WID WM_STATE: 4242 is in state XPROP_STATE (Normal by default,
+# none for a window manager that sets no WM_STATE); any other window has none.
+if [[ $2 == 4242 && ${XPROP_STATE:-Normal} != none ]]; then
   printf 'WM_STATE(WM_STATE):\n\t\twindow state: %s\n\t\ticon window: 0x0\n' "${XPROP_STATE:-Normal}"
 else
   printf 'WM_STATE:  not found.\n'
@@ -990,8 +991,14 @@ for state in Normal Iconic; do
     "$rc $(grep windowactivate "$XDO_LOG" | tr '\n' '|')" "0 windowactivate 4242|"
 done
 : >"$XDO_LOG"
-out=$(lx env XDO_PID="$cparent" XPROP_STATE=Withdrawn bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+# A withdrawn window is unmapped, so the visible-only search misses it too.
+out=$(lx env XDO_PID="$cparent" XDO_HIDDEN=1 XPROP_STATE=Withdrawn bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
 check "linux jump: a withdrawn window is not raised" "$rc $(grep -c windowactivate "$XDO_LOG")" "0 0"
+# A window manager that sets no WM_STATE: the visible window, as without xprop.
+: >"$XDO_LOG"
+out=$(lx env XDO_PID="$cparent" XPROP_STATE=none bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: no window reports WM_STATE: the visible window is raised, never the leader" \
+  "$rc $(grep windowactivate "$XDO_LOG" | tr '\n' '|')" "0 windowactivate 4242|"
 rm -f "$lbin/xprop"
 rm -f "$lbin/xdotool"
 out=$(lx bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?

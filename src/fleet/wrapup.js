@@ -27,8 +27,8 @@ export const AFTER_TURN_ROUTES = ["type", "by_hand"];
 export const route = (status, fleet, reason = null) =>
   (status === "working" && reason === AFTER_TURN ? AFTER_TURN_ROUTES : ROUTES[status])?.[fleet ? 0 : 1] ?? null;
 
-/** How session `s` gets the request, judged as the app judges it when it asks. */
-export const sessionRoute = (s) => route(s?.status, inFleet(s), s?.reason ?? null);
+/** How session `s` gets the request, judged as the app judges it when it asks (`native`: the snapshot's flag). */
+export const sessionRoute = (s, native = false) => route(s?.status, inFleet(s, native), s?.reason ?? null);
 
 /** The confirm's groups, in the order the app asks. */
 export const GROUPS = [

@@ -355,8 +355,12 @@ test("a card holds what the wall shows", () => {
     assert.deepEqual(card(session({ ...inTmux, [missing]: null }), CAST, NOW).jump,
       { enabled: false, why: "no session name yet" }, `without ${missing}`);
   }
-  assert.deepEqual(card(session({ ...inTmux, distro: null }), CAST, NOW).jump, { enabled: true, why: null },
-    "a native Linux session records no distro and is found by its pane");
+  for (const distro of [null, undefined, 1]) {
+    assert.deepEqual(card(session({ ...inTmux, distro }), CAST, NOW).jump, { enabled: false, why: "no session name yet" },
+      `through wsl.exe an unnamed session needs its distro (${distro})`);
+    assert.deepEqual(card(session({ ...inTmux, distro }), CAST, NOW, null, true).jump, { enabled: true, why: null },
+      `a native Linux session records no distro and is found by its pane (${distro})`);
+  }
   assert.deepEqual(card(session({ ...inTmux, claude: { pid: 0, start: 1 } }), CAST, NOW).jump,
     { enabled: false, why: "no session name yet" }, "the launcher refuses a zero pid");
   assert.deepEqual(card(session({ ...inTmux, status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
