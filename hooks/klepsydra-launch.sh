@@ -51,38 +51,46 @@ COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .git
 AGY_ASK=${KLEPSYDRA_AGY_ASK:-30} # seconds for one agy listing; a launch asks with less
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
-# Runtime folder: sourced from fleet/lib.sh if available, else local fallback (#517).
-if ! declare -f runtime_dir >/dev/null; then
-  _lib=${KLEPSYDRA_FLEET_LIB:-}
-  if [[ -z $_lib ]]; then
-    for _c in "$(dirname "$(readlink -f "$0" 2>/dev/null || echo .)")/../fleet/lib.sh" \
-              "$(dirname "$(readlink -f "${FLEET_BIN:-${HOME:-}/.local/bin}/fleet" 2>/dev/null || echo /none)")/lib.sh" \
-              "${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/lib.sh"; do
-      [[ -f $_c ]] && { _lib=$_c; break; }
-    done
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
+# The folder for the locks and stamps every caller must share: one per boot in
+# ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and used only
+# while it and the folder above it are ours and not symlinks. Sets LOCK_DIR, or
+# empties it and fails; never waits, never prints. Not XDG_RUNTIME_DIR: a WSL
+# boot sets it before logind makes it, and the overlay's shells may lack it, so
+# callers would split between two locks (#517). Making a known boot's folder
+# removes the earlier boots' ones.
+lock_dir() {
+  local base=${KLEPSYDRA_STATE:-} boot="" run old
+  LOCK_DIR=""
+  if [[ -z $base ]]; then
+    if [[ -n ${HOME:-} ]]; then base=$HOME
+    else local HOME; unset HOME; base=~; fi # bash reads the password file's home
+    base=$base/.local/state/klepsydra
   fi
-  if [[ -n $_lib && -f $_lib ]]; then
-    # shellcheck source=fleet/lib.sh
-    . "$_lib"
-  else
-    runtime_dir() {
-      local d=${XDG_RUNTIME_DIR:-} m
-      while [[ $d == */ ]]; do d=${d%/}; done
-      if [[ -n $d && -d $d && ! -L $d && -O $d ]]; then
-        m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
-        if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
-          printf '%s\n' "$d"; return 0
-        fi
-      fi
-      printf '/tmp\n'
-    }
+  while [[ $base == */ ]]; do base=${base%/}; done
+  [[ $base == /* ]] || return 1
+  { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null # builtin: no process
+  [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown
+  run=$base/run-$boot
+  if [[ ! -e $run && ! -L $run ]]; then
+    [[ -e $base || -L $base ]] || { mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>/dev/null
+    [[ -d $base && -O $base && ! -L $base ]] || return 1
+    if mkdir -m 700 -- "$run" 2>/dev/null && [[ $boot != unknown ]]; then
+      for old in "$base"/run-*; do
+        [[ ${old##*/} =~ ^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ && $old != "$run" && -d $old && ! -L $old ]] &&
+          rm -rf -- "${old:?}" 2>/dev/null
+      done
+    fi
   fi
-fi
-RUN_DIR=$(runtime_dir)
-LOCK=$RUN_DIR/klepsydra-launch-$UID.lock
+  [[ -d $base && -O $base && ! -L $base && -d $run && -O $run && ! -L $run ]] || return 1
+  LOCK_DIR=$run
+}
+# --- end lock dir ---
+lock_dir
+LOCK=${LOCK_DIR:+$LOCK_DIR/klepsydra-launch-$UID.lock}
 PROC_ROOT=/proc
 # A tab opened but not yet attached: "EPOCH KEY", KEY its socket args and target.
-PENDING=$RUN_DIR/klepsydra-tab-pending-$UID
+PENDING=${LOCK_DIR:+$LOCK_DIR/klepsydra-tab-pending-$UID}
 PENDING_FOR=30
 # A socket path safe to hand wt.exe, which splits its arguments at ";".
 SOCKET_RE='^/[A-Za-z0-9._/-]{1,255}$'
@@ -100,8 +108,15 @@ need() { command -v "$1" >/dev/null 2>&1 || fail "$2"; }
 
 has_client() { [[ -n $(tmux "${@:2}" list-clients -t "$1" -F x 2>/dev/null) ]]; } # target socket-args...
 
+# Stop when lock_dir found no folder of ours to lock in.
+no_lock_dir() {
+  [[ -n $LOCK_DIR ]] && return 0
+  fail "klepsydra's lock folder (${KLEPSYDRA_STATE:-~/.local/state/klepsydra}) is missing, a symlink or not yours, so nothing was started."
+}
+
 # Serialise launches: one tab per fleet even for back-to-back clicks.
 take_lock() { # [what to say when another holds it for 10 s]
+  no_lock_dir
   { exec {LOCKFD}>>"$LOCK"; } 2>/dev/null || fail "Could not open $LOCK."
   flock -w "${KLEPSYDRA_LOCK_WAIT:-10}" "$LOCKFD" || fail "${1:-Another launch is still running.}"
 }
@@ -116,9 +131,9 @@ tab_preflight() {
 # Set for the fleet's own tab: its title is fixed, so Jump can find it.
 TITLE_ARGS=()
 
-# Whether the stamp is ours to use: only our own regular file counts, since in
-# the /tmp fallback another user could plant one, or a FIFO that would block
-# its read under the lock. Anything else there is removed when it is ours.
+# Whether the stamp is ours to use: only our own regular file counts, since a
+# FIFO or a link left there would block its read under the lock. Anything else
+# there is removed when it is ours.
 stamp_usable() {
   [[ -f $PENDING && -O $PENDING && ! -L $PENDING ]] && return 0
   [[ -e $PENDING || -L $PENDING ]] && rm -f -- "$PENDING" 2>/dev/null
@@ -587,12 +602,13 @@ leave_modes() {
 # just have finished.
 own_pane() { # socket pane pid start
   fleet_pane "$@"
-  local file=$RUN_DIR/klepsydra-pane-$UID-${pane#%}.lock
+  no_lock_dir
+  local file=$LOCK_DIR/klepsydra-pane-$UID-${pane#%}.lock
   { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
   flock -n "$PANEFD" || fail "$busy"
   # The fleet's typing lock too (fleet/lib.sh pane_locked, #325), so these keys
   # never land inside a message a fleet script is typing. Its folder is under
-  # HOME, which every caller shares; XDG_RUNTIME_DIR may differ between them.
+  # HOME, which every caller shares, as lock_dir's is.
   local typing=${FLEET_STATE:-$HOME/.local/state/fleet-orchestrator}/locks
   if [[ -d $typing ]]; then
     { exec {TYPEFD}>>"$typing/send-${pane#%}"; } 2>/dev/null || fail "Could not open $typing/send-${pane#%}."

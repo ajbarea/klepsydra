@@ -1,28 +1,26 @@
-# IMPL: #517 launch lock before /run/user exists (agy, Gemini; stop at a PR)
+# IMPL: #517 launch lock before /run/user exists (PR #518, review r1 fixes)
 
 ## Task
-Fix https://github.com/ajbarea/klepsydra/issues/517 (read it and its comment first).
-Root cause: `hooks/klepsydra-launch.sh:54` and `:57` build paths from `${XDG_RUNTIME_DIR:-/tmp}`.
-WSL sets XDG_RUNTIME_DIR=/run/user/1001 at login, but systemd-logind created that folder only
-~6 min after boot, so `flock` on the lock path failed and `fleet recover` lost the worker.
+PR #518 review r1 (~/.local/state/fleet-orchestrator/reports/launch-518-r1.md) was NOT CLEAN:
+B1-B3, S1-S4, N1-N5. Design (Heph, option b): the launch lock, tab-pending stamp, pane
+locks, the fleet hook's write and ask locks and the statusline's prune lock and stamp
+live in one folder that always exists and is ours; only `fleet recover` waits for
+XDG_RUNTIME_DIR, bounded, with one log line.
 
-## Fix shape
-- One helper picks the runtime folder: XDG_RUNTIME_DIR only when it is an existing directory
-  owned by this user and not group/world-writable; else the existing /tmp fallback, keeping the
-  planted-file / FIFO protection described near line 92. Use it for LOCK and PENDING (DRY).
-- Grep the whole repo for other `XDG_RUNTIME_DIR` uses (fleet/, hooks/, src/) and route them
-  through the same rule if they have the same failure.
-- Regression test in the existing hook/fleet test suite: XDG_RUNTIME_DIR set to a missing dir
-  -> launch takes the lock in the fallback; existing dir -> uses it. Mutation-check: flip the
-  existence test and confirm the test goes red, then restore.
+## Shape
+- `lock_dir` (hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh,
+  statusline/klepsydra-statusline.sh, identical block, test-checked): sets LOCK_DIR to
+  `~/.local/state/klepsydra/run-<boot id>` (KLEPSYDRA_STATE, KLEPSYDRA_BOOT_ID seams),
+  mkdir -m 700, -O and ! -L on it and its parent; a known boot's new folder prunes the
+  earlier uuid-named ones. No wait, no output, no lib.sh, no XDG_RUNTIME_DIR.
+- `wait_runtime_dir` (fleet/lib.sh), called by recover.sh under its lock: waits only
+  while the folder is missing; foreign/symlink warned at once; FLEET_RUNTIME_WAIT validated.
+- No systemctl --wait (no timeout of its own).
 
 ## State
-- Slice: runtime directory fallback when XDG_RUNTIME_DIR is nonexistent, missing, or group/world-writable.
-- Done:
-  - Added canonical `runtime_dir` helper in `fleet/lib.sh` with polling loop and timeout fallback (`FLEET_RUNTIME_WAIT:-180`).
-  - `runtime_dir` polls until `$XDG_RUNTIME_DIR` exists and is owned by the user, or systemd user manager finishes startup (`systemctl --user is-system-running --wait`).
-  - Sourced `fleet/lib.sh` in `hooks/klepsydra-launch.sh`, `hooks/klepsydra-fleet.sh`, and `statusline/klepsydra-statusline.sh` instead of duplicating helper.
-  - Wired `runtime_dir >/dev/null` at startup of `fleet/recover.sh` before taking `.recover.lock`.
-  - Added unit tests in `fleet/test_fleet.sh` testing immediate return on existing dir, zero-wait fallback, delayed creation success, and timeout warning fallback.
-  - Fixed timing retry in `hooks/test_launch.sh` for dead pane viewer cleanup.
-- Next: run test suite, commit, push to branch, update PR #518 with review response comment.
+- Done: code, tests in all four suites, README line.
+- Next: full suites under the heavy lock, latency table (scratchpad lat.sh: main 72.3/15.4 ms,
+  05ff079 107.3/50.0 ms hook/statusline), mutation checks, PR body, push
+  HEAD:fix/launch-lock-runtime-dir-517, `fleet done`.
+- Verify: `bash hooks/test_fleet.sh`, `bash statusline/test_statusline.sh`, `make test-launch`,
+  `make test-fleet`, `make shellcheck`.

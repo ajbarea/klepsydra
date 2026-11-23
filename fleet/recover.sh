@@ -21,10 +21,9 @@ for a in "$@"; do
   case $a in --dry-run) dry=1 ;; --no-orchestrator) orch_too=0 ;; *) err "usage: recover.sh [--dry-run] [--no-orchestrator]"; exit 2 ;; esac
 done
 if (( ! dry )); then
-  # Wait for runtime directory at boot before taking the lock (#517)
-  runtime_dir >/dev/null
   exec 9>"$FLEET_STATE/.recover.lock"
   flock -n 9 || { err "another fleet recover is running"; exit 1; }
+  wait_runtime_dir # under the lock, so a second recover is refused at once
 fi
 
 # Every session alive before any launch, as "pane<TAB>session<TAB>in-fleet"

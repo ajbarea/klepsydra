@@ -2,7 +2,7 @@
 # Shared by the fleet scripts: where things live, the log, and how a Claude
 # Code pane's screen is read and typed into. Sourced, never run.
 
-FLEET_STATE=${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}
+FLEET_STATE=${FLEET_STATE:-$HOME/.local/state/fleet-orchestrator}
 FLEET_SOCK=${FLEET_SOCK:-klepsydra}
 FLEET_SESSION=${FLEET_SESSION:-fleet}
 KLEPSYDRA_DIR=${KLEPSYDRA_DIR:-/mnt/c/Users/ajbar/AppData/Local/dev.ajsoftworks.klepsydra}
@@ -27,7 +27,7 @@ prefs_get() { # KEY
 # What every session reads from ~/.claude (both config folders' hooks point
 # there): "repo path, installed name" per entry. install.sh copies them, and
 # doctor checks the copies still match the checkout.
-FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-${HOME:-}/.claude}
+FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
 # shellcheck disable=SC2034 # read by install.sh and doctor.sh
 HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
@@ -56,7 +56,7 @@ err() { printf 'error: %s\n' "$*" >&2; }
 
 # tilde TEXT: TEXT with the home folder read as ~, as doctor prints it and as
 # the phone's report shows it.
-tilde() { local s=${1//"${HOME:-}/"/\~/}; [[ -n ${HOME:-} && $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
+tilde() { local s=${1//"$HOME/"/\~/}; [[ $s == "$HOME" ]] && s="~"; printf '%s' "$s"; }
 # flog LEVEL MESSAGE [KEY=VALUE...]: one JSON line in the fleet log (the
 # klepsydra log's fields: ts, level, target, message, then the event's own),
 # and the same as a plain line on stderr.
@@ -91,51 +91,36 @@ screen() { t capture-pane -e -p -t "$1" 2>/dev/null; }
 # Text with its escapes removed: SGR and other CSI, and OSC 8 links.
 plain() { sed -E $'s/\e\\][^\a\e]*(\a|\e\\\\)//g; s/\e\\[[0-9;?]*[A-Za-z]//g'; }
 
-# Runtime folder: XDG_RUNTIME_DIR only when it exists, is owned by this user
-# and is not group/world-writable; else /tmp (#517).
-# At boot, XDG_RUNTIME_DIR is set by PAM/WSL but created later by systemd-logind.
-# Polls until it exists or the user manager is up, falling back to /tmp only
-# after a timeout (FLEET_RUNTIME_WAIT:-180s), so launches started before it
-# appears do not take a different lock file than launches started after it.
-runtime_dir() {
-  local d=${XDG_RUNTIME_DIR:-} m
+# wait_runtime_dir: what fleet recover does before it launches anyone. A WSL
+# boot sets XDG_RUNTIME_DIR before logind makes the folder and starts the user
+# manager the fleet's scopes run under (#517), so wait up to FLEET_RUNTIME_WAIT
+# seconds (180) for the folder to exist as ours, with one log line while it
+# waits and a warning if it never comes. A folder that is there but not ours,
+# or a symlink, will not change by waiting: warned at once. Unset: no wait.
+# Fails when it gave up; the launches go ahead either way. Polling, since
+# `systemctl --user is-system-running --wait` has no timeout of its own.
+wait_runtime_dir() {
+  local d=${XDG_RUNTIME_DIR:-} wait=${FLEET_RUNTIME_WAIT:-180} tick=${FLEET_RUNTIME_TICK:-1} deadline
+  [[ $tick =~ ^[0-9]{1,3}(\.[0-9]{1,3})?$ && ! $tick =~ ^0+(\.0+)?$ ]] || tick=1
   while [[ $d == */ ]]; do d=${d%/}; done
-  if [[ -n $d ]]; then
-    if [[ ! -d $d || -L $d || ! -O $d ]]; then
-      local timeout=${FLEET_RUNTIME_WAIT:-180}
-      if (( timeout > 0 )); then
-        local deadline=$(( SECONDS + timeout )) logged=0
-        while (( SECONDS < deadline )); do
-          if (( ! logged )); then
-            if declare -f flog >/dev/null; then
-              flog INFO "waiting for runtime directory to appear" dir="$d" timeout="$timeout"
-            else
-              printf 'waiting for runtime directory %s (timeout %ss)...\n' "$d" "$timeout" >&2
-            fi
-            logged=1
-          fi
-          sleep 0.2
-          [[ -d $d && ! -L $d && -O $d ]] && break
-        done
-        if [[ ! -d $d || -L $d || ! -O $d ]]; then
-          if (( logged )); then
-            if declare -f flog >/dev/null; then
-              flog WARN "runtime directory did not appear within timeout; falling back to /tmp" dir="$d" timeout="$timeout"
-            else
-              printf 'warning: runtime directory %s did not appear within %ss; falling back to /tmp\n' "$d" "$timeout" >&2
-            fi
-          fi
-        fi
-      fi
-    fi
-    if [[ -d $d && ! -L $d && -O $d ]]; then
-      m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
-      if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
-        printf '%s\n' "$d"; return 0
-      fi
-    fi
+  [[ -n $d ]] || return 0
+  if [[ ! $wait =~ ^[0-9]{1,6}$ ]]; then
+    flog WARN "FLEET_RUNTIME_WAIT is not a whole number of seconds; waiting 180" value="$wait"
+    wait=180
   fi
-  printf '/tmp\n'
+  wait=$((10#$wait))
+  if [[ ! -e $d && ! -L $d ]] && (( wait > 0 )); then
+    flog INFO "waiting for the runtime folder before launching" dir="$d" timeout_s="$wait"
+    deadline=$(( ${EPOCHREALTIME//[!0-9]/} + wait * 1000000 )) # microseconds: SECONDS ticks whole seconds
+    while [[ ! -e $d && ! -L $d ]] && (( ${EPOCHREALTIME//[!0-9]/} < deadline )); do sleep "$tick"; done
+  fi
+  [[ -d $d && -O $d && ! -L $d ]] && return 0
+  if [[ -e $d || -L $d ]]; then
+    flog WARN "the runtime folder is not this user's own; launching anyway" dir="$d"
+  else
+    flog WARN "the runtime folder did not appear; launching anyway" dir="$d" timeout_s="$wait"
+  fi
+  return 1
 }
 
 # screen_parse SCREEN: what the helpers below read from a capture (with its
@@ -803,8 +788,8 @@ fleet_pane_of() { # SID
 # so each folder in FLEET_ACCOUNTS is one account, the default first. The
 # default folder is used with CLAUDE_CONFIG_DIR unset: set to ~/.claude, Claude
 # Code would look for ~/.claude/.claude.json instead of ~/.claude.json.
-FLEET_DEFAULT_CONFIG=${FLEET_DEFAULT_CONFIG:-${HOME:-}/.claude}
-FLEET_ACCOUNTS=${FLEET_ACCOUNTS:-$FLEET_DEFAULT_CONFIG ${HOME:-}/.claude-rit}
+FLEET_DEFAULT_CONFIG=${FLEET_DEFAULT_CONFIG:-$HOME/.claude}
+FLEET_ACCOUNTS=${FLEET_ACCOUNTS:-$FLEET_DEFAULT_CONFIG $HOME/.claude-rit}
 FLEET_ROOM_PCT=${FLEET_ROOM_PCT:-90} # a five-hour window used past this has no room
 # FLEET_ACCOUNTS is also the workers' preference order (#175): the first folder
 # with room is used, whatever the others' room, so the RIT Team seat (no weekly
@@ -860,7 +845,7 @@ fleet_tasks_max() {
 FLEET_SLICE=${FLEET_SLICE:-fleet.slice}
 # The user units' folder fleet install writes to.
 # shellcheck disable=SC2034 # read by install.sh and doctor.sh
-FLEET_UNIT_DIR=${FLEET_UNITS:-${HOME:-}/.config/systemd/user}
+FLEET_UNIT_DIR=${FLEET_UNITS:-$HOME/.config/systemd/user}
 FLEET_WORKER_SLICE=${FLEET_WORKER_SLICE:-${FLEET_SLICE%.slice}-workers.slice}
 # MiB WSL keeps outside every fleet scope. Measured 2026-11-11 on AJ's PC: WSL's
 # used memory less every fleet scope's kept memory (cgroup_kept_mib) was 847 MiB
@@ -1028,7 +1013,7 @@ fleet_slice_unit() { # DESCRIPTION MAX
 
 # The global config file of config folder DIR.
 config_json() { # DIR
-  if [[ $1 == "$FLEET_DEFAULT_CONFIG" ]]; then printf '%s' "${FLEET_DEFAULT_JSON:-${HOME:-}/.claude.json}"; else printf '%s' "$1/.claude.json"; fi
+  if [[ $1 == "$FLEET_DEFAULT_CONFIG" ]]; then printf '%s' "${FLEET_DEFAULT_JSON:-$HOME/.claude.json}"; else printf '%s' "$1/.claude.json"; fi
 }
 
 # The account logged in at config folder DIR (its accountUuid), or nothing.
@@ -1363,7 +1348,7 @@ config_env() { # DIR
 NO_KEY_ENV='-u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE '
 # The config folder headless jobs run on: its settings.json holds an apiKeyHelper
 # that prints the ant profile's short-lived access token.
-FLEET_HEADLESS_CONFIG=$(nodir "${FLEET_HEADLESS_CONFIG:-${HOME:-}/.claude-api}")
+FLEET_HEADLESS_CONFIG=$(nodir "${FLEET_HEADLESS_CONFIG:-$HOME/.claude-api}")
 FLEET_HEADLESS_PROFILE=${FLEET_HEADLESS_PROFILE:-ldqis}
 # Whether settings (a file, or inline JSON as --settings takes it) set an API
 # credential: an apiKeyHelper, or one of the variables above in its env block.
@@ -1627,7 +1612,7 @@ newest_impl() { # TRANSCRIPT
   fi
   while IFS=$'\t' read -r base p; do
     # shellcheck disable=SC2088,SC2016 # the transcript's text: a literal ~ or $HOME to expand here
-    case $p in '~/'*) p=${HOME:-}/${p#'~/'} ;; '$HOME/'*) p=${HOME:-}/${p#'$HOME/'} ;; '${HOME}/'*) p=${HOME:-}/${p#'${HOME}/'} ;; /*) ;; *) p=$base/$p ;; esac
+    case $p in '~/'*) p=$HOME/${p#'~/'} ;; '$HOME/'*) p=$HOME/${p#'$HOME/'} ;; '${HOME}/'*) p=$HOME/${p#'${HOME}/'} ;; /*) ;; *) p=$base/$p ;; esac
     [[ -f $p && ! -L $p ]] && own=$p
   done < <(jq -r 'select(.type == "assistant" and .cwd != null) | .cwd as $c | .message.content[]? | select(.type == "tool_use")
       | if (.name | IN("Write", "Edit", "MultiEdit")) then (.input.file_path | strings | select(test("(^|/)IMPL\\.md$")) | [$c, .])

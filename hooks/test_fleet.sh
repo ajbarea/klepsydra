@@ -54,10 +54,15 @@ check() {
 }
 
 cp "$here/../src/fleet/themes/kourai.json" "$work/test-cast.json"
-# Sourced with the suite's runtime folder, so its LOCK and PRUNE_STAMP are the
-# suite's, never the caller's live ones (#230 reviews 2 and 3).
+# The boot the hook sees unless a test says otherwise, whatever runs it.
+boot_file="$work/boot_id"
+printf '%s\n' 0b6e1c5a-1111-4222-8333-444455556666 >"$boot_file"
+# Every run keeps its locks in the suite's own state folder, and the sourced
+# hook is on the same boot as fire, so its LOCK and PRUNE_STAMP are the suite's,
+# never the caller's live ones (#230 reviews 2 and 3).
+export KLEPSYDRA_STATE="$work/state" KLEPSYDRA_BOOT_ID="$boot_file"
 # shellcheck source=hooks/klepsydra-fleet.sh
-XDG_RUNTIME_DIR=$work source "$hook"
+source "$hook"
 
 echo "where"
 
@@ -183,9 +188,8 @@ file="$dir/fleet/$S.json"
 now=1792353000
 wt="$repos/klepsydra/.claude/worktrees/fleet"
 
-# The boot and host the hook sees unless a test says otherwise, whatever runs it.
-boot_file="$work/boot_id"
-printf '%s\n' 0b6e1c5a-1111-4222-8333-444455556666 >"$boot_file"
+# The host the hook sees unless a test says otherwise, whatever runs it
+# (its boot is boot_file, above).
 
 # Fire one fixture event at the hook, edited by an optional jq filter, as
 # Claude Code would from the terminal held by pid 500.
@@ -194,7 +198,7 @@ fire() { # fixture [filter] [VAR=value...]
   shift; (( $# )) && shift
   jq -c --arg cwd "$wt" "if .cwd then .cwd = \$cwd else . end | $filter" "$fixtures/$fixture" |
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
-      KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" KLEPSYDRA_CAST="$work/test-cast.json" \
+      KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work/no-runtime" KLEPSYDRA_CAST="$work/test-cast.json" \
       KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" \
       FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= KLEPSYDRA_ASK_WATCH=0 "$@" bash "$hook"
 }
@@ -606,13 +610,84 @@ check "an end for an unknown session writes nothing" "$([[ -e $file ]] && echo w
 fire session-start.json '.session_title = "fleet-plan"'
 check "a custom title names it" "$(field .name)" '"fleet-plan"'
 
+echo "lock folder (#517)"
+# One folder per boot in the state folder, whatever XDG_RUNTIME_DIR says, so a
+# launch before logind made the runtime folder and one after share one lock.
+lsid() { printf '%08d-0000-4000-8000-0000000005170' "$1" | cut -c1-36; }
+lrun="$work/state/run-0b6e1c5a-1111-4222-8333-444455556666"
+check "#517: the sourced hook locks in this boot's folder" "$LOCK" "$lrun/klepsydra-fleet-$UID.lock"
+check "#517: it and the folder above it are mode 0700" "$(stat -c %a -- "$lrun" "$work/state" | paste -sd' ')" "700 700"
+# shellcheck disable=SC2016 # the inner shell expands its own variables
+ld() { # [env args...]: lock_dir's status and LOCK_DIR, in a fresh shell on boot_file's boot
+  env "$@" bash -c 'source "$1" </dev/null; lock_dir; printf "%s %s" "$?" "$LOCK_DIR"' _ "$hook"
+}
+mkdir -m 775 "$work/gw-run"
+check "#517 B2: a missing, a foreign or a group-writable XDG_RUNTIME_DIR moves no lock" \
+  "$(ld XDG_RUNTIME_DIR="$work/none"); $(ld XDG_RUNTIME_DIR=/usr); $(ld XDG_RUNTIME_DIR="$work/gw-run"); $(ld -u XDG_RUNTIME_DIR)" \
+  "0 $lrun; 0 $lrun; 0 $lrun; 0 $lrun"
+check "#517: by default the folder is HOME's" "$(ld -u KLEPSYDRA_STATE HOME="$work/h")" \
+  "0 $work/h/.local/state/klepsydra/run-0b6e1c5a-1111-4222-8333-444455556666"
+# Without HOME, bash's ~ is the password file's home. Only the block runs, with
+# a mkdir that only logs and fails, so the real home is never written.
+pwhome=$(getent passwd "$UID" | cut -d: -f6)
+# shellcheck disable=SC2016 # the inner shell expands its own variables
+check "#517: with HOME unset the folder is the password file's home's" \
+  "$(env -u HOME -u KLEPSYDRA_STATE bash -c 'eval "$(sed -n "/^# --- lock dir/,/^# --- end lock dir ---\$/p" "$1")"
+    mkdir() { printf "%s\n" "${@: -1}"; return 1; }; lock_dir; echo "rc=$? [$LOCK_DIR]"' _ "$hook" |
+    grep -c "^$pwhome/.local/state\(/klepsydra\(/run-0b6e1c5a-1111-4222-8333-444455556666\)\?\)\?$\|^rc=1 \[\]$")" "2"
+check "#517: a relative KLEPSYDRA_STATE is refused" "$(ld KLEPSYDRA_STATE=state)" "1 "
+ln -s "$work/state" "$work/state-link"
+check "#517 N4: a symlinked state folder is refused" "$(ld KLEPSYDRA_STATE="$work/state-link")" "1 "
+mkdir -m 700 "$work/s-runlink" "$work/s-target"
+ln -s "$work/s-target" "$work/s-runlink/run-0b6e1c5a-1111-4222-8333-444455556666"
+check "#517 N4: a symlinked boot folder is refused, even to a folder of ours" "$(ld KLEPSYDRA_STATE="$work/s-runlink")" "1 "
+# /tmp is root's: lock_dir neither locks in it nor makes a folder there. The
+# boot is a fresh one, so no other run's folder is touched.
+fboot="$work/boot-foreign"; cat /proc/sys/kernel/random/uuid >"$fboot"; fb=$(<"$fboot")
+if [[ ! -O /tmp ]]; then
+  check "#517 N4: a foreign state folder is refused, and nothing is made in it" \
+    "$(ld KLEPSYDRA_BOOT_ID="$fboot" KLEPSYDRA_STATE=/tmp)|$([[ -e /tmp/run-$fb ]] && echo made)" "1 |"
+  mkdir -m 700 "/tmp/run-$fb"
+  check "#517 N4: and refused with this boot's folder already in it" \
+    "$(ld KLEPSYDRA_BOOT_ID="$fboot" KLEPSYDRA_STATE=/tmp)" "1 "
+  rm -rf -- "/tmp/run-${fb:?}"
+else echo "skip: /tmp is this user's, so it is no foreign folder"; fi
+# A boot folder someone else owns: only root can make one.
+mkdir -m 700 "$work/s-foreign"
+if sudo -n install -d -m 700 -o root "$work/s-foreign/run-0b6e1c5a-1111-4222-8333-444455556666" 2>/dev/null; then
+  check "#517 N4: a foreign boot folder is refused" "$(ld KLEPSYDRA_STATE="$work/s-foreign")" "1 "
+  sudo -n rm -rf -- "${work:?}/s-foreign/run-0b6e1c5a-1111-4222-8333-444455556666"
+else echo "skip: no sudo to make a foreign boot folder"; fi
+# Making this boot's folder removes the earlier boots' ones, and nothing else.
+pb="$work/s-prune"; mkdir -m 700 "$pb" && mkdir -m 700 "$pb/run-$(lsid 1)" "$pb/run-notes" "$pb/run-unknown" "$pb/keep" "$work/p-target"
+: >"$pb/run-$(lsid 1)/klepsydra-fleet-$UID.lock"; : >"$work/p-target/x"
+ln -s "$work/p-target" "$pb/run-$(lsid 2)"
+check "#517: a new boot's folder is made" "$(ld KLEPSYDRA_STATE="$pb")" "0 $pb/run-0b6e1c5a-1111-4222-8333-444455556666"
+check "#517: and an earlier boot's goes, but not a look-alike, a link or its target" \
+  "$(for n in "run-$(lsid 1)" run-notes run-unknown keep "run-$(lsid 2)"; do [[ -e $pb/$n || -L $pb/$n ]] && printf '%s ' kept || printf '%s ' gone; done; [[ -e $work/p-target/x ]] && echo target)" \
+  "gone kept kept kept kept target"
+printf 'not a boot id\n' >"$work/boot-bad"
+check "#517: an unreadable boot locks in run-unknown, and removes no boot's folder" \
+  "$(ld KLEPSYDRA_STATE="$pb" KLEPSYDRA_BOOT_ID="$work/boot-bad") $([[ -d $pb/run-0b6e1c5a-1111-4222-8333-444455556666 ]] && echo kept)" "0 $pb/run-unknown kept"
+# The hook: never waits, never prints, and with no folder of its own writes nothing.
+s=$EPOCHREALTIME
+out=$(fire user-prompt.json ".session_id = \"$(lsid 3)\"" XDG_RUNTIME_DIR="$work/not-yet" 2>&1); rc=$?
+e=$EPOCHREALTIME
+check "#517 B1: a runtime folder not made yet: the hook writes at once, silently" \
+  "$rc|$out|$([[ -f $dir/fleet/$(lsid 3).json ]] && echo written)|$(( (${e/./} - ${s/./}) < 3000000 ))" "0||written|1"
+out=$(fire user-prompt.json ".session_id = \"$(lsid 4)\"" KLEPSYDRA_STATE="$work/state-link" 2>&1); rc=$?
+check "#517: no lock folder of its own: exit 0, silent, nothing written" \
+  "$rc|$out|$([[ -e $dir/fleet/$(lsid 4).json ]] && echo written)" "0||"
+# B3: an installed copy stands alone, with no fleet/lib.sh anywhere to find.
+mkdir -p "$work/solo"; cp "$hook" "$work/solo/klepsydra-fleet.sh"
+out=$(hook="$work/solo/klepsydra-fleet.sh" fire user-prompt.json ".session_id = \"$(lsid 5)\"" FLEET_BIN="$work/none" HOME="$work/h" 2>&1); rc=$?
+check "#517 B3: a copy alone in a folder still writes, silently" \
+  "$rc|$out|$([[ -f $dir/fleet/$(lsid 5).json ]] && echo written)" "0||written"
+
 echo "bad input"
-out=$(KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" bash "$hook" <"$fixtures/malformed.json"); rc=$?
+out=$(KLEPSYDRA_DIR="$dir" bash "$hook" <"$fixtures/malformed.json"); rc=$?
 check "malformed: exit 0" "$rc" "0"
 check "malformed: silent" "$out" ""
-out=$(KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work/nonexistent" bash "$hook" <"$fixtures/malformed.json"); rc=$?
-check "missing runtime dir: exit 0" "$rc" "0"
-check "missing runtime dir: silent" "$out" ""
 fire user-prompt.json '.session_id = "../../evil"'
 check "a session id that is not a uuid writes nothing" "$(find "$work" -name 'evil*' | wc -l)" "0"
 out=$(fire user-prompt.json '.' KLEPSYDRA_DIR=/proc/nonexistent); rc=$?
@@ -870,7 +945,7 @@ prune_fleet "$pd" "$pnow"
 check "empty beat of a dead old session, empty orphan beat and empty tmp are pruned" \
   "$(for n in $(id 1).json $(id 1).beat $(id 30).beat $(id 31).json.7.tmp; do [[ -e $pd/fleet/$n ]] && printf kept || printf gone; done)" "gonegonegonegone"
 
-stamp="$work/klepsydra-fleet-$UID.pruned"
+stamp="$LOCK_DIR/klepsydra-fleet-$UID.pruned"
 reset_prune; rm -f "$stamp"
 out=$(fire session-start.json ".session_id = \"$(id 12)\"" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$pnow"); rc=$?
 check "session start prunes" "$([[ -e $pd/fleet/$(id 1).json ]] && echo kept || echo deleted)" "deleted"
@@ -1388,6 +1463,13 @@ check "sourceable from a set -e script" \
   "$(KLEPSYDRA_DIR=/x/dev.ajsoftworks.klepsydra bash -ec 'source "$1"; echo "$KLEPSYDRA_DIR"' _ "$hook")" \
   "/x/dev.ajsoftworks.klepsydra"
 check "dir block identical in the statusline" "$(block "$hook")" "$(block "$here/../statusline/klepsydra-statusline.sh")"
+lblock() { sed -n '/^# --- lock dir/,/^# --- end lock dir ---$/p' "$1"; }
+check "lock dir block present" "$([[ -n "$(lblock "$hook")" ]] && echo yes)" "yes"
+check "lock dir block identical in the launcher" "$(lblock "$hook")" "$(lblock "$here/klepsydra-launch.sh")"
+check "lock dir block identical in the statusline" "$(lblock "$hook")" "$(lblock "$here/../statusline/klepsydra-statusline.sh")"
+# shellcheck disable=SC2016 # literal names, as the scripts spell them
+check "#517 B3: the hooks and statusline source nothing and read no XDG_RUNTIME_DIR" \
+  "$(cat "$hook" "$here/klepsydra-launch.sh" "$here/../statusline/klepsydra-statusline.sh" | grep -v '^[[:space:]]*#' | grep -cE '^[[:space:]]*(\.|source)[[:space:]]+["$/~]|XDG_RUNTIME_DIR|runtime_dir')" "0"
 pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
 check "proc stat block present" "$([[ -n "$(pblock "$hook")" ]] && echo yes)" "yes"
 check "proc stat block identical in the launcher" "$(pblock "$hook")" "$(pblock "$here/klepsydra-launch.sh")"
@@ -2258,7 +2340,7 @@ askfire() { # fixture [filter] [VAR=value...]; in pane %7 of the fleet socket
   fire "$fx" ".session_id = \"$A\" | $f" TMUX="$work/sock/klepsydra,1,0" TMUX_PANE=%7 "$@"
 }
 watch_ask_run() { # [max seconds]
-  env KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" KLEPSYDRA_NOW="$now" KLEPSYDRA_ASK_TICK=0.05 \
+  env KLEPSYDRA_DIR="$dir" KLEPSYDRA_BOOT_ID="$boot_file" KLEPSYDRA_NOW="$now" KLEPSYDRA_ASK_TICK=0.05 \
     KLEPSYDRA_ASK_MAX="${1:-20}" bash "$hook" watch-ask "$A"
 }
 now=1792360000 askfire session-start.json
@@ -2277,7 +2359,7 @@ cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
 now=1792360025 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1 KLEPSYDRA_ASK_MAX=2 KLEPSYDRA_ASK_TICK=0.05
 sleep 0.5
 check "a real watcher leaves the fleet lock free" \
-  "$(pgrep -f "watch-ask $A" >/dev/null && echo running) $(flock -w 0 "$work/klepsydra-fleet-$UID.lock" true && echo free)" "running free"
+  "$(pgrep -f "watch-ask $A" >/dev/null && echo running) $(flock -w 0 "$LOCK" true && echo free)" "running free"
 for _ in $(seq 40); do pgrep -f "watch-ask $A" >/dev/null || break; sleep 0.1; done
 check "and it ends at its time limit" "$(pgrep -f "watch-ask $A" >/dev/null && echo running || echo ended)" "ended"
 mv -f -- "$work/setsid.stub" "$stub/setsid"

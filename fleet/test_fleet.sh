@@ -4178,6 +4178,21 @@ flock "$FLEET_STATE/.recover.lock" sleep 3 &
 sleep 0.3
 check "a second run while one holds the lock refuses" "$(bash "$here/recover.sh" --no-orchestrator 2>&1; echo "rc=$?")" $'error: another fleet recover is running\nrc=1'
 wait
+# At a boot the wait for the runtime folder runs under the lock (#517), so a
+# second run is refused at once, not after the wait.
+XDG_RUNTIME_DIR="$work/rec-not-yet" FLEET_RUNTIME_WAIT=10 FLEET_RUNTIME_TICK=0.1 LAUNCH=/bin/false \
+  bash "$here/recover.sh" --no-orchestrator >/dev/null 2>"$work/rec-wait.err" &
+rw=$!
+for _ in $(seq 100); do grep -q 'waiting for the runtime folder' "$work/rec-wait.err" && break; sleep 0.1; done
+s=$EPOCHREALTIME
+out=$(XDG_RUNTIME_DIR="$work/rec-not-yet" FLEET_RUNTIME_WAIT=10 LAUNCH=/bin/false bash "$here/recover.sh" --no-orchestrator 2>&1; echo "rc=$?")
+e=$EPOCHREALTIME
+check "#517: a second run while one waits for the runtime folder is refused at once" \
+  "$out|$(( (${e/./} - ${s/./}) < 2000000 ))" $'error: another fleet recover is running\nrc=1|1'
+mkdir -m 700 "$work/rec-not-yet"
+wait "$rw"
+check "#517: and the first goes on once the folder comes, after one log line" \
+  "$(grep -c 'waiting for the runtime folder' "$work/rec-wait.err") $(grep -c 'did not appear' "$work/rec-wait.err")" "1 0"
 rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session"; : >"$REGISTRY"; unset FLEET_BOOT_ID FLEET_PROC FLEET_PROJECTS
 
 echo "the orchestrator's identity across /clear and tmux restarts (#173 review)"
@@ -4856,30 +4871,42 @@ FLEET_LOG_MAX=200 FLEET_TARGET=fleet::test bash -c ". '$here/lib.sh'; for i in 1
 check "past its cap the log is renamed, and only the newest four are kept" \
   "$(find "${FLEET_LOG%/*}" -name 'fleet_*.log' | wc -l)" "4"
 
-echo "runtime_dir and boot wait (#517)"
-krd_dir="$work/real_run"
-mkdir -p "$krd_dir" && chmod 700 "$krd_dir"
-check "#517: existing runtime dir returns immediately" \
-  "$(XDG_RUNTIME_DIR="$krd_dir" runtime_dir)" "$krd_dir"
-
-check "#517: missing runtime dir with wait=0 falls back to /tmp" \
-  "$(XDG_RUNTIME_DIR="$work/missing_run" FLEET_RUNTIME_WAIT=0 runtime_dir 2>/dev/null)" "/tmp"
-
-krd_delayed="$work/delayed_run"
-rm -rf "$krd_delayed"
-( sleep 0.3; mkdir -p "$krd_delayed" && chmod 700 "$krd_delayed" ) &
-krd_out=$(XDG_RUNTIME_DIR="$krd_delayed" FLEET_RUNTIME_WAIT=2 runtime_dir 2>&1)
-check "#517: delayed runtime dir returns once created" \
-  "$(tail -n1 <<<"$krd_out")" "$krd_delayed"
-check "#517: waiting for runtime dir logs message" \
-  "$(grep -c 'waiting for runtime directory' <<<"$krd_out")" "1"
-
-krd_out=$(XDG_RUNTIME_DIR="$work/never_run" FLEET_RUNTIME_WAIT=1 runtime_dir 2>&1)
-check "#517: timed out runtime dir falls back to /tmp" \
-  "$(tail -n1 <<<"$krd_out")" "/tmp"
-check "#517: timed out runtime dir logs warning" \
-  "$(grep -cE 'warning: runtime directory|runtime directory did not appear' <<<"$krd_out")" "1"
-rm -rf "$krd_dir" "$krd_delayed"
+echo "wait_runtime_dir: recover's wait for the boot's runtime folder (#517)"
+# wr VAR=value...: "rc|stderr lines joined by ;|now (under 0.9 s), 1-3s or slow"
+wr() {
+  local s e rc
+  s=$EPOCHREALTIME
+  env "$@" bash -c '. "$1"; wait_runtime_dir' _ "$here/lib.sh" 2>"$work/wr.err"; rc=$?
+  e=$EPOCHREALTIME
+  local us=$(( ${e/./} - ${s/./} )) took=slow
+  if (( us < 900000 )); then took=now; elif (( us >= 1000000 && us < 3000000 )); then took=1-3s; fi
+  printf '%s|%s|%s' "$rc" "$(sed -E 's/^[^ ]+ [^ ]+ //' "$work/wr.err" | paste -sd';')" "$took"
+}
+mkdir -m 700 "$work/wr-own"
+check "#517: unset XDG_RUNTIME_DIR: nothing to wait for" "$(wr -u XDG_RUNTIME_DIR)" "0||now"
+check "#517: a folder of ours: no wait, no line" "$(wr XDG_RUNTIME_DIR="$work/wr-own/")" "0||now"
+( sleep 0.4; mkdir -m 700 "$work/wr-late" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-late" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517: a folder made while it waits: one line, then on" "${out%|*}" "0|INFO waiting for the runtime folder before launching dir=$work/wr-late timeout_s=5"
+check "#517: as soon as it comes" "${out##*|}" "now"
+out=$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1)
+check "#517: never made: gives up at its timeout with a warning" "$out" \
+  "1|INFO waiting for the runtime folder before launching dir=$work/wr-never timeout_s=1;WARN the runtime folder did not appear; launching anyway dir=$work/wr-never timeout_s=1|1-3s"
+check "#517: FLEET_RUNTIME_WAIT=0 gives up at once" "$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=0)" \
+  "1|WARN the runtime folder did not appear; launching anyway dir=$work/wr-never timeout_s=0|now"
+# Waiting cannot make a folder ours: warned at once, whatever the timeout.
+check "#517 N4: a foreign folder is no runtime folder, and no wait" "$(wr XDG_RUNTIME_DIR=/usr FLEET_RUNTIME_WAIT=5)" \
+  "1|WARN the runtime folder is not this user's own; launching anyway dir=/usr|now"
+ln -s "$work/wr-own" "$work/wr-link"
+check "#517 N4: nor a symlink, even to a folder of ours" "$(wr XDG_RUNTIME_DIR="$work/wr-link" FLEET_RUNTIME_WAIT=5)" \
+  "1|WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-link|now"
+for v in abc 1.5 -3 1234567; do
+  check "#517 N1: FLEET_RUNTIME_WAIT=$v is warned about and taken as 180" "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_RUNTIME_WAIT="$v")" \
+    "0|WARN FLEET_RUNTIME_WAIT is not a whole number of seconds; waiting 180 value=$v|now"
+done
+check "#517 N1: a leading zero is still seconds" "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_RUNTIME_WAIT=08)" "0||now"
+rm -rf -- "${work:?}/wr-own" "${work:?}/wr-late" "${work:?}/wr-link"
 
 echo "the suite's own isolation"
 check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""

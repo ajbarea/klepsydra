@@ -849,9 +849,13 @@ Enter closes it, since tmux 3.4 crashes on a focus event to a dead pane (#290);
 once. The `fleet-tmux-watch.timer` runs `fleet recover` when the fleet's server
 dies with a crash record (WSL's crash dump or journal line), also on the next
 boot when WSL shut down after the crash (the watchdog is a systemd timer, not
-the overlay). The overlay itself starts a process only as `wsl.exe`: one launch at a
-time, and one Jump, End or Interrupt per card at a time. Each comes from a
-click, except one call that lists agy's models when the wall first opens.
+the overlay). At a boot, `fleet recover` first waits up to `FLEET_RUNTIME_WAIT`
+seconds (180) for `XDG_RUNTIME_DIR`, which WSL names before logind makes it.
+The overlay itself starts a process only as `wsl.exe`: one launch at a time,
+and one Jump, End or Interrupt per card at a time. Each comes from a click,
+except one call that lists agy's models when the wall first opens. Those locks,
+and the hooks' and status line's, live in `~/.local/state/klepsydra/run-<boot id>`
+(mode 0700), a folder no caller waits for.
 
 Each kourai character's canon colour marks its session twice: its window in
 the tmux status bar and a 4 px left marker on its card's **Open terminal**

@@ -42,36 +42,45 @@ fi
 CAST=${KLEPSYDRA_CAST:-}
 if [[ -z $CAST && -n ${KLEPSYDRA_DIR:-} && -f $KLEPSYDRA_DIR/cast.json ]]; then CAST=$KLEPSYDRA_DIR/cast.json
 elif [[ -z $CAST && -n ${HOME:-} ]]; then CAST=$HOME/.claude/klepsydra-cast.json; fi
-# Runtime folder: sourced from fleet/lib.sh if available, else local fallback (#517).
-if ! declare -f runtime_dir >/dev/null; then
-  _lib=${KLEPSYDRA_FLEET_LIB:-}
-  if [[ -z $_lib ]]; then
-    for _c in "$(dirname "$(readlink -f "$0" 2>/dev/null || echo .)")/../fleet/lib.sh" \
-              "$(dirname "$(readlink -f "${FLEET_BIN:-${HOME:-}/.local/bin}/fleet" 2>/dev/null || echo /none)")/lib.sh" \
-              "${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/lib.sh"; do
-      [[ -f $_c ]] && { _lib=$_c; break; }
-    done
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
+# The folder for the locks and stamps every caller must share: one per boot in
+# ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and used only
+# while it and the folder above it are ours and not symlinks. Sets LOCK_DIR, or
+# empties it and fails; never waits, never prints. Not XDG_RUNTIME_DIR: a WSL
+# boot sets it before logind makes it, and the overlay's shells may lack it, so
+# callers would split between two locks (#517). Making a known boot's folder
+# removes the earlier boots' ones.
+lock_dir() {
+  local base=${KLEPSYDRA_STATE:-} boot="" run old
+  LOCK_DIR=""
+  if [[ -z $base ]]; then
+    if [[ -n ${HOME:-} ]]; then base=$HOME
+    else local HOME; unset HOME; base=~; fi # bash reads the password file's home
+    base=$base/.local/state/klepsydra
   fi
-  if [[ -n $_lib && -f $_lib ]]; then
-    # shellcheck source=fleet/lib.sh
-    . "$_lib"
-  else
-    runtime_dir() {
-      local d=${XDG_RUNTIME_DIR:-} m
-      while [[ $d == */ ]]; do d=${d%/}; done
-      if [[ -n $d && -d $d && ! -L $d && -O $d ]]; then
-        m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
-        if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
-          printf '%s\n' "$d"; return 0
-        fi
-      fi
-      printf '/tmp\n'
-    }
+  while [[ $base == */ ]]; do base=${base%/}; done
+  [[ $base == /* ]] || return 1
+  { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null # builtin: no process
+  [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown
+  run=$base/run-$boot
+  if [[ ! -e $run && ! -L $run ]]; then
+    [[ -e $base || -L $base ]] || { mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>/dev/null
+    [[ -d $base && -O $base && ! -L $base ]] || return 1
+    if mkdir -m 700 -- "$run" 2>/dev/null && [[ $boot != unknown ]]; then
+      for old in "$base"/run-*; do
+        [[ ${old##*/} =~ ^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ && $old != "$run" && -d $old && ! -L $old ]] &&
+          rm -rf -- "${old:?}" 2>/dev/null
+      done
+    fi
   fi
-fi
-RUN_DIR=$(runtime_dir)
-# Every session's hooks run as separate processes, so writes take one lock.
-LOCK=$RUN_DIR/klepsydra-fleet-$UID.lock
+  [[ -d $base && -O $base && ! -L $base && -d $run && -O $run && ! -L $run ]] || return 1
+  LOCK_DIR=$run
+}
+# --- end lock dir ---
+# Every session's hooks run as separate processes, so writes take one lock;
+# without its folder (lock_dir) the hook writes nothing.
+lock_dir
+LOCK=${LOCK_DIR:+$LOCK_DIR/klepsydra-fleet-$UID.lock}
 PROMPT_CHARS=300
 # The events README.md registers this hook on; any other is ignored.
 EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure SubagentStart SubagentStop Stop StopFailure SessionEnd"
@@ -372,7 +381,7 @@ fleet_rows() { # folder fields
 # symlink, and only when `dir` is the overlay's own absolute data dir. Runs
 # under the fleet lock in a few processes however many files there are.
 PRUNE_AFTER=86400
-PRUNE_STAMP=${LOCK%.lock}.pruned
+PRUNE_STAMP=${LOCK:+${LOCK%.lock}.pruned}
 prune_fleet() { # dir now
   local dir=$1 now=$2
   own_data_dir "$dir" || return 1
@@ -1121,7 +1130,8 @@ watch_ask() { # sid
   local sid=$1 file lock text row at socket pane screen asked="" seen=0 misses=0 began now
   [[ $sid =~ $UUID_RE && -n ${KLEPSYDRA_DIR:-} ]] || return 0
   file=$KLEPSYDRA_DIR/fleet/$sid.json
-  { exec {lock}>>"$RUN_DIR/klepsydra-ask-$UID-$sid.lock"; } 2>/dev/null || return 0
+  [[ -n $LOCK_DIR ]] || return 0
+  { exec {lock}>>"$LOCK_DIR/klepsydra-ask-$UID-$sid.lock"; } 2>/dev/null || return 0
   # A watcher on its way out still holds the lock; one still watching keeps it.
   flock -w 10 "$lock" || return 0
   began=$SECONDS
@@ -1151,6 +1161,7 @@ watch_ask() { # sid
 # when the fleet lock stays busy, so the watcher tries again on its next look.
 ask_answered() { # file asked_at now
   local lock new
+  [[ -n $LOCK ]] || return 0
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || { exec {lock}>&-; return 1; }
   new=$(jq -c --argjson asked "$2" --argjson now "$3" "$STATE_DEFS"'
@@ -1273,6 +1284,7 @@ main() {
       [[ -n $account ]] || account=null
     fi
   fi
+  [[ -n $LOCK ]] || return 0
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
 

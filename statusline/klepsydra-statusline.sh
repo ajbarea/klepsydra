@@ -78,36 +78,44 @@ prune_hourly() { # stamp prune dir now
 PRUNE_ENDED_FOR=86400
 PRUNE_DROP_AFTER=$((30 * 86400))
 PRUNE_LITTER_AFTER=86400
-# Runtime folder: sourced from fleet/lib.sh if available, else local fallback (#517).
-if ! declare -f runtime_dir >/dev/null; then
-  _lib=${KLEPSYDRA_FLEET_LIB:-}
-  if [[ -z $_lib ]]; then
-    for _c in "$(dirname "$(readlink -f "$0" 2>/dev/null || echo .)")/../fleet/lib.sh" \
-              "$(dirname "$(readlink -f "${FLEET_BIN:-${HOME:-}/.local/bin}/fleet" 2>/dev/null || echo /none)")/lib.sh" \
-              "${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/lib.sh"; do
-      [[ -f $_c ]] && { _lib=$_c; break; }
-    done
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
+# The folder for the locks and stamps every caller must share: one per boot in
+# ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and used only
+# while it and the folder above it are ours and not symlinks. Sets LOCK_DIR, or
+# empties it and fails; never waits, never prints. Not XDG_RUNTIME_DIR: a WSL
+# boot sets it before logind makes it, and the overlay's shells may lack it, so
+# callers would split between two locks (#517). Making a known boot's folder
+# removes the earlier boots' ones.
+lock_dir() {
+  local base=${KLEPSYDRA_STATE:-} boot="" run old
+  LOCK_DIR=""
+  if [[ -z $base ]]; then
+    if [[ -n ${HOME:-} ]]; then base=$HOME
+    else local HOME; unset HOME; base=~; fi # bash reads the password file's home
+    base=$base/.local/state/klepsydra
   fi
-  if [[ -n $_lib && -f $_lib ]]; then
-    # shellcheck source=fleet/lib.sh
-    . "$_lib"
-  else
-    runtime_dir() {
-      local d=${XDG_RUNTIME_DIR:-} m
-      while [[ $d == */ ]]; do d=${d%/}; done
-      if [[ -n $d && -d $d && ! -L $d && -O $d ]]; then
-        m=$(stat -c %a -- "$d" 2>/dev/null) || m=""
-        if [[ $m =~ ^[0-7]+$ ]] && (( (8#$m & 022) == 0 )); then
-          printf '%s\n' "$d"; return 0
-        fi
-      fi
-      printf '/tmp\n'
-    }
+  while [[ $base == */ ]]; do base=${base%/}; done
+  [[ $base == /* ]] || return 1
+  { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null # builtin: no process
+  [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown
+  run=$base/run-$boot
+  if [[ ! -e $run && ! -L $run ]]; then
+    [[ -e $base || -L $base ]] || { mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>/dev/null
+    [[ -d $base && -O $base && ! -L $base ]] || return 1
+    if mkdir -m 700 -- "$run" 2>/dev/null && [[ $boot != unknown ]]; then
+      for old in "$base"/run-*; do
+        [[ ${old##*/} =~ ^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ && $old != "$run" && -d $old && ! -L $old ]] &&
+          rm -rf -- "${old:?}" 2>/dev/null
+      done
+    fi
   fi
-fi
-RUN_DIR=$(runtime_dir)
-PRUNE_STAMP=$RUN_DIR/klepsydra-readings-$UID.pruned
-PRUNE_LOCK=${PRUNE_STAMP%.pruned}.lock
+  [[ -d $base && -O $base && ! -L $base && -d $run && -O $run && ! -L $run ]] || return 1
+  LOCK_DIR=$run
+}
+# --- end lock dir ---
+lock_dir # no folder: no prune
+PRUNE_STAMP=${LOCK_DIR:+$LOCK_DIR/klepsydra-readings-$UID.pruned}
+PRUNE_LOCK=${PRUNE_STAMP:+${PRUNE_STAMP%.pruned}.lock}
 prune_readings() { # dir now
   local dir=$1 now=$2
   own_data_dir "$dir" || return 1
@@ -364,7 +372,7 @@ fi
 
 # A due prune runs detached, holding a lock taken here, so a render never waits
 # on it and two terminals never prune at once.
-if [[ -n "$KLEPSYDRA_DIR" ]] && own_data_dir "$KLEPSYDRA_DIR" && prune_due "$PRUNE_STAMP" "$now" &&
+if [[ -n "$KLEPSYDRA_DIR" && -n $PRUNE_STAMP ]] && own_data_dir "$KLEPSYDRA_DIR" && prune_due "$PRUNE_STAMP" "$now" &&
   { exec {plock}>>"$PRUNE_LOCK"; } 2>/dev/null; then
   if flock -n "$plock" 2>/dev/null; then
     prune_hourly "$PRUNE_STAMP" prune_readings "$KLEPSYDRA_DIR" "$now" </dev/null >/dev/null 2>&1 &

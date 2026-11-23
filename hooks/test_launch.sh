@@ -63,7 +63,11 @@ for i in "${!args[@]}"; do [[ ${args[i]} == -e ]] && { cmd=("${args[@]:i+1}"); b
 echo $! >>"$WT_PIDS"
 EOF
 chmod +x "$work/bin/wt.exe"
-export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" XDG_RUNTIME_DIR="$work" WSL_DISTRO_NAME=Test
+export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" WSL_DISTRO_NAME=Test
+# Locks live in this boot's folder in the (test) home's state folder, whatever
+# the runtime folder: here one a WSL boot has not made yet (#517).
+export XDG_RUNTIME_DIR="$work/no-runtime"
+ld="$HOME/.local/state/klepsydra/run-$(</proc/sys/kernel/random/boot_id)"
 export KLEPSYDRA_TMUX_SOCKET="$sock" KLEPSYDRA_TMUX_CONF="$here/klepsydra-tmux.conf"
 export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
 # Never the host's systemd: an agent's own scope sets INVOCATION_ID, which
@@ -113,7 +117,7 @@ check "first: one window" "$(windows)" "1"
 check "first: one tab" "$(tabs)" "1"
 check "first: the tab attaches by the socket's path" "$(head -1 "$WT_LOG")" \
   "-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe -d Test -e tmux -S $(t display -p '#{socket_path}') attach -t =fleet"
-check "first: an attached tab leaves no pending stamp" "$([[ -e $work/klepsydra-tab-pending-$UID ]] && echo left)" ""
+check "first: an attached tab leaves no pending stamp" "$([[ -e $ld/klepsydra-tab-pending-$UID ]] && echo left)" ""
 check "first: conf loaded" "$(t show -gv automatic-rename-format)" "#{pane_title}"
 check "first: focus events on" "$(t show -gv focus-events)" "on"
 attach
@@ -583,7 +587,7 @@ check "copy mode, interrupt: out of copy mode" "$(t display -p -t "$p" '#{pane_i
 
 # An End the app gave up on may still be running: a second one is refused.
 : >"$work/fake.log"; p=$(fake)
-exec {held}>>"$work/klepsydra-pane-$UID-${p#%}.lock"; flock -n "$held"
+exec {held}>>"$ld/klepsydra-pane-$UID-${p#%}.lock"; flock -n "$held"
 for verb in end interrupt wrapup; do
   out=$(send "$verb" "$p" 2>&1); rc=$?
   check "pane locked, $verb: exit 1" "$rc" "1"
@@ -716,7 +720,7 @@ check "#273: without the fleet installed it says so" "$rc $out" "1 The fleet com
 
 # Another click holding the lock past its 10 s: the window is selected anyway.
 detach_all; : >"$WT_LOG"
-lock="$work/klepsydra-launch-$UID.lock"
+lock="$ld/klepsydra-launch-$UID.lock"
 ( exec 9>>"$lock"; flock 9; exec sleep 30 ) &
 holder=$!
 for _ in $(seq 100); do flock -n "$lock" true || break; sleep 0.05; done
@@ -736,71 +740,47 @@ check "jump behind a held lock: says no launch" "$out" \
 check "jump behind a held lock: window selected" "$(t display -p -t =fleet: '#{pane_id}')" "$first"
 check "jump behind a held lock: no tab" "$(tabs)" "0"
 
-echo "runtime dir fallback (#517)"
-export FLEET_RUNTIME_WAIT=0
+echo "one lock folder for every launch (#517)"
+# At a WSL boot XDG_RUNTIME_DIR names a folder logind makes minutes later, and
+# the overlay's non-login shells may not have it at all: every launch still
+# takes the one lock in this boot's state folder, never waits, never splits.
 stop_server; detach_all; : >"$WT_LOG"
-fallback_lock="/tmp/klepsydra-launch-$UID.lock"
-rm -f -- "$fallback_lock" "$work/klepsydra-launch-$UID.lock"
-
-# 1. Missing XDG_RUNTIME_DIR falls back to /tmp: holding the fallback lock blocks it,
-# while an existing runtime dir uses its own lock and is not blocked.
-( exec 9>>"$fallback_lock"; flock 9; exec sleep 30 ) &
+lk="$ld/klepsydra-launch-$UID.lock"
+( exec 9>>"$lk"; flock 9; exec sleep 30 ) &
 holder=$!
-for _ in $(seq 100); do flock -n "$fallback_lock" true || break; sleep 0.05; done
-
-out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work/nonexistent" bash "$launch" new "$work/repos" 2>&1); rc=$?
-check "missing runtime dir contends on fallback lock: exit 1" "$rc" "1"
-check "missing runtime dir contends on fallback lock: says so" "$out" "Another launch is still running."
-
-out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work" bash "$launch" new "$work/repos" 2>&1); rc=$?
-check "existing runtime dir ignores fallback lock: exit 0" "$rc" "0"
-
+for _ in $(seq 100); do flock -n "$lk" true || break; sleep 0.05; done
+mkdir -m 700 "$work/run-made"
+s=$EPOCHREALTIME
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work/run-not-yet" bash "$launch" new "$work/repos" 2>&1); rc=$?
+e=$EPOCHREALTIME
+check "#517 B2: before the runtime folder exists, a held launch refuses a second" "$rc|$out" "1|Another launch is still running."
+check "#517 B1: and it never waits for that folder" "$(( (${e/./} - ${s/./}) < 3000000 ))" "1"
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work/run-made" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 B2: once it exists, the same lock refuses it" "$rc|$out" "1|Another launch is still running."
+out=$(env -u XDG_RUNTIME_DIR KLEPSYDRA_LOCK_WAIT=0.1 bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 B2: and so it does for a shell without XDG_RUNTIME_DIR" "$rc|$out" "1|Another launch is still running."
 kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
-rm -f -- "$fallback_lock"
+check "#517 B2: none of them started a session or a tab" "$(windows) $(tabs)" "0 0"
 
-# 2. When the existing dir lock is held, missing XDG_RUNTIME_DIR takes the fallback lock
-# and succeeds; existing XDG_RUNTIME_DIR contends on the held existing lock.
+# The tab-pending stamp is shared the same way: a cold tab opened before the
+# runtime folder exists keeps a launch after it from opening a second tab.
 stop_server; detach_all; : >"$WT_LOG"
-( exec 9>>"$work/klepsydra-launch-$UID.lock"; flock 9; exec sleep 30 ) &
-holder=$!
-for _ in $(seq 100); do flock -n "$work/klepsydra-launch-$UID.lock" true || break; sleep 0.05; done
-
-out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work/nonexistent" bash "$launch" new "$work/repos" 2>&1); rc=$?
-check "missing runtime dir takes fallback lock while existing held: exit 0" "$rc" "0"
-
-out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work" bash "$launch" new "$work/repos" 2>&1); rc=$?
-check "existing runtime dir contends on existing lock: exit 1" "$rc" "1"
-check "existing runtime dir contends on existing lock: says so" "$out" "Another launch is still running."
-
-kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
-rm -f -- "$fallback_lock" "$work/klepsydra-launch-$UID.lock"
-
-# 3. Group-writable runtime dir is untrusted and falls back to /tmp.
-stop_server; detach_all; : >"$WT_LOG"
-gw_dir="$work/gw_runtime"
-mkdir -p "$gw_dir" && chmod 775 "$gw_dir"
-( exec 9>>"$fallback_lock"; flock 9; exec sleep 30 ) &
-holder=$!
-for _ in $(seq 100); do flock -n "$fallback_lock" true || break; sleep 0.05; done
-
-out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$gw_dir" bash "$launch" new "$work/repos" 2>&1); rc=$?
-check "group-writable runtime dir falls back to /tmp lock: exit 1" "$rc" "1"
-check "group-writable runtime dir falls back to /tmp lock: says so" "$out" "Another launch is still running."
-
-kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
-rm -f -- "$fallback_lock"
-rm -rf -- "$gw_dir"
-
-# 4. Cold tab pending stamp is written in /tmp when XDG_RUNTIME_DIR is missing.
-stop_server; detach_all; : >"$WT_LOG"
-fallback_pending="/tmp/klepsydra-tab-pending-$UID"
-rm -f -- "$fallback_pending"
 export WT_DELAY=never
-out=$(XDG_RUNTIME_DIR="$work/nonexistent" bash "$launch" new "$work/repos" 2>&1); rc=$?
-check "missing runtime dir cold tab: exit 0" "$rc" "0"
-check "missing runtime dir cold tab: pending in /tmp" "$([[ -f "$fallback_pending" ]] && echo yes)" "yes"
-rm -f -- "$fallback_pending"
+out=$(XDG_RUNTIME_DIR="$work/run-not-yet" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 B2: a cold tab before the folder exists stamps this boot's folder" \
+  "$rc $([[ -f $ld/klepsydra-tab-pending-$UID ]] && echo stamped)" "0 stamped"
+out=$(XDG_RUNTIME_DIR="$work/run-made" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 B2: and a launch after it sees the stamp: one tab, two windows" "$rc $(tabs) $(windows)" "0 1 2"
 unset WT_DELAY
+rm -f -- "$ld/klepsydra-tab-pending-$UID" # or the next cases' first tab waits on it
+
+# No lock folder of its own: nothing starts, and it says why.
+stop_server; detach_all; : >"$WT_LOG"
+ln -s "$HOME/.local/state/klepsydra" "$work/state-link"
+out=$(KLEPSYDRA_STATE="$work/state-link" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517: no lock folder of its own: new is refused and says why" "$rc|$out|$(windows) $(tabs)" \
+  "1|klepsydra's lock folder ($work/state-link) is missing, a symlink or not yours, so nothing was started.|0 0"
+rm -f -- "$work/state-link"
 
 echo "one tab per fleet"
 stop_server; detach_all; : >"$WT_LOG"
@@ -827,7 +807,7 @@ unset WT_DELAY
 
 echo "a tab that has not attached yet"
 stop_server; detach_all; : >"$WT_LOG"
-pending="$work/klepsydra-tab-pending-$UID"
+pending="$ld/klepsydra-tab-pending-$UID"
 # A cold WSL: the tab attaches after the launcher stops waiting. The launcher's
 # poll runs longer on a loaded machine, so any fixed delay can land inside it
 # and leave no pending stamp; this tab never attaches.
