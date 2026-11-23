@@ -31,6 +31,7 @@
     <span id="new-note" role="status"></span>
     <span id="split-note" role="status"></span>
     <span id="theme-note" role="status"></span>
+    <span id="opacity-note" role="status"></span>
     <div class="bar-right">
       <div class="tools">
         <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
@@ -38,7 +39,7 @@
         <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
         <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
       </div>
-      <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary">+ New session</button><button type="button" id="new-kind" class="primary" popovertarget="new-menu" aria-label="Start another kind of session" title="Start another kind of session" hidden><span aria-hidden="true">▾</span></button></span>
+      <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary"><span class="ico" aria-hidden="true"></span><span class="new-label">+ New session</span><span class="mono" hidden></span></button><button type="button" id="new-kind" class="primary caret" popovertarget="new-menu" aria-expanded="false" aria-label="Other engines" title="Other engines" hidden><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button></span>
       <details class="gear">
         <summary title="View settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg><span class="visually-hidden">View</span></summary>
         <div class="view">
@@ -49,6 +50,7 @@
             <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
           </fieldset>
           <label class="theme-pick" title="How each session looks"><span>Characters</span><select id="theme"></select></label>
+          <label class="opacity-pick" title="The floating gauge's background: 0% shows only its text" hidden><span>Gauge background</span><input id="gauge-opacity" type="range" min="0" max="100" step="5" value="85" aria-valuetext="85%" /><span class="opacity-value" aria-hidden="true">85%</span></label>
         </div>
       </details>
     </div>
@@ -234,12 +236,35 @@
     </article>
   </template>
 
+  <!-- + New session's menu rows (#440): one per engine, built in wall.js from newsession.js. -->
+  <template id="eng-tpl">
+    <div class="eng" role="group">
+      <button type="button" class="eng-h" aria-expanded="false">
+        <span class="ico" aria-hidden="true"></span>
+        <span class="eng-title"><span class="eng-name"></span><span class="rec" hidden>Recommended</span></span>
+        <span class="room"><b></b><span class="room-detail"></span></span>
+        <span class="eng-acct"></span>
+      </button>
+      <div class="eng-fixrow" hidden>
+        <button type="button" class="btn eng-fix" aria-expanded="false"></button>
+        <p class="eng-step" hidden>Run <code></code> in a terminal.</p>
+      </div>
+      <fieldset class="models" hidden><legend class="visually-hidden"></legend></fieldset>
+      <div class="eng-actions" hidden>
+        <button type="button" class="primary eng-start"></button>
+        <button type="button" class="btn eng-default">Set as default</button>
+      </div>
+    </div>
+  </template>
+  <template id="model-tpl">
+    <label class="model"><input type="radio" /><span class="model-name"></span><span class="why"></span></label>
+  </template>
+
   <script type="module" src="fleet/wall.js"></script>
-  <section id="new-menu" popover aria-label="Start an Antigravity session">
-    <h2 class="new-menu-title">Antigravity</h2>
-    <label class="new-menu-model">Model <select id="agy-model"></select></label>
-    <p class="new-menu-hint">On Google's quota, not Claude's. The session starts in the launch folder.</p>
-    <button type="button" id="agy-start" class="primary">Start</button>
+  <section id="new-menu" popover aria-label="Other engines">
+    <div class="mhead" aria-hidden="true"><span>Other engines</span><span>room left now</span></div>
+    <div class="eng-list"></div>
+    <div class="mfoot"><span class="mfoot-why"></span><button type="button" class="btn eng-reset" hidden>Use the last engine</button></div>
   </section>
   <section id="ci" popover aria-label="CI runs">
     <h2 class="ci-title"></h2>

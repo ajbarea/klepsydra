@@ -6,7 +6,7 @@
 // A page loads the default theme with itself and any other the first time it
 // is worn, so opening the wall fetches one theme file, as it fetched one cast.
 import kourai from "./themes/kourai.json" with { type: "json" };
-import { castCharacter, castFiles, ownValue } from "./cast.js";
+import { castCharacter, keeperBase, ownValue } from "./cast.js";
 
 /** Every theme's id and name, the default first (the fleet crate's theme.rs THEMES). */
 export const THEME_LABELS = { kourai: "Kourai", professions: "Professions", dicebear: "DiceBear" };
@@ -58,7 +58,7 @@ export function loadTheme(id) {
 
 /** The empty wall's keeper (#83): the full portrait of the theme's keeper voice, or null. */
 export function keeperOf(theme) {
-  const base = castFiles(castCharacter(theme?.keeper, theme), theme);
+  const base = keeperBase(theme);
   return base && `${base}-full.webp`;
 }
 

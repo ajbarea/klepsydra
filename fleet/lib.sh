@@ -91,49 +91,85 @@ screen() { t capture-pane -e -p -t "$1" 2>/dev/null; }
 # Text with its escapes removed: SGR and other CSI, and OSC 8 links.
 plain() { sed -E $'s/\e\\][^\a\e]*(\a|\e\\\\)//g; s/\e\\[[0-9;?]*[A-Za-z]//g'; }
 
-# The input box of SCREEN (with escapes): the lines between its last two rules
-# (U+2500), the first starting with U+276F. Prints its text, dim text
-# (Claude Code's placeholder and suggestions) and the mark removed, or
-# nothing when the box is empty or not on screen (a menu replaces it).
-input_text() {
-  sed -E $'s/\e\\[2m[^\e]*//g' <<<"$1" | plain | awk '
-    index($0, "────") == 1 { r[++n] = NR }
-    { line[NR] = $0 }
-    END {
-      if (n < 2 || r[n] - r[n - 1] < 2) exit
-      first = line[r[n - 1] + 1]
-      if (index(first, "❯") != 1) exit
-      sub(/^❯(\xc2\xa0| )?/, "", first)
-      out = first
-      for (i = r[n - 1] + 2; i < r[n]; i++) { l = line[i]; sub(/^  /, "", l); out = out " " l }
-      gsub(/\xc2\xa0/, " ", out); sub(/[ \n]+$/, "", out); sub(/^ +/, "", out)
-      printf "%s", out
-    }'
+# screen_parse SCREEN: what the helpers below read from a capture (with its
+# escapes), worked out by one awk and kept until a different SCREEN comes:
+#   SCR_PLAIN  the screen with its escapes removed (plain's output)
+#   ABOVE      the plain lines above the input box's top rule (the whole
+#              screen without one); BELOW those below its bottom rule
+#   SCR_BOX    1 when the input box shows (idle, or typed into), else 0
+#   SCR_INPUT  the box's text: the lines between the last two rules (U+2500),
+#              the first starting with U+276F, with dim text (Claude Code's
+#              placeholder and suggestions) and the mark removed; empty when
+#              the box is empty or not on screen (a menu replaces it)
+# Asking the same capture again costs no process (#492).
+# shellcheck disable=SC2016  # an awk program: its $fields are awk's, never the shell's.
+SCR_AWK='
+  BEGIN {
+    E = sprintf("%c", 27); B = sprintf("%c", 7); Z = sprintf("%c", 0)
+    osc = E "\\][^" B E "]*(" B "|" E "\\\\)"; csi = E "\\[[0-9;?]*[A-Za-z]"; dim = E "\\[2m[^" E "]*"
+  }
+  {
+    p = $0; gsub(osc, "", p); gsub(csi, "", p); pl[NR] = p
+    if (index(p, "────") == 1) r[++n] = NR
+    d = $0; gsub(dim, "", d); gsub(osc, "", d); gsub(csi, "", d); dl[NR] = d
+    if (index(d, "────") == 1) rd[++nd] = NR
+  }
+  function out(a, b,   i, s) { s = ""; for (i = a; i <= b; i++) s = s pl[i] "\n"; sub(/\n+$/, "", s); printf "%s%s", s, Z }
+  END {
+    out(1, NR)
+    out(1, (n >= 2) ? r[n - 1] - 1 : NR)
+    if (n >= 2) out(r[n] + 1, NR); else printf "%s", Z
+    printf "%d%s", (n >= 2 && index(pl[r[n - 1] + 1], "❯") == 1), Z
+    t = ""
+    if (nd >= 2 && index(dl[rd[nd - 1] + 1], "❯") == 1) {
+      t = dl[rd[nd - 1] + 1]
+      sub(/^❯(\xc2\xa0| )?/, "", t)
+      for (i = rd[nd - 1] + 2; i < rd[nd]; i++) { l = dl[i]; sub(/^  /, "", l); t = t " " l }
+      gsub(/\xc2\xa0/, " ", t); sub(/[ \n]+$/, "", t); sub(/^ +/, "", t)
+    }
+    printf "%s%s", t, Z
+  }'
+screen_parse() { # SCREEN
+  [[ -n ${SCR_RAW+set} && $1 == "$SCR_RAW" ]] && return 0
+  local f=()
+  mapfile -d '' -t f < <(awk "$SCR_AWK" <<<"$1")
+  SCR_PLAIN=${f[0]-} ABOVE=${f[1]-} BELOW=${f[2]-} SCR_BOX=${f[3]:-0} SCR_INPUT=${f[4]-}
+  # Only a whole answer is kept: an awk that failed (a refused fork, a kill)
+  # is asked again at the next call, as each old helper was.
+  if ((${#f[@]} == 5)); then SCR_RAW=$1; else unset SCR_RAW; fi
 }
+
+# nonblank_tail N TEXT: NEAR is TEXT's last N lines that are not blank.
+nonblank_tail() {
+  local n=$1 i lines=()
+  NEAR=()
+  mapfile -t lines <<<"$2"
+  for ((i = ${#lines[@]} - 1; i >= 0 && ${#NEAR[@]} < n; i--)); do
+    [[ ${lines[i]} =~ ^[[:space:]]*$ ]] || NEAR=("${lines[i]}" "${NEAR[@]}")
+  done
+}
+
+# input_text SCREEN: SCR_INPUT, printed.
+input_text() { screen_parse "$1"; printf '%s' "$SCR_INPUT"; }
 
 # Whether SCREEN shows the input box at all (idle, or typed into).
-has_input_box() {
-  plain <<<"$1" | awk 'index($0, "────") == 1 { r[++n] = NR } { line[NR] = $0 }
-    END { exit !(n >= 2 && r[n] - r[n - 1] >= 2 && index(line[r[n - 1] + 1], "❯") == 1) }'
-}
+has_input_box() { screen_parse "$1"; ((SCR_BOX)); }
 
-# The lines above the input box's top rule (or the whole screen without one)
-# and below its bottom rule, plain, as ABOVE and BELOW.
-split_screen() { # SCREEN
-  local p
-  p=$(plain <<<"$1")
-  ABOVE=$(awk 'index($0, "────") == 1 { r[++n] = NR } { line[NR] = $0 }
-    END { last = (n >= 2) ? r[n - 1] - 1 : NR; for (i = 1; i <= last; i++) print line[i] }' <<<"$p")
-  BELOW=$(awk 'index($0, "────") == 1 { r[++n] = NR } { line[NR] = $0 }
-    END { if (n < 2) exit; for (i = r[n] + 1; i <= NR; i++) print line[i] }' <<<"$p")
-}
+# ABOVE and BELOW of SCREEN (screen_parse).
+split_screen() { screen_parse "$1"; } # SCREEN
 
 # The last non-empty lines of ABOVE, nearest the input box.
-near() { grep -v '^[[:space:]]*$' <<<"$ABOVE" | tail -"${1:-6}"; }
+near() { nonblank_tail "${1:-6}" "$ABOVE"; ((${#NEAR[@]} == 0)) || printf '%s\n' "${NEAR[@]}"; }
 
 # A turn is running: the spinner line ("… (" with its timer, or "esc to
 # interrupt") sits just above the input box.
-busy() { split_screen "$1"; near 4 | grep -Eq '… \(|esc to interrupt'; }
+busy() { # SCREEN
+  local l
+  screen_parse "$1"
+  nonblank_tail 4 "$ABOVE"
+  for l in "${NEAR[@]}"; do [[ $l == *'… ('* || $l == *'esc to interrupt'* ]] && return 0; done
+  return 1
+}
 
 # Claude Code names the window in its message ("You've hit your 5-hour
 # limit", "... weekly limit", "... Fable limit", "... org's monthly spend
@@ -151,13 +187,19 @@ unset W
 # /usage or /login answer nothing. "hit your fast limit" is the /fast dialog's,
 # not a usage limit. Prints it; fails when there is none.
 limit_line() {
-  split_screen "$1"
-  { near 6 | awk -v re="$LIMIT_RE" '
-      /hit your fast limit/ { next }
-      $0 ~ re { l = $0; next }
-      /^❯ / && !/^❯ \// { l = "" }
-      END { if (l != "") print l }'
-    printf '%s\n' "$BELOW" | grep -E "$LIMIT_RE"; } | tail -1 | grep .
+  local l hit="" below=()
+  screen_parse "$1"
+  nonblank_tail 6 "$ABOVE"
+  for l in "${NEAR[@]}"; do
+    if [[ $l == *'hit your fast limit'* ]]; then continue
+    elif [[ $l =~ $LIMIT_RE ]]; then hit=$l
+    elif [[ $l == '❯ '* && $l != '❯ /'* ]]; then hit=""
+    fi
+  done
+  mapfile -t below <<<"$BELOW"
+  for l in "${below[@]}"; do [[ $l =~ $LIMIT_RE ]] && hit=$l; done
+  [[ -n $hit ]] || return 1
+  printf '%s\n' "$hit"
 }
 
 # Whether EPOCH reads as HH:MM on the clock in ZONE (empty: local time). GNU
@@ -239,10 +281,14 @@ wait_for() { # PANE SECONDS CHECK
 
 # Claude Code's limit menu, standing where the input box was.
 limit_menu() {
-  local tail
+  local l stop=0 confirm=0
   has_input_box "$1" && return 1
-  tail=$(plain <<<"$1" | grep -v '^[[:space:]]*$' | tail -8)
-  grep -q 'Stop and wait for limit to reset' <<<"$tail" && grep -q 'Enter to confirm' <<<"$tail"
+  nonblank_tail 8 "$SCR_PLAIN"
+  for l in "${NEAR[@]}"; do
+    [[ $l == *'Stop and wait for limit to reset'* ]] && stop=1
+    [[ $l == *'Enter to confirm'* ]] && confirm=1
+  done
+  ((stop && confirm))
 }
 
 # Type TEXT into PANE's empty input box and wait until the box holds exactly
@@ -266,9 +312,10 @@ type_exactly() { # PANE TEXT
 }
 
 not_busy() { has_input_box "$1" && ! busy "$1"; }
-idle_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]] && ! busy "$1"; }
-box_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }
-holds_input() { [[ -n $(input_text "$1") ]]; }
+# Each parses its own SCREEN first, so SCR_INPUT is never a screen read before.
+idle_empty() { screen_parse "$1"; has_input_box "$1" && [[ -z $SCR_INPUT ]] && ! busy "$1"; }
+box_empty() { screen_parse "$1"; has_input_box "$1" && [[ -z $SCR_INPUT ]]; }
+holds_input() { screen_parse "$1"; [[ -n $SCR_INPUT ]]; }
 started() { busy "$1" || limit_line "$1" >/dev/null; }
 # PANE (showing SCREEN) stopped at a usage limit: no turn running, and a limit
 # line on the screen, else the fleet hook's StopFailure record (#311). Prints
@@ -305,11 +352,12 @@ pane_locked() { # PANE COMMAND [ARG...]
   )
 }
 rc_settled() { # the connect line, or the menu shown when it is already on
-  local p
-  p=$(plain <<<"$1")
-  grep -q 'Enter to select · Esc to continue' <<<"$p" && return 0
-  split_screen "$1"
-  near 4 | grep -q '/remote-control is active' && idle_empty "$1"
+  local l
+  screen_parse "$1"
+  [[ $SCR_PLAIN == *'Enter to select · Esc to continue'* ]] && return 0
+  nonblank_tail 4 "$ABOVE"
+  for l in "${NEAR[@]}"; do [[ $l == *'/remote-control is active'* ]] && { idle_empty "$1"; return; }; done
+  return 1
 }
 
 # Type TEXT into PANE's empty box (type_exactly) and press Enter. Run it under
@@ -405,8 +453,11 @@ sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "
 # with more than two newlines, as "[Pasted text #N]" ("... +M lines]" when it
 # has newlines). Prints sent, not-pasted, mixed (pasted beside a line AJ
 # began: left in the box unsent, since taking it back out by keystrokes could
-# take his characters with it) or held (still in the box after three Enters, or no
+# take his characters with it), queued (with ANY: Claude Code's "Press up to edit
+# queued messages" line shows and the box no longer holds the message: it took
+# it into its queue, #446) or held (still in the box after three Enters, or no
 # longer the message alone: a dialog stands in its place, or AJ began a line).
+# A pane that closes after the Enter (/exit) counts as sent (#446).
 # With ANY, a running turn is no bar (Claude Code queues a message sent during
 # one), and it is sent once the box has emptied; a pane stopped at a usage
 # limit gets nothing (limited).
@@ -425,8 +476,32 @@ msg_in_box() { # SCREEN WANT
   box=$(input_text "$1")
   [[ ${box//[[:space:]]/} == "$2" || $box =~ ^\[Pasted\ text\ \#[0-9]+(\ \+[0-9]+\ lines)?\]$ ]]
 }
+# Claude Code's note that it queued a message sent during a turn: among the
+# last lines of the screen, with the box empty or holding the note itself (a
+# transcript that quotes it, or AJ's typing beside it, is no queue).
+queued_line() {
+  local box
+  plain <<<"$1" | grep -v '^[[:space:]]*$' | tail -10 | grep -q 'Press up to edit queued messages' || return 1
+  box=$(input_text "$1")
+  [[ -z $box || $box == *'Press up to edit queued messages'* ]]
+}
+# What PANE shows after the Enter on WANT: sent when GONE holds, or the pane has
+# closed after an /exit (the only message whose delivery ends the pane); queued
+# (with ANY) when Claude Code's queue line shows and the box no longer holds
+# WANT; else nothing.
+took_enter() { # PANE WANT GONE ANY
+  local s
+  if [[ $(t display-message -p -t "$1" '#{pane_id}' 2>/dev/null) != "$1" ]]; then
+    [[ $2 == /exit ]] && { echo sent; return; }
+    return 1
+  fi
+  s=$(screen "$1")
+  "$3" "$s" && { echo sent; return; }
+  if [[ $4 == any ]] && queued_line "$s" && ! msg_in_box "$s" "$2"; then echo queued; return; fi
+  return 1
+}
 deliver_now() { # PANE FILE [any]
-  local p=$1 file=$2 want text gone=sent_or_started s
+  local p=$1 file=$2 want text gone=sent_or_started s r
   if [[ ${3:-} == any ]]; then
     # Read under the lock: a pane stopped at a limit is the resume service's.
     s=$(screen "$p")
@@ -443,12 +518,21 @@ deliver_now() { # PANE FILE [any]
   msg_in_box "$(screen "$p")" "$want" || { echo mixed; return; }
   for _ in 1 2 3; do
     t send-keys -t "$p" Enter
-    wait_for "$p" "${FLEET_START_WAIT:-10}" "$gone" && { echo sent; return; }
+    r=$(wait_took "$p" "${FLEET_START_WAIT:-10}" "$want" "$gone" "${3:-}") && { echo "$r"; return; }
     # Enter again only on the message itself: a dialog may stand where the box
     # was (an Enter would answer it), or AJ may have begun a line.
     msg_in_box "$(screen "$p")" "$want" || break
   done
   echo held
+}
+# took_enter, polled up to SECONDS.
+wait_took() { # PANE SECONDS WANT GONE ANY
+  local end=$((SECONDS + $2)) r
+  while :; do
+    r=$(took_enter "$1" "$3" "$4" "$5") && { echo "$r"; return 0; }
+    (( SECONDS >= end )) && return 1
+    sleep "${FLEET_TICK:-0.5}"
+  done
 }
 
 # The newest (or oldest) path in a `find -printf '%T@ %p\n'` listing on stdin,
@@ -471,6 +555,71 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
+# Reports `fleet done` sent: time, name, pane, send result (pending while the
+# send runs, then sent, queued or why not); `fleet close` removes them. Every
+# write goes through the registry lock (with_registry).
+# shellcheck disable=SC2034 # read by done.sh, close.sh and doctor.sh
+DONE_REPORTS=${FLEET_DONE_REPORTS:-$FLEET_STATE/done-reports.tsv}
+dr_append() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$DONE_REPORTS"; } # AT NAME PANE RESULT
+dr_set() { # AT NAME RESULT: the result of the row AT and NAME name
+  local tmp
+  tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
+  if awk -F'\t' -v OFS='\t' -v a="$1" -v n="$2" -v r="$3" '$1 == a && $2 "" == n "" && !d { $4 = r; d = 1 } { print }' "$DONE_REPORTS" >"$tmp"; then
+    mv -f -- "$tmp" "$DONE_REPORTS"
+  else
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
+}
+dr_drop() { # NAME: forget its reports
+  local tmp
+  [[ -e $DONE_REPORTS ]] || return 0
+  tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
+  if awk -F'\t' -v n="$1" '$2 "" != n ""' "$DONE_REPORTS" >"$tmp"; then
+    mv -f -- "$tmp" "$DONE_REPORTS"
+  else
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
+}
+# The briefing's queue file (not FLEET_QUEUE: ci_watch.py reads that name as needs-you.md).
+FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-/mnt/c/Users/ajbar/fleet-briefing/queue.md}
+# Put a line for an agent's undelivered report in the queue file, at the end of
+# its Running now section. RESULT says where the text stands: on mixed or held
+# it still sits in the orchestrator's box, so it is not sent again. The file is
+# read, changed and put back whole under a lock (workers finish together when
+# the orchestrator's pane is at a limit), by renaming a finished copy over it,
+# so a failure leaves the file as it was. Fails, touching nothing, when there is
+# no Running now heading.
+queue_note() { # NAME RESULT REPORT
+  [[ -w $FLEET_QUEUE_MD ]] || return 1
+  ( flock -w 30 9 || exit 1; queue_note_now "$@" ) 9>>"$FLEET_STATE/.queue.lock"
+}
+queue_note_now() {
+  local line tmp
+  case $2 in
+    mixed | held) line="its text is still in the orchestrator's box; do not send it again" ;;
+    limited) line="the orchestrator's pane is at a usage limit; send it after the reset" ;;
+    *) line="the orchestrator did not get it" ;;
+  esac
+  line="- 📋 **$1 (fleet done, report not delivered: $2):** $3 ($line.) $(date '+%a %m-%d %H:%M')"
+  tmp=$(mktemp "$FLEET_QUEUE_MD.XXXXXX") || return 1
+  # Before the section's trailing blank lines.
+  QLINE=$line awk 'BEGIN { line = ENVIRON["QLINE"] }
+    /^## / {
+      if (run && !put) { print line; put = 1 }
+      printf "%s", blank; blank = ""
+      run = ($0 ~ /^## Running now[[:space:]]*$/); print; next
+    }
+    run && /^[[:space:]]*$/ { blank = blank $0 "\n"; next }
+    { printf "%s", blank; blank = ""; print }
+    END { if (run && !put) { print line; put = 1 } printf "%s", blank }' "$FLEET_QUEUE_MD" >"$tmp"
+  if grep -qF -- "$line" "$tmp" && chmod --reference="$FLEET_QUEUE_MD" "$tmp" 2>/dev/null; then
+    mv -f -- "$tmp" "$FLEET_QUEUE_MD" && return 0
+  fi
+  rm -f -- "${tmp:?}"
+  return 1
+}
 # The config folder PANE's session runs on: Heph's own (heph_config) for the
 # orchestrator's pane when no row names it, else its row's (pane_config).
 pane_folder() { # PANE
@@ -980,13 +1129,31 @@ heph_config() {
 # notification's too), so a turn begun since the stamp was read shows.
 STAMP_JQ='"\(.prompt.at // "")/\(.turn_at // "")"'
 
+# Whether session SID owes the wall's wrap-up an answer, printing its state:
+# its answer file names the request on file (the app drops request.json an
+# hour past the window) as asked, or as answered by a turn that has not
+# stopped yet (no settled stamp), or cannot be read. The Stop hook asks by
+# additionalContext, so the turn runs on while the fleet file says done (#454).
+wrapup_pending() { # SID
+  local w=$KLEPSYDRA_DIR/wrapup r
+  [[ -f $w/request.json && ! -L $w/request.json && -f $w/$1.json && ! -L $w/$1.json ]] || return 1
+  r=$(jq -r '.id | strings' "$w/request.json" 2>/dev/null) && [[ -n $r ]] || return 1
+  jq -er --arg r "$r" 'if .request != $r then empty
+    elif .state == "asked" or ((.state == "ready" or .state == "blocked") and .settled == null) then .state
+    else empty end' "$w/$1.json" 2>/dev/null && return 0
+  # Ours but unreadable counts as owed: the hook writes it whole, so this is no state it left.
+  jq -e . "$w/$1.json" >/dev/null 2>&1 || { echo unreadable; return 0; }
+  return 1
+}
+
 # Whether the agent in PANE has finished its turn: its live fleet file
 # (klepsydra's) says done, or stopped with only background work, and lists no
-# background work still running. Prints the session's stamp from the same
+# background work still running, and no wrap-up answer is owed. Prints the session's stamp from the same
 # read, for prompt_stamp comparisons.
 turn_done() { # PANE
   local sid
   sid=$(live_session "$1") || return 1
+  ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and ((.background // []) | length) == 0) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
@@ -1000,12 +1167,93 @@ turn_settled() { # PANE
     and ((.background // []) | length) > 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
 }
 
+# How long a forgotten shell keeps a finished session working (view.rs: BACKGROUND_STALE_AFTER).
+BACKGROUND_STALE_AFTER=3600
+# An entry stamped this far ahead of the clock still counts (view.rs: BACKGROUND_AHEAD).
+BACKGROUND_AHEAD=60
+
+# Whether PANE runs active background work (view.rs: Crew), bounded by
+# BACKGROUND_STALE_AFTER (3600 s) and capped by shells_live. Fails when the
+# pane has no unique live session file or the file has no .background key, so
+# callers fall back to screen grep.
+pane_background() { # PANE [NOW]
+  local sid f now=${2:-${FLEET_NOW:-$(date +%s)}}
+  sid=$(live_session "$1") || return 1
+  f=$KLEPSYDRA_DIR/fleet/$sid.json
+  [[ -f $f && ! -L $f ]] || return 1
+  jq -e --argjson now "$now" \
+        --argjson stale "$BACKGROUND_STALE_AFTER" \
+        --argjson ahead "$BACKGROUND_AHEAD" '
+    select(has("background") and (.background | type == "array"))
+    | . as $root
+    | (if ($root.state == "working" or $root.state == "needs_you") then
+        (reduce .background[] as $b ({agents: 0, shells: 0, tasks: 0};
+          if ($b | type == "object")
+             and ($b.id | type == "string" and length > 0)
+             and ($b.at | type == "number")
+             and (($now - $b.at) >= -$ahead and ($now - $b.at) <= $stale) then
+            if $b.kind == "agent" then .agents += 1
+            elif $b.kind == "shell" then .shells += 1
+            elif $b.kind == "task" then .tasks += 1
+            else .
+            end
+          else .
+          end
+        )) as $crew
+        | ($root.shells_live) as $live
+        | (if ($live | type == "number") then ([$crew.shells, $live] | min) else $crew.shells end) as $shells
+        | select(($crew.agents + $shells + $crew.tasks) > 0)
+      else empty
+      end)
+  ' "$f" >/dev/null 2>&1
+}
+
+# Return a short string describing the session file state for PANE, for wake diagnostics.
+pane_background_summary() { # PANE [NOW]
+  local sid f now=${2:-${FLEET_NOW:-$(date +%s)}}
+  if ! sid=$(live_session "$1"); then
+    echo "no-live-session"
+    return 0
+  fi
+  f=$KLEPSYDRA_DIR/fleet/$sid.json
+  if [[ ! -f $f || -L $f ]]; then
+    echo "no-session-file"
+    return 0
+  fi
+  jq -r --argjson now "$now" \
+        --argjson stale "$BACKGROUND_STALE_AFTER" \
+        --argjson ahead "$BACKGROUND_AHEAD" '
+    if (has("background") and (.background | type == "array")) | not then
+      "state=\(.state // "none"):no-background"
+    elif .state != "working" and .state != "needs_you" then
+      "state=\(.state // "none")"
+    else
+      (reduce .background[] as $b ({agents: 0, shells: 0, tasks: 0};
+        if ($b | type == "object")
+           and ($b.id | type == "string" and length > 0)
+           and ($b.at | type == "number")
+           and (($now - $b.at) >= -$ahead and ($now - $b.at) <= $stale) then
+          if $b.kind == "agent" then .agents += 1
+          elif $b.kind == "shell" then .shells += 1
+          elif $b.kind == "task" then .tasks += 1
+          else .
+          end
+        else .
+        end
+      )) as $crew
+      | (.shells_live) as $live
+      | (if ($live | type == "number") then ([$crew.shells, $live] | min) else $crew.shells end) as $shells
+      | "state=\(.state):crew=\($crew.agents + $shells + $crew.tasks):bg=\(.background | length):live=\($live // "none")"
+    end' "$f" 2>/dev/null || echo "corrupt-session-file"
+}
+
 # Whether the orchestrator in PANE has finished its turn with only pane
 # watchers (watch-panes.sh) in the background: a successor starts them again,
 # so they never hold a move back (#215). Prints its stamp, as turn_done does.
 watchers_only() { # PANE
   local sid
   sid=$(live_session "$1") || return 1
+  ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and ((.background // []) | length) > 0
     and all(.background[]; .kind == "shell" and .watcher == true)) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
@@ -1036,6 +1284,7 @@ ready_to_move() { # PANE ASKED
   local sid
   [[ $2 =~ ^[0-9]+$ ]] || return 1
   sid=$(live_session "$1") || return 1
+  ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er --argjson asked "$2" 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and (.reply.at // 0) >= $asked and (.reply.at // 0) >= (.turn_at // 0)
     and ((.reply.text // "") | split("\n") | map(select(test("\\S"))) | (.[0] // "")

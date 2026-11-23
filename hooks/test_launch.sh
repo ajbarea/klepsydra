@@ -12,6 +12,8 @@ unset KLEPSYDRA_BACKGROUND # a fleet pane's own, never this suite's
 # A headless job's own config folder sets an API key helper, which the
 # launcher refuses (#260): the suite runs on none of its caller's.
 unset CLAUDE_CONFIG_DIR
+# The launcher reads the fleet's account list when set; the suite builds its own.
+unset FLEET_ACCOUNTS FLEET_DEFAULT_CONFIG FLEET_DEFAULT_JSON
 sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$" sock5="kl-test5-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
@@ -128,7 +130,14 @@ mkdir -p "$work/bin"
 cat >"$work/bin/agy" <<'EOF'
 #!/usr/bin/env bash
 if [[ ${1:-} == models ]]; then
-  printf 'Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nbad;id\tEvil\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\n'
+  printf 'Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nbad;id\tEvil\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\nmystery-1\tMystery One\n'
+  exit 0
+fi
+# The quota as agy -p /quota --output-format json reports it (captured 11-19);
+# AGY_3P_LEFT sets the Claude and GPT group's five-hour fraction, AGY_QUOTA=none answers nothing.
+if [[ ${1:-} == -p && ${2:-} == /quota ]]; then
+  [[ ${AGY_QUOTA:-} == none ]] && exit 1
+  printf '{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","description":"Models within this group: Gemini 3.8 Flash","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.68,"reset_time":"2026-11-25T15:15:16Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":0.74,"reset_time":"2026-11-19T11:15:16Z"}]},{"name":"Claude and GPT models","description":"Models within this group: Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B","buckets":[{"id":"3p-weekly","window":"weekly","remaining_fraction":0.49,"reset_time":"2026-11-25T15:32:48Z"},{"id":"3p-5h","window":"5h","remaining_fraction":%s,"reset_time":"2026-11-19T13:24:14Z"}]}]}}}\n' "${AGY_3P_LEFT:-1}"
   exit 0
 fi
 exec sleep 600
@@ -139,7 +148,21 @@ export KLEPSYDRA_AGY="$work/bin/agy" KLEPSYDRA_RULES_SRC="$work/rules.md" KLEPSY
 export KLEPSYDRA_AGY_LOCK="$here/klepsydra-agy-locked.json"
 w0=$(windows)
 check "#323: models lists agy's as one line of JSON, dropping its fetching line and any id that is not one" \
-  "$(bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)"}]'
+  "$(AGY_QUOTA=none bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)"},{"id":"mystery-1","label":"Mystery One"}]'
+check "#440: each model carries its quota group as agy's /quota names its members, never by id; one no group names gets none" \
+  "$(bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)","group":"gemini"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)","group":"3p"},{"id":"mystery-1","label":"Mystery One"}]'
+check "#440: a spent group says when it comes back" \
+  "$(AGY_3P_LEFT=0 bash "$launch" models 2>&1 | jq -c '[.[] | .spent // "-"]')" '["-","2026-11-19T13:24:14Z","-"]'
+before=$(windows)
+out=$(AGY_3P_LEFT=0 bash "$launch" new "$work/repos" agy claude-opus-4-6-thinking 2>&1); rc=$?
+check "#440: a model whose group is spent starts nothing, even from a menu drawn before it ran out" "$rc $(( $(windows) - before )) $out" \
+  "1 0 Not started: Antigravity's quota for claude-opus-4-6-thinking is spent until 2026-11-19T13:24:14Z."
+out=$(AGY_3P_LEFT=0 bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#440: the other group's model still starts" "$rc $(( $(windows) - before ))" "0 1"
+out=$(AGY_3P_LEFT=0 AGY_QUOTA=none bash "$launch" new "$work/repos" agy claude-opus-4-6-thinking 2>&1); rc=$?
+check "#440: with no quota answer the launch goes ahead (agy reports a spent quota itself)" "$rc $(( $(windows) - before ))" "0 2"
+# The cases after count agy's windows from here.
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/agy" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
 before=$(windows)
 out=$(bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
 check "#323: an agy session starts in a window of its own, said so" "$rc $(( $(windows) - before )) $out" "0 1 Started a locked Antigravity session (gemini-3.8-flash-high) in $work/repos."
@@ -206,6 +229,88 @@ check "#323: a launch of anything else is refused" "$(bash "$launch" new "$work/
 # The cases after count the fleet's windows: the agy ones this section opened go.
 t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/agy" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
 check "#323: and its windows are closed again" "$(windows)" "$w0"
+
+echo "new: Copilot (#440)"
+printf '#!/usr/bin/env bash\nexec sleep 600\n' >"$work/bin/copilot"; chmod +x "$work/bin/copilot"
+export KLEPSYDRA_COPILOT="$work/bin/copilot"
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" copilot 2>&1); rc=$?
+check "#440: a Copilot session starts in a window of its own, on auto when no model is named" "$rc $(( $(windows) - before )) $out" "0 1 Started a locked Copilot session (auto) in $work/repos."
+check "#440: locked as fleet delegate runs it: reads only, no writes, no shell, no built-in MCP" \
+  "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "$work/bin/copilot --model auto --allow-all-tools --available-tools view,grep,glob --deny-tool=write --deny-tool=shell --disable-builtin-mcps --disallow-temp-dir")" "1"
+out=$(bash "$launch" new "$work/repos" copilot gpt-5.6-sol 2>&1); rc=$?
+check "#440: on the model asked for" "$rc $(t list-panes -a -F '#{pane_start_command}' | grep -c -- "copilot --model gpt-5.6-sol ")" "0 1"
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" copilot 'x;id' 2>&1); rc=$?
+check "#440: a Copilot model that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not a Copilot model id: x;id"
+for f in .github/hooks .github/mcp.json .mcp.json .vscode/mcp.json .copilot .claude/skills .agents/skills; do
+  d="$work/cp-${f//\//_}"; mkdir -p "$d/$f"
+  out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
+  check "#440 lock: a folder that ships $f is no locked Copilot workspace (folder trust loads it)" "$rc $(( $(windows) - before )) $(grep -c 'ships Copilot workspace configuration' <<<"$out")" "1 0 1"
+done
+mkdir -p "$work/cphk/.claude"
+printf '{"permissions": {}}\n' >"$work/cphk/.claude/settings.json"
+out=$(bash "$launch" new "$work/cphk" copilot 2>&1); rc=$?
+check "#440 lock: Claude Code project settings without hooks are no bar to Copilot" "$rc $(( $(windows) - before ))" "0 1"
+before=$(windows)
+for f in settings.json settings.local.json; do
+  d="$work/cphk-$f"; mkdir -p "$d/.claude"; printf '{"hooks": {"Stop": []}}\n' >"$d/.claude/$f"
+  out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
+  check "#440 lock: .claude/$f with hooks is refused (Copilot runs them)" "$rc $(( $(windows) - before )) $(grep -c 'sets hooks' <<<"$out")" "1 0 1"
+done
+d="$work/cphk-bad"; mkdir -p "$d/.claude"; printf 'not json' >"$d/.claude/settings.json"
+out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
+check "#440 lock: a settings file that does not read is refused (fail closed)" "$rc $(( $(windows) - before ))" "1 0"
+git init -q "$work/cpanc" && mkdir -p "$work/cpanc/.github/hooks" "$work/cpanc/sub"
+out=$(bash "$launch" new "$work/cpanc/sub" copilot 2>&1); rc=$?
+check "#440 lock: a folder whose repo root ships Copilot hooks is refused" "$rc $(( $(windows) - before ))" "1 0"
+out=$(bash "$launch" new "$HOME" copilot 2>&1); rc=$?
+check "#440 lock: the home folder is never a Copilot workspace" "$rc $(( $(windows) - before )) $(grep -c 'whole home folder' <<<"$out")" "1 0 1"
+mkdir -p "$work/winmnt/c/proj"
+out=$(KLEPSYDRA_WINDOWS_MOUNT="$work/winmnt" bash "$launch" new "$work/winmnt/c/proj" copilot 2>&1); rc=$?
+check "#440 lock: nor the Windows side" "$rc $(( $(windows) - before ))" "1 0"
+out=$(KLEPSYDRA_COPILOT=no-such-copilot bash "$launch" new "$work/repos" copilot 2>&1); rc=$?
+check "#440: no copilot: says so, starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 copilot (GitHub Copilot CLI) was not found on PATH."
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/copilot" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+check "#440: Copilot's windows are closed again" "$(windows)" "$w0"
+
+echo "new: Claude on a chosen account (#440)"
+# Two logins whose folder names say the opposite of what they hold, as on AJ's PC
+# (~/.claude is one account, ~/.claude-rit the other), and a folder with no login.
+mkdir -p "$HOME/.claude" "$HOME/.claude-rit" "$HOME/.claude-nologin"
+printf '{"oauthAccount":{"accountUuid":"aaaa1111-0000-0000-0000-000000000001"}}\n' >"$HOME/.claude.json"
+printf '{"oauthAccount":{"accountUuid":"bbbb2222-0000-0000-0000-000000000002"}}\n' >"$HOME/.claude-rit/.claude.json"
+printf '{"oauthAccount":{"accountUuid":"cccc3333-0000-0000-0000-000000000003"}}\n' >"$HOME/.claude-nologin/.claude.json"
+: >"$HOME/.claude/.credentials.json"; : >"$HOME/.claude-rit/.credentials.json"
+printf '#!/usr/bin/env bash\nexec sleep 600\n' >"$work/bin/claude"; chmod +x "$work/bin/claude"
+check "#440: engines names each account with a login here, and the engines on PATH" \
+  "$(KLEPSYDRA_AGY=no-agy bash "$launch" engines 2>&1)" '{"claude":["aaaa1111-0000-0000-0000-000000000001","bbbb2222-0000-0000-0000-000000000002"],"agy":false,"copilot":true}'
+check "#440: FLEET_ACCOUNTS, when set, is the list" \
+  "$(FLEET_ACCOUNTS="$HOME/.claude-rit" bash "$launch" engines 2>&1 | jq -c .claude)" '["bbbb2222-0000-0000-0000-000000000002"]'
+before=$(windows)
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude bbbb2222-0000-0000-0000-000000000002 opus 2>&1); rc=$?
+check "#440: claude starts on the folder logged in to the account, found by its login, on the model asked for" \
+  "$rc $(( $(windows) - before )) $(t list-panes -a -F '#{pane_start_command}' | grep -c -- "env CLAUDE_CONFIG_DIR=$HOME/.claude-rit $work/bin/claude --model opus")" "0 1 1"
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude aaaa1111-0000-0000-0000-000000000001 2>&1); rc=$?
+check "#440: the default folder's account starts with CLAUDE_CONFIG_DIR unset, no --model when none is named" \
+  "$rc $(t list-panes -a -F '#{pane_start_command}' | grep -c -- "env -u CLAUDE_CONFIG_DIR $work/bin/claude\"\$")" "0 1"
+check "#440: both still run on the subscription only (#260)" \
+  "$(t list-panes -a -F '#{pane_start_command}' | grep -- "$work/bin/claude" | grep -c 'env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE env ')" "2"
+before=$(windows)
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude cccc3333-0000-0000-0000-000000000003 2>&1); rc=$?
+check "#440: an account whose folder holds no login starts nothing" "$rc $(( $(windows) - before )) $(grep -c 'No Claude Code folder here is logged in' <<<"$out")" "1 0 1"
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude '../x;id' 2>&1); rc=$?
+check "#440: an account that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not a Claude account id: ../x;id"
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude bbbb2222-0000-0000-0000-000000000002 'opus;id' 2>&1); rc=$?
+check "#440: a model that is no alias or name starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not a Claude model: opus;id"
+printf '{"apiKeyHelper": "x"}\n' >"$HOME/.claude-rit/settings.json"
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude bbbb2222-0000-0000-0000-000000000002 2>&1); rc=$?
+check "#440: the key check reads the chosen account's folder, not the server's" "$rc $(( $(windows) - before )) $(grep -c 'sets an API key or key helper' <<<"$out")" "1 0 1"
+rm -f -- "$HOME/.claude-rit/settings.json"
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/claude" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+rm -rf -- "${HOME:?}/.claude" "${HOME:?}/.claude-rit" "${HOME:?}/.claude-nologin" "${HOME:?}/.claude.json"
+check "#440: its windows are closed again" "$(windows)" "$w0"
+unset KLEPSYDRA_COPILOT
 unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES KLEPSYDRA_AGY_LOCK
 # A fleet launch that starts the server (a cold recover) must not hand the flag
 # to the server's environment, or every later pane, the wall's included, opens behind.
@@ -213,6 +318,12 @@ unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES KLEPSYDRA_AGY_LOCK
 WT_LOG="$work/wt4.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "#229 review: a flagged launch that starts the server keeps the flag out of its environment" \
   "$(tmux -L "$sock4" has-session -t =fleet 2>/dev/null && echo up) $(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_BACKGROUND=')" "up 0"
+tmux -L "$sock4" kill-server 2>/dev/null
+# Nor the command a fleet launch passes (#440 live check): the 11-16 server kept Heph's,
+# session id and all, and a launch from one of its panes ran that instead of claude.
+WT_LOG="$work/wt6.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 KLEPSYDRA_CLAUDE="sleep 601" bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#440: a fleet launch that starts the server keeps its command out of the server's environment" \
+  "$(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_CLAUDE=') $(tmux -L "$sock4" list-panes -a -F '#{pane_start_command}' 2>/dev/null | grep -c 'sleep 601')" "0 1"
 tmux -L "$sock4" kill-server 2>/dev/null
 # Nor a session's voice (#395 review): it goes into the session's command alone.
 WT_LOG="$work/wt5.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KERYX_VOICE=bf_emma bash "$launch" new "$work/repos" >/dev/null 2>&1
@@ -589,7 +700,7 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR [agy MODEL] | models | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR [agy MODEL | claude ACCOUNT [MODEL] | copilot [MODEL]] | models | engines | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
 
 # #273: the tray's Voices change runs the installed fleet voices at once, with

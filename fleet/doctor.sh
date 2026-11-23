@@ -333,7 +333,7 @@ if [[ $pw == true ]]; then
     elif [[ -z $dns ]]; then
       report_debounced "phone wall over Tailscale" "Tailscale is not running or not logged in"
     elif [[ -z $serve_out || $serve_out == *"No serve config"* ]]; then
-      report_debounced "phone wall over Tailscale" "Tailscale Serve is not set up (README: Phone wall)"
+      report_debounced "phone wall over Tailscale" "Tailscale Serve is not set up (README: Fleet on your phone)"
     else
       phone "phone wall over Tailscale" "https://$dns"
     fi
@@ -503,6 +503,26 @@ fi
 # Agents set aside (paused.tsv, `fleet pause`): listed, never a failure (#246).
 paused=$(awk -F'\t' '$1 != "" && $1 !~ /^#/ { printf "%s, ", $1 }' "${FLEET_PAUSED:-$FLEET_STATE/paused.tsv}" 2>/dev/null)
 [[ -n $paused ]] && report ok "paused agents" "${paused%, }: fleet unpause NAME brings one back" paused="${paused%, }"
+# Reports `fleet done` could not deliver, and finished panes left open and
+# unread (done-reports.tsv; `fleet close NAME` clears a row), #445.
+undelivered="" unread="" panes_now=$(fleet_panes)
+while IFS=$'\t' read -r at rname rpane rresult; do
+  [[ $at =~ ^[0-9]+$ ]] || continue
+  if [[ $rresult == pending ]] && (( now - at <= 300 )); then
+    : # its send is still running
+  elif [[ $rresult != sent && $rresult != queued ]]; then
+    undelivered+="$rname ($rresult), "
+  elif (( now - at > ${FLEET_UNREAD_S:-1800} )) && grep -qx -- "$rpane" <<<"$panes_now"; then
+    unread+="$rname ($rpane, $(( (now - at) / 60 )) min), "
+  fi
+done < <(cat "$DONE_REPORTS" 2>/dev/null)
+if [[ -n $undelivered ]]; then
+  report warn "done reports" "not delivered to the orchestrator: ${undelivered%, }: in the queue file's Running now; fleet close NAME once read" undelivered="${undelivered%, }"
+elif [[ -n $unread ]]; then
+  report warn "done reports" "finished and left open, report unread for over $(( ${FLEET_UNREAD_S:-1800} / 60 )) min: ${unread%, }: fleet close NAME" unread="${unread%, }"
+else
+  report ok "done reports" "no finished agent's report waits, undelivered or unread"
+fi
 mapfile -t briefs < <(awk -F'\t' 'NF >= 3 { print $3 }' "$REGISTRY" 2>/dev/null)
 if (( ! ${#briefs[@]} )); then
   report ok "briefs" "no registered agents"

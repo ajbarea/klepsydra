@@ -1,4 +1,4 @@
-# skill-context — klepsydra
+# skill-context: klepsydra
 
 Repo-specific facts the techne skills read. Logic lives in the skills; only facts
 belong here.
@@ -40,15 +40,15 @@ belong here.
 
 ## audit
 
-### Phase 1 — Setup
+### Phase 1: Setup
 
 - `npm install` (only `@tauri-apps/cli`; the app itself has no JS dependencies)
 
-### Phase 2 — Fix (one-way door)
+### Phase 2: Fix (one-way door)
 
 - `cargo fmt` in `src-tauri/`
 
-### Phase 3 — Lint
+### Phase 3: Lint
 
 - `make shellcheck` (CI's files and `-x`; it takes the heavy lock)
 - `npm run lint`: Biome with only `noConsole` on (warn and error allowed);
@@ -59,16 +59,16 @@ belong here.
 - `cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings`
   (in WSL: `-p klepsydra-fleet`, and `bash scripts/build-windows.sh --check`)
 
-### Phase 4 — Test
+### Phase 4: Test
 
 Every change runs the whole Phase 3 and Phase 4 list, not only the suites its
 files belong to: the JS guards scan hooks and scripts too.
 
 
-- `node --test src/*.test.js` — ramp, countdown, reading age, reconciliation
+- `node --test src/*.test.js`: ramp, countdown, reading age, reconciliation
   (newest reading wins), multi-account rows, the rows' words and ring that
   the gauge and the phone wall share
-- `bash statusline/test_statusline.sh` — the hook is the only path that publishes
+- `bash statusline/test_statusline.sh`: the hook is the only path that publishes
   usage, so the cases cover what would otherwise fail silently: account
   identity, two accounts not overwriting each other, two sessions of one account
   keeping separate files (a shared file let an idle terminal overwrite an active
@@ -86,6 +86,8 @@ files belong to: the JS guards scan hooks and scripts too.
 - `python3 -I fleet/test_prune_shots.py`: the briefing's screenshot prune against a fake gh.
 - `python3 -I scripts/perf/test_fixture.py`: the perf harness's demo fleet
   writes only files it owns and no future times.
+- `make test-engine` (no tmux, no lock): the agy and Copilot hook adapters in `hooks/klepsydra-engine.sh`; CI does not run it.
+- `bash hooks/test_browser.sh`: the SessionEnd hook that closes the Playwright MCP browsers a session left open (#379).
 - `bash hooks/test_wrapup.sh`: the wrap-up Stop hook (silent unless a live
   request is unasked, never blocks a stop, fails open) and its reporter.
 - `make test-launch` (takes the heavy lock itself: run it bare): the tmux launcher against a private tmux server
@@ -153,13 +155,13 @@ files belong to: the JS guards scan hooks and scripts too.
 - `scripts/measure-memory.sh run`: takes 8 hours.
 - `scripts/readme-shots.py`: rewrites the README's screenshots in `assets/`;
   run it when what a screenshot shows changes, not as a test.
-- `scripts/build-windows.sh` — rsyncs to `C:\Users\<user>\klepsydra-build` and
+- `scripts/build-windows.sh`: rsyncs to `C:\Users\<user>\klepsydra-build` and
   drives `powershell.exe`; produces an NSIS installer and takes minutes.
   `KLEPSYDRA_STAGE=klepsydra-build-<name>` stages a branch in its own folder.
-- `scripts/build-linux.sh` — full release build plus a `.deb`; takes minutes.
-- `scripts/visual-check.sh` — spawns headless `chrome.exe` against a local
+- `scripts/build-linux.sh`: full release build plus a `.deb`; takes minutes.
+- `scripts/visual-check.sh`: spawns headless `chrome.exe` against a local
   server and writes screenshots to the Windows temp directory.
-- `npm run tauri dev` — opens the overlay window and does not return.
+- `npm run tauri dev`: opens the overlay window and does not return.
 
 ## ci_audit
 
@@ -215,6 +217,7 @@ files belong to: the JS guards scan hooks and scripts too.
 
 ## docs_site
 
-- none. Documentation is `README.md`, `ROADMAP.md`, and `IMPL.md` at the root;
-  there is no Zensical site, no `docs/` tree, and no Pages deploy. The docs-site
-  dimension of any audit is N/A here.
+- none. Documentation is `README.md`, `ROADMAP.md` and `IMPL.md` at the root,
+  plus `docs/` (`engines.md`, `headless.md`, `fleet.md`, `ci-watch.md`,
+  `characters/`, `perf/`, `superpowers/`). There is no Zensical site, no
+  `zensical.toml` and no Pages deploy, so the docs-site dimension of any audit is N/A here.
