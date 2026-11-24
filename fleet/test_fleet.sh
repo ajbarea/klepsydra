@@ -4879,6 +4879,7 @@ echo "wait_runtime_dir: recover's wait for the boot's runtime folder (#517)"
 wr() {
   local s e rc
   s=$EPOCHREALTIME
+  # shellcheck disable=SC2016 # the inner shell expands its own $1
   env "$@" bash -c '. "$1"; wait_runtime_dir' _ "$here/lib.sh" 2>"$work/wr.err"; rc=$?
   e=$EPOCHREALTIME
   local us=$(( ${e/./} - ${s/./} )) took=slow
