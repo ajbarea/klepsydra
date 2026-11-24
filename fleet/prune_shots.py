@@ -28,7 +28,12 @@ from pathlib import Path
 
 HOME = Path.home()
 STATE = Path(os.environ.get("FLEET_STATE", HOME / ".local/state/fleet-orchestrator"))
-REPO = Path(os.environ.get("BRIEFING_DIR", "/mnt/c/Users/ajbar/fleet-briefing"))
+REPO = Path(
+    os.environ.get(
+        "FLEET_BRIEFING",
+        os.environ.get("BRIEFING_DIR", "/mnt/c/Users/ajbar/fleet-briefing"),
+    )
+)
 SLUG = os.environ.get("BRIEFING_SLUG", "ajbarea/fleet-briefing")
 GH = os.environ.get("FLEET_GH", "gh")
 NOW = float(os.environ.get("FLEET_NOW", time.time()))
