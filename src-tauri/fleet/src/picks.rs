@@ -224,6 +224,7 @@ mod tests {
             asked_after_turn: false,
             remote_url: None,
             started_at: Some(started),
+            call_tokens: None,
             ceded: None,
             pick: None,
             account: None,

@@ -678,7 +678,7 @@ export function card(s, cast, nowMs, request = null) {
     reply: plainText(nowReply),
     said: plainText(s.said?.text ?? null),
     error: s.status === "error" ? s.error ?? null : null,
-    ledger: ledgerLine(s.ledger, s.ledger_partial === true),
+    ledger: ledgerLine(s.ledger, s.ledger_partial === true, s.call_tokens),
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump,
     clear: s.status === "ended" || s.status === "silent",
