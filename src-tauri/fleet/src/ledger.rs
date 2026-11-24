@@ -392,7 +392,7 @@ fn days_from(y: i64, m: u32, d: u32) -> i64 {
 fn local_date(now: i64, tz: &TimeZone) -> (i64, u32, u32) {
     match Timestamp::from_second(now) {
         Ok(t) => {
-            let d = t.to_zoned(tz.clone()).date();
+            let d = t.to_zoned_datetime(tz.clone()).date();
             (
                 i64::from(d.year()),
                 u32::try_from(d.month()).unwrap_or(1),
@@ -1637,6 +1637,37 @@ mod tests {
         dir.write("2026-09-19.json", "{}");
         assert_eq!(prune(&dir.0, late, &ny), ["2026-09-19.json"]);
         assert!(dir.0.join("2026-09-20.json").exists());
+    }
+
+    #[test]
+    fn dst_boundary_pins_local_day() {
+        let ny = TimeZone::posix("EST5EDT,M3.2.0,M11.1.0").unwrap();
+
+        // 2026 Fall-back (Sunday 2026-11-01):
+        // 2026-11-01 03:59:59 UTC is 2026-10-31 23:59:59 EDT.
+        assert_eq!(day_name(1_793_505_599, &ny), "2026-10-31");
+        // 2026-11-01 04:00:00 UTC is 2026-11-01 00:00:00 EDT (start of 25h local day).
+        assert_eq!(day_name(1_793_505_600, &ny), "2026-11-01");
+        // At 02:00 EDT (06:00:00 UTC), clocks fall back to 01:00 EST.
+        // 05:59:59 UTC is 01:59:59 EDT; 06:00:00 UTC is 01:00:00 EST.
+        assert_eq!(day_name(1_793_512_799, &ny), "2026-11-01");
+        assert_eq!(day_name(1_793_512_800, &ny), "2026-11-01");
+        // End of local day Nov 1 is 2026-11-02 04:59:59 UTC (23:59:59 EST).
+        assert_eq!(day_name(1_793_595_599, &ny), "2026-11-01");
+        assert_eq!(day_name(1_793_595_600, &ny), "2026-11-02");
+
+        // 2026 Spring-forward (Sunday 2026-03-08):
+        // 2026-03-08 04:59:59 UTC is 2026-03-07 23:59:59 EST.
+        assert_eq!(day_name(1_772_945_999, &ny), "2026-03-07");
+        // 2026-03-08 05:00:00 UTC is 2026-03-08 00:00:00 EST (start of 23h local day).
+        assert_eq!(day_name(1_772_946_000, &ny), "2026-03-08");
+        // At 02:00 EST (07:00:00 UTC), clocks spring forward to 03:00 EDT.
+        // 06:59:59 UTC is 01:59:59 EST; 07:00:00 UTC is 03:00:00 EDT.
+        assert_eq!(day_name(1_772_953_199, &ny), "2026-03-08");
+        assert_eq!(day_name(1_772_953_200, &ny), "2026-03-08");
+        // End of local day March 8 is 2026-03-09 03:59:59 UTC (23:59:59 EDT).
+        assert_eq!(day_name(1_773_028_799, &ny), "2026-03-08");
+        assert_eq!(day_name(1_773_028_800, &ny), "2026-03-09");
     }
 
     #[test]
