@@ -22,6 +22,8 @@
 # its headless job (#260).
 # Open Playwright MCP browsers (pid, owning session, idle time), with a warning
 # past FLEET_BROWSER_IDLE_MIN or for one whose MCP server is gone (#379).
+# agy's and Copilot's model lists, kept in models-<engine>.txt: a change is a
+# warning to review routing in docs/engines.md for 3 days (#513).
 # The lock folder the hooks and launcher share (FAIL with the reason when they
 # cannot lock; a warning when the fleet hook could not in the last hour).
 # Briefs whose shared rules
@@ -309,6 +311,10 @@ phone() { # CHECK BASE
   [[ -n $phone_body ]] || phone_body=$body
   report ok "$1" "answers at $2"
 }
+# Every setting the app keeps (#484): a file that is not one JSON object is
+# never overwritten, so nothing set in the wall or the tray is kept until it is fixed.
+prefs_get theme >/dev/null
+[[ $? == 2 ]] && report warn prefs "prefs.json does not read as one JSON object: theme, density, voices, zoom, layout and the tray switches are not kept after a restart until it is fixed or removed" prefs="$KLEPSYDRA_DIR/prefs.json"
 # The phone wall is AJ's to switch off (#328): prefs.json's phone_wall, read
 # as the wall reads it (src-tauri/src/phone.rs: a missing or unreadable file is off).
 pw=$(prefs_get phone_wall)
@@ -838,7 +844,7 @@ for e in "${ENGINES[@]}"; do
   login="login not checked"
   case $e in
     agy) [[ -s $HOME/.gemini/antigravity-cli/antigravity-oauth-token ]] && login="signed in" || login="not signed in (run agy once)" ;;
-    copilot) [[ -s $HOME/.copilot/config.json ]] && login="config present" || login="not signed in (copilot login)" ;;
+    copilot) [[ -s ${COPILOT_HOME:-$HOME/.copilot}/config.json ]] && login="config present" || login="not signed in (copilot login)" ;;
   esac
   if [[ ! -r $ENG_LOCK || ! -r $FLEET_HOOK_DIR/klepsydra-engine-rules.md ]]; then
     report warn "engine $e" "$login; lanes OFF: the lock policy or helper rules are missing from $FLEET_HOOK_DIR (fleet install)"
@@ -846,6 +852,48 @@ for e in "${ENGINES[@]}"; do
     report warn "engine $e" "$login; lanes: ${lanes% }"
   else
     report ok "engine $e" "$login; lanes: ${lanes% }, locked"
+  fi
+done
+
+# Each engine's model list (#513), kept in models-<engine>.txt (its time: when it
+# was last read). It is asked at most every FLEET_MODELS_EVERY_S, success or not
+# (.asked): a list changes in weeks, and the doctor timer runs every few minutes.
+# A change is a warning for FLEET_MODELS_WARN_S (.changed), so the timer's next
+# runs do not clear it unread; a list not read for two intervals is a warning too.
+models_every=${FLEET_MODELS_EVERY_S:-21600} models_warn=${FLEET_MODELS_WARN_S:-259200}
+for e in "${ENGINES[@]}"; do
+  eng_has "$e" || continue
+  snap=${FLEET_MODELS_DIR:-$FLEET_STATE}/models-$e.txt
+  asked=${snap%.txt}.asked seen=${snap%.txt}.changed now_s=$(date +%s)
+  if [[ ! -e $asked ]] || (( now_s - $(stat -c %Y -- "$asked") >= models_every )); then
+    mkdir -p -- "${snap%/*}" && touch -- "$asked"
+    if models=$(eng_models "$e") && [[ -n $models ]]; then
+      if [[ -s $snap ]]; then
+        added=$(LC_ALL=C comm -13 "$snap" - <<<"$models" 2>/dev/null | paste -sd' ' -)
+        removed=$(LC_ALL=C comm -23 "$snap" - <<<"$models" 2>/dev/null | paste -sd' ' -)
+        if [[ -n $added$removed ]]; then
+          detail=""
+          [[ -n $added ]] && detail+="+${added// / +} "
+          [[ -n $removed ]] && detail+="-${removed// / -} "
+          # A second change within the warning's days adds to it, so the first is not lost.
+          [[ -s $seen ]] && (( now_s - $(stat -c %Y -- "$seen") < models_warn )) || : >"$seen"
+          printf '%s %s\n' "$(date '+%m-%d')" "${detail% }" >>"$seen"
+        fi
+      fi
+      printf '%s\n' "$models" >"$snap.tmp" && mv -f -- "$snap.tmp" "$snap"
+    fi
+  fi
+  if [[ ! -s $snap ]]; then
+    report warn "models $e" "its model list could not be read (asked $(date -r "$asked" '+%m-%d %H:%M')): changes go unseen"
+    continue
+  fi
+  count=$(grep -c . -- "$snap")
+  if [[ -s $seen ]] && (( now_s - $(stat -c %Y -- "$seen") < models_warn )); then
+    report warn "models $e" "changed $(paste -sd';' - <"$seen" | sed 's/;/; /g'): review routing in docs/engines.md" count="$count"
+  elif [[ $asked -nt $snap ]] && (( now_s - $(stat -c %Y -- "$snap") >= 2 * models_every )); then
+    report warn "models $e" "not read since $(date -r "$snap" '+%m-%d %H:%M') (its listing failed): changes go unseen" count="$count"
+  else
+    report ok "models $e" "$count models" count="$count"
   fi
 done
 if [[ -n $json ]]; then

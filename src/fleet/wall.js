@@ -716,9 +716,10 @@ function paintLedger(el, c) {
   line.hidden = !c.ledger;
   const receipt = el.querySelector(".receipt");
   receipt.hidden = !c.ledger?.full;
+  receipt.classList.toggle("warn", Boolean(c.ledger?.warn));
   setText(receipt.querySelector(".r-full"), c.ledger?.full);
   setText(receipt.querySelector(".r-short"), c.ledger?.short);
-  receipt.title = c.ledger?.full ?? "";
+  receipt.title = c.ledger?.why ? `${c.ledger.full}\n${c.ledger.why}` : (c.ledger?.full ?? "");
   const partial = el.querySelector(".partial");
   show(partial, c.ledger?.partial?.text);
   partial.title = c.ledger?.partial?.label ?? "";
@@ -1668,6 +1669,7 @@ function syncFullText() {
 }
 if (served) document.fonts?.ready.then(syncFullText);
 
+const densityNote = document.getElementById("density-note");
 function choose(value) {
   choice = parseDensity(value);
   for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
@@ -1676,7 +1678,11 @@ function choose(value) {
 
 densityPicker.addEventListener("change", (e) => {
   choose(e.target.value);
-  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+  if (inTauri)
+    window.__TAURI__.core.invoke("set_wall_density", { density: choice }).then(
+      () => setText(densityNote, ""),
+      (err) => setText(densityNote, `Not saved: ${err}`),
+    );
 });
 let resizeTimer = 0;
 addEventListener("resize", () => {

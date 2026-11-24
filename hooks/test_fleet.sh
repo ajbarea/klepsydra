@@ -312,10 +312,24 @@ check "stop: the reply from last_assistant_message" "$(field .reply.text)" \
   '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
 check "stop: never the lagging transcript" "$(grep -c STALE "$file")" "0"
 # The transcript lags the turn, so the reply never comes from it. Remote
-# Control is the one thing the hook reads there, and only as a tail.
+# Control and the last request's size (#515) are all the hook reads there, each as a tail.
 # shellcheck disable=SC2016 # literal text to find in the hook
-check "the hook reads the transcript only for Remote Control" \
-  "$(grep -c '"\$transcript"' "$hook") $(grep -c 'remote=$(remote_lines "$transcript")' "$hook")" "1 1"
+check "the hook reads the transcript only for Remote Control and the context size" \
+  "$(grep -c '"\$transcript"' "$hook") $(grep -c 'remote=$(remote_lines "$transcript")' "$hook") $(grep -c 'call_tokens=$(context_tokens "$transcript")' "$hook")" "2 1 1"
+ctx_t="$work/ctx-transcript.jsonl"
+printf '%s\n' '{"type":"user","message":{"content":"go"}}' \
+  '{"type":"assistant","message":{"usage":{"input_tokens":2,"cache_read_input_tokens":300000,"cache_creation_input_tokens":5000,"output_tokens":90}}}' \
+  '{"type":"assistant","isSidechain":true,"message":{"usage":{"input_tokens":7,"cache_read_input_tokens":20000}}}' >"$ctx_t"
+fire stop.json ".session_id = \"66666666-2222-4333-8444-555555555555\" | .transcript_path = \"$ctx_t\""
+check "#515: a turn's end records the context its last request carried, not a subagent's" "$(jq -c .call_tokens "$dir/fleet/66666666-2222-4333-8444-555555555555.json")" "305002"
+fire post-tool-bash.json '.session_id = "66666666-2222-4333-8444-555555555555"'
+check "#515: other events keep it" "$(jq -c .call_tokens "$dir/fleet/66666666-2222-4333-8444-555555555555.json")" "305002"
+printf '%s\n' '{"type":"user","message":{"content":"go"}}' >"$ctx_t"
+fire stop.json ".session_id = \"66666666-2222-4333-8444-555555555555\" | .transcript_path = \"$ctx_t\""
+check "#515: a turn whose transcript shows no usage yet keeps the last one" "$(jq -c .call_tokens "$dir/fleet/66666666-2222-4333-8444-555555555555.json")" "305002"
+fire session-start.json '.session_id = "66666666-2222-4333-8444-555555555555" | .source = "clear"'
+check "#515: a fresh or cleared context starts with none" "$(jq -c .call_tokens "$dir/fleet/66666666-2222-4333-8444-555555555555.json")" "null"
+rm -f -- "$dir/fleet/66666666-2222-4333-8444-555555555555.json"
 now=$((now + 5)) fire stop.json '.last_assistant_message = ""'
 check "stop with no text keeps the last reply" "$(field '[.reply.text, .reply.at]')" \
   '["That works with no model calls: the hook writes one file per session and the overlay reads them.",1792353050]'

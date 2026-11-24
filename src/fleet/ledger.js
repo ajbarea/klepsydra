@@ -49,28 +49,33 @@ export function cacheShare(t = {}) {
   return input === 0 ? null : n(t.cache_read) / input;
 }
 
+/** Tokens one request may carry before the fleet asks for a fresh session (lib.sh FLEET_CONTEXT_BUDGET, #515). */
+export const CONTEXT_BUDGET = 300000;
+
 /** The receipt's parts, in reading order, with the ones that are zero left out. */
-export function receiptParts(ledger = {}) {
+export function receiptParts(ledger = {}, callTokens = null) {
   const parts = [];
-  const added = n(ledger.lines_added);
-  const removed = n(ledger.lines_removed);
+  const added = n(ledger?.lines_added);
+  const removed = n(ledger?.lines_removed);
   if (added || removed) parts.push({ key: "lines", text: `+${compactNumber(added)} ${MINUS}${compactNumber(removed)} lines` });
-  const commits = n(ledger.commits);
+  const commits = n(ledger?.commits);
   if (commits) parts.push({ key: "commits", text: plural(commits, "commit") });
-  const prs = n(ledger.pull_requests);
+  const prs = n(ledger?.pull_requests);
   if (prs) parts.push({ key: "prs", text: plural(prs, "PR") });
-  const tokens = totalTokens(ledger.tokens);
-  if (tokens) {
-    const share = cacheShare(ledger.tokens);
+  const tokens = totalTokens(ledger?.tokens);
+  const call = n(callTokens);
+  if (tokens || call) {
+    const share = cacheShare(ledger?.tokens);
     const cached = share === null ? "" : ` (${Math.round(share * 100)}% cached)`;
-    parts.push({ key: "tokens", text: `${compactNumber(tokens)} tokens${cached}` });
+    if (call) parts.push({ key: "context", text: `${compactNumber(call)} context` });
+    if (tokens) parts.push({ key: "tokens", text: `${compactNumber(tokens)} tokens${cached}` });
   }
   return parts;
 }
 
 // The compact card has room for three parts. A pull request says the most,
 // then commits, then lines, and the token count the least (every session has one).
-const INFORMATIVE = ["prs", "commits", "lines", "tokens"];
+const INFORMATIVE = ["prs", "commits", "lines", "tokens", "context"];
 export const COMPACT_PARTS = 3;
 
 /** The most informative `max` parts, still in reading order. */
@@ -100,13 +105,22 @@ export const PARTIAL_LABEL = "Some telemetry for this session was not received: 
  * say. `partial` (the view's ledger_partial) adds the short "partial" mark,
  * kept apart from the receipt so a compact card never trims it away.
  */
-export function ledgerLine(ledger, partial = false) {
-  if (!ledger) return null;
-  const parts = receiptParts(ledger);
-  const chip = chipLabel(ledger.guardrail_rejects);
+export function ledgerLine(ledger, partial = false, callTokens = null) {
+  if (!ledger && !callTokens) return null;
+  const parts = receiptParts(ledger, callTokens);
+  const chip = chipLabel(ledger?.guardrail_rejects);
   const mark = partial ? { text: "partial", label: PARTIAL_LABEL } : null;
+  // A session's total grows with every call by design; only one request's size has a budget.
+  const warn = n(callTokens) >= CONTEXT_BUDGET;
   if (!parts.length && !chip && !mark) return null;
-  return { full: receiptText(parts), short: receiptText(compactPick(parts)), chip, partial: mark };
+  const why = warn
+    ? `Its last request carried ${compactNumber(n(callTokens))} tokens of context, past the fleet's ${compactNumber(CONTEXT_BUDGET)} budget, and each call re-sends it. A fleet worker is asked to checkpoint and start fresh at its next finished turn.`
+    : null;
+  // Past the budget the request size is the news, so a compact card keeps it.
+  const ctx = warn ? parts.find((p) => p.key === "context") : null;
+  const keep = new Set(ctx ? [ctx, ...compactPick(parts.filter((p) => p !== ctx), COMPACT_PARTS - 1)] : compactPick(parts));
+  const short = parts.filter((p) => keep.has(p));
+  return { full: receiptText(parts), short: receiptText(short), chip, partial: mark, warn, why };
 }
 
 // ---- The drawer's figures ----
