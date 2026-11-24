@@ -15,8 +15,13 @@ Push: `git push origin fix/keryx-isolation-516:fix/keryx-isolation-516`. Never p
   false) is skipped. 11 cases, new guards mutation-checked. Deferred: exporting XDG_CACHE_HOME
   suite-wide (doctor reads it; needs its own full-suite run).
 
+- Opus r3 verify reader: code mergeable; its notes fixed: one whole-file parse (kiso_rest: one
+  object, nothing after it, as keryx's json.loads reads it) replaces three jq checks, two of
+  them redundant; cases for trailing values and an unchanged already-off file. 13 cases, every
+  condition mutation-checked.
+
 ## Next
-- CI green, fresh-reader verify, merge (restore main's IMPL.md first).
+- CI green (integration branch), merge (restore main's IMPL.md first).
 
 ## Verify
 - The #516 block alone: extract check(), keryx_quit_event, check_keryx_isolation and the

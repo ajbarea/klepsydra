@@ -114,13 +114,19 @@ keryx_quit_event() { # AT SLACK [LOG...]
 # only when it is keryx's own toggle off: no key but `enabled` (now false) differs from the copy
 # taken at the start, and the daemon logged its quit within seconds of the write
 # (#516). A case that leaked into the file changes some other key, or none quits.
+# FILE as keryx's json.loads reads it, one object and nothing after it: its keys
+# but `enabled`, sorted; fails on anything else.
+kiso_rest() { # FILE
+  jq -cS -s 'if length == 1 and (.[0] | type) == "object" then .[0] | del(.enabled) else error end' "$1" 2>/dev/null
+}
+
 check_keryx_isolation() { # [CFG ORIG_SUM ORIG_COPY LOG NAME]
   local cfg=${1:-$real_keryx_config} orig_sum=${2:-$real_keryx_sum} orig=${3:-$real_keryx_copy}
   local name=${5:-"#273: no case touched AJ's own keryx config"} cur_sum mtime event
   cur_sum=$(sha256sum "$cfg" 2>/dev/null | cut -d' ' -f1)
-  if [[ "$cur_sum" != "$orig_sum" && -n $cur_sum && -r $orig ]] &&
-    [[ $(jq -cS 'del(.enabled)' "$orig" 2>/dev/null) == "$(jq -cS 'del(.enabled)' "$cfg" 2>/dev/null)" ]] &&
-    [[ $(jq -c 'type' "$cfg" 2>/dev/null) == '"object"' && $(jq -c '.enabled' "$cfg" 2>/dev/null) == false ]] &&
+  local was now
+  if [[ "$cur_sum" != "$orig_sum" ]] && was=$(kiso_rest "$orig") && now=$(kiso_rest "$cfg") && [[ $was == "$now" ]] &&
+    [[ $(jq -s '.[0].enabled' "$cfg" 2>/dev/null) == false ]] &&
     mtime=$(stat -c %Y -- "$cfg" 2>/dev/null) &&
     event=$(keryx_quit_event "$mtime" 5 ${4:+"$4"}) && [[ -n $event ]]; then
     printf '  skip %s: AJ turned keryx off mid-run (only "enabled" changed; %s)\n' "$name" "$event"
@@ -4490,6 +4496,10 @@ kiso_out=$(kiso_run "$kiso_off" "not json at all"$'\n'"$(kiso_quit 1795400001)" 
 check "#516: a log line that is not JSON is skipped, not the end of the read" "$(grep -c '^  skip kiso garbage' <<<"$kiso_out")" "1"
 kiso_out=$(kiso_run '{"enabled": true, "speak_only": ["%1"]}' "$(kiso_quit 1795400001)" "kiso on" '{"enabled": false, "speak_only": ["%1"]}')
 check "#516: turned on (a quit beside it from a daemon swap) is no toggle off, and fails" "$(grep -c '^  FAIL kiso on' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off {}" "$(kiso_quit 1795400001)" "kiso trailing")
+check "#516: an object with another value after it (keryx cannot read it) fails" "$(grep -c '^  FAIL kiso trailing' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "$(kiso_quit 1795400001)" "kiso same off" "$kiso_off")
+check "#516: an unchanged file that was already off passes, quit or not" "$(grep -c '^  ok   kiso same off' <<<"$kiso_out")" "1"
 kiso_out=$(kiso_run "still not json" "$(kiso_quit 1795400001)" "kiso both" "not json")
 check "#516: a config unreadable before and after, but changed, fails" "$(grep -c '^  FAIL kiso both' <<<"$kiso_out")" "1"
 rm -f -- "$kiso_cfg" "$kiso_orig" "$kiso_log"
