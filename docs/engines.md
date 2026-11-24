@@ -40,6 +40,22 @@ called "past the crossover every seed was ambiguous" false by reading a
 4-column outcome row as the wrong column (friction 11-11 qml-paper). Check each
 claim against the code, the lexicon or the row before you edit anything.
 
+### Model discovery and routing review
+
+`fleet doctor` keeps each engine's model list in
+`$FLEET_STATE/models-agy.txt` and `models-copilot.txt`: agy's from `agy models`,
+Copilot's from the list its CLI cached at its last start (`~/.copilot/data.db`).
+It asks at most every 6 hours (`FLEET_MODELS_EVERY_S`). A change is a warning for
+3 days (`FLEET_MODELS_WARN_S`), so the doctor timer does not clear it unread:
+
+    warn models agy: changed 11-25 +gemini-4-neon: review routing in docs/engines.md
+
+When a new model appears:
+1. **Measure it on our own work first.** A vendor's benchmarks are not evidence
+   for this fleet: run it on real items (qualifier sweeps, doc lint, research).
+2. **Then review routing.** If it holds up, update `eng_order()` and
+   `eng_model()` in `fleet/engines.sh` and record the evidence in the table above.
+
 ### Briefing a lane
 
 - **Prompt shape.** Put the answer first in the task and ask for `path:line`
@@ -121,8 +137,10 @@ claim against the code, the lexicon or the row before you edit anything.
 | Follow-up | none (start another call) | `fleet delegate msg ID TEXT` |
 | Stop | timeout, or it ends | `fleet delegate stop ID` |
 
-State lives in `$FLEET_STATE/delegate/<id>/` (`meta.json`, `answer.md`, the
-engine's stderr, the lane's settings and last screen). Each call writes one
+`fleet delegate ls` lists the lanes and their state, and `fleet delegate read ID`
+prints a lane's latest answer. State lives in `$FLEET_STATE/delegate/<id>/`
+(`meta.json`, `answer.md`, the engine's stderr, the lane's settings and last
+screen). Each call writes one
 `delegate call` line to the fleet log (`fleet log`).
 
 ## The return path: the model never needs write or shell access
@@ -163,7 +181,14 @@ the engine a tool that writes, which the lock removes today.
 ## The lock
 
 Every non-Claude session the fleet starts, `+ New session` included, is locked,
-and a lock that cannot be built starts nothing. The two entry points differ: a
+and a lock that cannot be built starts nothing. A `+ New session` Copilot window
+runs with the same flags as a `fleet delegate` interactive lane (below), and the
+launcher refuses a folder that ships Copilot workspace configuration
+(`.github/hooks`, `.github/copilot`, `.github/skills`, `.github/agents`,
+`.github/extensions`, `.github/mcp.json`, `.mcp.json`, `.vscode/mcp.json`,
+`.copilot`, `.claude/skills`, `.agents/skills`, or a `.claude/settings.json` or
+`settings.local.json` that sets hooks, up to the repo root), since Copilot's
+folder trust loads it. The two entry points differ: a
 `fleet delegate` lane runs in a read-only snapshot with a scope and a timeout; a
 `+ New session` agy window is a person's own session in a live folder, so it has the
 deny rules and `--sandbox` only, and the lock policy names no trusted workspace, so
@@ -230,7 +255,9 @@ Guard mutants, first sweep (`test_delegate.sh`, 16 hand mutants: each Copilot fl
 
 `hooks/klepsydra-engine.sh` converts agy and Copilot hook payloads to the Claude Code event shape consumed by `hooks/klepsydra-fleet.sh`: session-file creation, state transitions and lifecycle handling therefore remain shared across harnesses. It also stamps `engine: "agy"` or `engine: "copilot"` into the session file so the wall cards display the engine badge.
 
-The agy configuration in `hooks/klepsydra-agy.json` registers `SessionStart`, `PreInvocation`, `PreToolUse`, `PostToolUse`, and `Stop` to feed `klepsydra-engine.sh`.
+The agy configuration in `hooks/klepsydra-agy.json` registers `SessionStart`, `PreInvocation`, `PreToolUse`, `PostToolUse`, and `Stop` to feed `klepsydra-engine.sh`. `fleet install` merges it into `~/.gemini/config/hooks.json`. The adapter also maps Copilot's `sessionStart`, `userPromptSubmitted`, `preToolUse`, `postToolUse`, `agentStop` and `sessionEnd`. Nothing in this repo registers those.
+
+On `PostToolUse`, the fleet hook (and, for agy, the adapter) also keeps the newest thing the agent said as `said`, so a working card shows it until the turn's reply replaces it (#410).
 
 ## Snapshot path rewriting and auto-deny handling
 

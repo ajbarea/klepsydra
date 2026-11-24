@@ -82,9 +82,10 @@ test("the empty state: the theme keeper's portrait as decoration, the title, wha
 
 test("the start button runs the same launch as + New session, in the app only", () => {
   const src = read("fleet/wall.js");
-  assert.equal((src.match(/invoke\("launch_session"\)/g) ?? []).length, 1, "one launch call, shared by both buttons");
-  assert.match(src, /newButton\.addEventListener\("click", \(\) => startSession\(newButton, newNote\)\)/);
-  assert.match(src, /startButton\.addEventListener\("click", \(\) => startSession\(startButton, newNote\)\)/, "its answer shows in the bar, where it outlives the empty state");
+  assert.equal((src.match(/invoke\("launch_session"/g) ?? []).length, 1, "one launch call, shared by both buttons");
+  assert.match(src, /newButton\.addEventListener\("click", \(\) => startDefault\(newButton\)\)/);
+  assert.match(src, /startButton\.addEventListener\("click", \(\) => startDefault\(startButton\)\)/, "both start the default engine (#440)");
+  assert.match(src, /const startDefault = \(button\) => \{[\s\S]*?startSession\(button, newNote,/, "its answer shows in the bar, where it outlives the empty state");
   assert.match(src, /startButton\.hidden = !inTauri/);
   assert.match(src, /invoke\("get_launch_dir"\)/);
   assert.match(src, /const toClear = \(\) => endedIds\(sessions\)\.filter[\s\S]*press\(clearEnded, clearNote, \(\) => clearAll\(ids, tauri, \(id\) => cleared\.add\(id\)\)/, "the link clears through clear_session, ended sessions only, into its own note");

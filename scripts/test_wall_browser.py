@@ -130,9 +130,12 @@ class Wall:
             )
         page.goto(f"http://127.0.0.1:{self.port}/src/wall.html?demo={cards}{query}")
         painted(page, f"document.getElementById('wall').children.length === {cards}")
-        # In the app the bar shows + New session and Wrap up…; the fit must hold with them.
+        # In the app the bar shows + New session with its caret and an account badge, and
+        # Wrap up…; the fit must hold with them.
         page.evaluate(
             "document.getElementById('new-session').hidden = false;"
+            " document.getElementById('new-kind').hidden = false;"
+            " Object.assign(document.querySelector('#new-session .mono'), { hidden: false, textContent: 'RIT' });"
             " document.getElementById('wrapup-open').hidden = false;"
             " dispatchEvent(new Event('resize'))"
         )
@@ -1182,12 +1185,22 @@ window.__TAURI__ = { core: {
       setTimeout(() => args.onMessage.onmessage(window.__savedTheme ?? 'kourai'), window.__themeDelay ?? 0);
       return Promise.resolve();
     }
+    if (cmd === 'opacity_subscribe') {
+      window.__opacity = args.onMessage;
+      setTimeout(() => args.onMessage.onmessage(window.__savedOpacity ?? 80), 0);
+      return Promise.resolve();
+    }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     // The front end's log lines, apart from the actions.
     if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
-    if (cmd === 'agy_models') { window.__calls.push([cmd, args]); return window.__agy ? Promise.resolve(window.__agy) : Promise.reject('agy (Antigravity CLI) was not found on PATH.'); }
+    if (cmd === 'agy_models') { window.__calls.push([cmd, args]); return window.__agy ? Promise.resolve(window.__agy) : Promise.reject(window.__agyError ?? 'agy (Antigravity CLI) was not found on PATH.'); }
+    if (cmd === 'read_usage') { window.__calls.push([cmd, args]); return Promise.resolve(window.__usage ?? []); }
+    if (cmd === 'engines_status') { window.__calls.push([cmd, args]); return new Promise((r) => setTimeout(() => r(window.__engines ?? { claude: [], agy: false, copilot: false }), window.__enginesDelay ?? 0)); }
+    if (cmd === 'launch_session' && window.__launchHold) { window.__calls.push([cmd, args]); return window.__launchHold; }
+    if (cmd === 'new_session_prefs') { window.__calls.push([cmd, args]); return Promise.resolve(window.__nsprefs ?? { default: null, last: null }); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
+    if (window.__fails && window.__fails[cmd]) { window.__calls.push([cmd, args]); return Promise.reject(window.__fails[cmd]); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
@@ -1198,7 +1211,7 @@ window.__TAURI__ = { core: {
 """
 ENDS = "window.__calls.filter(([c]) => c === 'end_session')"
 # The wall's read-only queries on load; any other recorded call is an action.
-READS = ["get_launch_dir", "get_split_mode", "agy_models"]
+READS = ["get_launch_dir", "get_split_mode", "agy_models", "read_usage", "engines_status", "new_session_prefs"]
 WORKING_CARD = ".card:has(.pill .label:text-is('working')):has(.menu:not([hidden]))"
 
 
@@ -1300,7 +1313,7 @@ def empty_state(wall):
             sent = calls(page, "launch_session")
             note = page.locator("#new-note").inner_text()
             wall.check(
-                sent == [["launch_session", None], ["launch_session", None]] and note == "ok",
+                sent == [["launch_session", {}], ["launch_session", {}]] and note == "ok",
                 "Start a session and + New session send the same launch, and its note shows the answer",
                 [sent, note],
             )
@@ -1577,6 +1590,77 @@ def landmarks(wall):
         )
         wall.check(got == {"main": 1, "h1": 1, "wall": True, "empty": True}, "one main, one h1, the wall and the empty state inside it", got)
         page.close()
+
+
+NARROW = """() => {
+  const cw = document.documentElement.clientWidth;
+  const r = (e) => e.getBoundingClientRect();
+  const cards = [...document.getElementById('wall').children].filter((c) => c.checkVisibility());
+  // Every control inside its own card (the portrait's look button breaks the frame by
+  // design, #247: inside the window is its bound), and every card inside the window.
+  const out = cards.flatMap((c) => [...c.querySelectorAll('button, a')]
+      .filter((e) => e.checkVisibility() && (e.classList.contains('look')
+        ? r(e).right > cw + 0.5 || r(e).left < -0.5
+        : r(e).right > r(c).right + 0.5 || r(e).left < r(c).left - 0.5))
+      .map((e) => (e.getAttribute('aria-label') || e.className || e.tagName).toString().slice(0, 30)))
+    .concat(cards.filter((c) => r(c).right > cw + 0.5).map(() => 'card'));
+  // A label wider than its button spills out though the button's own box fits.
+  const cut = cards.flatMap((c) => [...c.querySelectorAll('button')])
+    .filter((b) => b.checkVisibility() && b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent.trim().slice(0, 30));
+  // No two header controls overlap (a pill running under Open terminal, #505).
+  const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+  const overlap = cards.flatMap((c) => {
+    const els = ['.pill', '.jump', '.clear'].map((q) => c.querySelector(q)).filter((e) => e && e.checkVisibility());
+    return els.flatMap((a, i) => els.slice(i + 1).filter((b) => hit(r(a), r(b))).map((b) => `${a.className}/${b.className}`));
+  });
+  // A name keeps its whole width, or 90 px before it ellipsizes: never squeezed to a letter.
+  const squeezed = cards.map((c) => c.querySelector('.name')).filter((n) => n && n.checkVisibility()
+      && n.clientWidth < Math.min(n.scrollWidth, 90)).map((n) => `${n.textContent} ${n.clientWidth}px`);
+  const jumps = cards.map((c) => c.querySelector('.jump')).filter((b) => b && b.checkVisibility())
+    .map((b) => b.textContent.trim());
+  return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut, squeezed, overlap,
+           density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)] };
+}"""
+
+
+def narrow_window_keeps_cards_inside(wall):
+    """#505: a desktop wall window narrower than a card's 420 px minimum keeps
+    every card inside the window and every button and link inside its card,
+    with no sideways scroll, in both densities and with a queue tab's padding;
+    no name is squeezed (a narrow compact card gives the name its own line) and
+    Open terminal reads whole; at full width the columns are as before."""
+    for density in ("compact", "comfortable"):
+        for width, tabbed in ((360, False), (390, False), (390, True), (420, True), (450, False), (470, False), (520, False), (530, False), (880, False), (1920, False)):
+            page = open_app(wall, width=width, height=900 if width < 1000 else 1000)
+            pick(page, f".density label:has([value={density}])")
+            if tabbed:
+                page.evaluate("document.body.classList.add('queue-tabbed')")
+            page.wait_for_timeout(1500)  # past an arrival's spring over the frame
+            got = page.evaluate(NARROW)
+            tab = " with a queue tab" if tabbed else ""
+            # Left for #535: a two-column compact wall, and a comfortable one under 400 px.
+            names = "" if (density == "compact" and width == 880) or (density == "comfortable" and width < 400) else ", no name squeezed"
+            wall.check(got["density"] == density and got["cards"] > 0 and not got["wide"] and not got["out"]
+                       and not got["cut"] and not got["overlap"] and (not names or not got["squeezed"]) and got["jumps"] in ([], ["Open terminal"]),
+                       f"{density} at {width} px{tab}: cards in the window, controls in their card and apart{names}, Open terminal whole", got)
+            page.close()
+    page = open_app(wall, width=1920, height=1000)
+    cols = page.evaluate("getComputedStyle(document.getElementById('wall')).gridTemplateColumns.split(' ').length")
+    wall.check(cols == 4, "at 1920 px the wall still has four columns", cols)
+    page.close()
+    # The phone wall (.served) keeps its own one-line compact header: none of the stacking reaches it.
+    page = open_app(wall, width=390, height=900)
+    pick(page, ".density label:has([value=compact])")
+    page.evaluate("document.documentElement.classList.add('served')")
+    page.wait_for_timeout(1500)
+    phone = page.evaluate("""() => {
+      const c = [...document.getElementById('wall').children].find((e) => e.checkVisibility() && e.querySelector('.pill'));
+      const p = c.querySelector('.pill'), n = c.querySelector('.name');
+      const mid = (e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; };
+      return { margin: getComputedStyle(p).marginLeft, sameLine: Math.abs(mid(p) - mid(n)) < 12 };
+    }""")
+    wall.check(phone["margin"] == "8px" and phone["sameLine"], "the phone wall at 390 px keeps the pill beside the name, as before", phone)
+    page.close()
 
 
 def ended_only(wall):
@@ -2206,6 +2290,62 @@ def wrapup_confirm_lists_routes(wall):
         [note, card_note],
     )
     wall.check(sorted((starts[0][1] or {}).get("ids") or []) == sorted(LIVE), "start_wrapup gets exactly the sessions the confirm listed", starts[0][1])
+    page.close()
+
+
+NATIVE_KEYS = ("demo-1-am_michael", "demo-2-af_bella", "demo-5-bf_isabella")  # needs_you, working, done
+
+
+def native_flag_reaches_the_cards(wall):
+    """A native Linux snapshot (native: true) offers its null-distro sessions End, Interrupt, a typed wrap-up and an
+    unnamed Jump styled like any other; the same snapshot with native false (what Windows sends) or
+    without the flag (an older app) offers none of them."""
+    page = open_app(wall, keep=lambda s: s["session_id"] in NATIVE_KEYS)
+    names = names_by_key(page)
+    base = json.loads(json.dumps(page.snapshot))
+    for row in base["sessions"]:
+        row["distro"] = None  # the hook records none on native Linux
+        if row["session_id"] != "demo-2-af_bella":
+            row["name"] = None  # unnamed: Jump finds it by its pane alone
+    state = """() => Object.fromEntries([...document.querySelectorAll('.card')].map((c) => [c.dataset.key, {
+      menu: !c.querySelector('.menu').hidden,
+      jump: !('off' in c.querySelector('.jump').dataset),
+      kind: c.querySelector('.jump').dataset.kind,
+    }]))"""
+    for native in (True, False, None):
+        snap = json.loads(json.dumps(base))
+        if native is not None:
+            snap["native"] = native
+        at = " (flag missing)" if native is None else f" (native: {native})"
+        send(page, snap)
+        got = page.evaluate(state)
+        kinds = {k: got[k]["kind"] for k in NATIVE_KEYS}
+        menus = {k: got[k]["menu"] for k in NATIVE_KEYS}
+        jumps = {k: got[k]["jump"] for k in ("demo-1-am_michael", "demo-5-bf_isabella")}
+        if native:
+            wall.check(all(menus.values()), "every null-distro session in klepsydra's tmux gets the actions menu" + at, menus)
+            wall.check(all(jumps.values()) and kinds["demo-1-am_michael"] == "needs" and kinds["demo-5-bf_isabella"] in ("accent", "plain"),
+                       "an unnamed session's Open terminal is on, filled when it needs you, marked otherwise" + at, [jumps, kinds])
+            open_menu(page, page.locator(".card[data-key='demo-2-af_bella']"))
+            items = page.evaluate(
+                "[...document.querySelectorAll('#session-menu [role=menuitem]')].filter((i) => !i.hidden).map((i) => i.textContent.trim())"
+            )
+            page.keyboard.press("Escape")
+            wall.check(items == ["Interrupt", "End session…"], "a working null-distro card offers Interrupt and End" + at, items)
+        else:
+            wall.check(not any(menus.values()), "through wsl.exe a session with no distro gets no actions menu" + at, menus)
+            wall.check(not any(jumps.values()) and kinds["demo-1-am_michael"] == "off" and kinds["demo-5-bf_isabella"] == "off",
+                       "through wsl.exe an unnamed session with no distro cannot be jumped to" + at, [jumps, kinds])
+        page.click("#wrapup-open")
+        page.wait_for_function("document.getElementById('end-dialog').open")
+        groups = page.evaluate(DIALOG)["groups"]
+        page.get_by_role("button", name="Cancel").click()
+        page.wait_for_function("!document.getElementById('end-dialog').open")
+        typed = [["Typed now", [names["demo-5-bf_isabella"]]]] if native else []
+        by_hand = [] if native else [[BY_HAND, [names["demo-5-bf_isabella"]]]]
+        want = typed + [["At the end of its turn", [names["demo-2-af_bella"]]], ["After you answer", [names["demo-1-am_michael"]]]] + by_hand
+        wall.check(groups == want, "the Wrap up confirm types into an idle null-distro session only with the flag" + at, groups)
+        wall.check(not page.evaluate(STARTS), "looking asks no one" + at, page.evaluate(STARTS))
     page.close()
 
 
@@ -4597,50 +4737,216 @@ HEALTH = {
 
 
 AGY = [
-    {"id": "claude-opus-4-6-thinking", "label": "Claude Opus 4.6 (Thinking)"},
-    {"id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)"},
-    {"id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)"},
+    {"id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)", "group": "gemini"},
+    {"id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash (Medium)", "group": "gemini"},
+    {"id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)", "group": "gemini"},
+    {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6 (Thinking)", "group": "3p"},
+    {"id": "claude-opus-4-6-thinking", "label": "Claude Opus 4.6 (Thinking)", "group": "3p"},
+    {"id": "gpt-oss-120b-medium", "label": "GPT-OSS 120B (Medium)", "group": "3p"},
 ]
+PERSONAL = "6f5fe38b-9f23-4588-b57a-6efd1225cadd"
+RIT = "96130a18-106b-49a2-9b8e-a0b4d52aa214"
 
 
-def agy_menu(wall):
-    """+ New session's other kind (#323): no menu where agy lists no models;
-    with them, a split button whose menu offers Gemini first and starts agy on
-    the model picked, and + New session itself still starts Claude Code. Set
-    $KLEPSYDRA_AGY_SHOT to a path stem for a screenshot of the open menu."""
-    page = open_app(wall)
+def readings(claude_gpt=0):
+    """read_usage's answer as on AJ's PC (11-19): a file per session, the
+    account's uuid and organisation label, agy under agy-primary; times from now."""
+    now = int(time.time())
+
+    def r(account, label, session, ago, windows, **extra):
+        return {"account": account, "label": label, "session": session, "written_at": now - ago,
+                "observed_at": now - ago, "api_ms": 1000, "windows": windows, **extra}
+
+    return [
+        r(PERSONAL, "Personal", "537f9cf4", 15, {"five_hour": {"used_percentage": 3, "resets_at": now + 15400},
+                                                 "seven_day": {"used_percentage": 57, "resets_at": now + 380200}}),
+        r(PERSONAL, "Personal", "1111aaaa", 900, {"five_hour": {"used_percentage": 1, "resets_at": now + 15400},
+                                                  "seven_day": {"used_percentage": 55, "resets_at": now + 380200}}),
+        r(RIT, "RIT-CS-DQL", "14887126", 13, {"five_hour": {"used_percentage": 7, "resets_at": now + 4600},
+                                              "seven_day": {"used_percentage": 28, "resets_at": now + 553000}}),
+        r("agy-primary", "Google AI Pro", "0e9aa7fa", 95,
+          {"five_hour": {"used_percentage": 25.95, "resets_at": now + 10316},
+           "seven_day": {"used_percentage": 31.81, "resets_at": now + 543116},
+           "claude_gpt": {"used_percentage": claude_gpt, "resets_at": now + 17905}}, harness="agy"),
+    ]
+
+
+ENGINES = {"claude": [PERSONAL, RIT], "agy": True, "copilot": True}
+
+
+def ns_open(wall, width=1920, height=1000, agy=AGY, engines=ENGINES, prefs=None, usage=None, scheme="dark"):
+    init = (
+        f"window.__agy = {json.dumps(agy)}; window.__engines = {json.dumps(engines)};"
+        f"window.__usage = {json.dumps(usage if usage is not None else readings())};"
+        f"window.__nsprefs = {json.dumps(prefs or {'default': None, 'last': None})};"
+    )
+    page = open_app(wall, width=width, height=height, init=init)
+    page.emulate_media(color_scheme=scheme)
     page.wait_for_timeout(300)
-    wall.check(page.locator("#new-kind").is_hidden(), "no agy: + New session alone, as before", page.locator("#new-kind").is_visible())
-    page.close()
-    page = open_app(wall, init=f"window.__agy = {json.dumps(AGY)};")
+    return page
+
+
+MENU_ROWS = "[...document.querySelectorAll('#new-menu .eng')].map((e) => e.querySelector('.eng-name').textContent)"
+FOCUS_KEY = "document.activeElement === document.body ? 'body' : (document.activeElement.dataset.fk || document.activeElement.id)"
+
+
+def new_session_menu(wall):
+    """+ New session (#440, Variant A) on the desktop snapshot, which carries no
+    readings: room comes from read_usage, accounts from the launcher's engine
+    list, the default and last used from prefs.json. The main button names the
+    default engine; the caret lists the others, Recommended first; focus stays
+    on what the keyboard pressed through every redraw, and Escape returns it to
+    the caret. Set $KLEPSYDRA_NS_SHOTS=1 for shots under shots/<date>/."""
+    # The desktop snapshot has no usage; the menu's room is read_usage's.
+    page = ns_open(wall, prefs={"default": None, "last": f"claude:{RIT}"})
+    wall.check("usage" not in page.snapshot, "the desktop snapshot carries no readings", list(page.snapshot))
+    btn = page.locator("#new-session")
+    wall.check(btn.inner_text().split() == ["New", "Claude", "session", "RIT"] and btn.get_attribute("title") == "Claude on RIT: 72% of the week left",
+               "the button names the engine last started and its account, its room in the title (the week binds)", [btn.inner_text(), btn.get_attribute("title")])
+    btn.click()
+    page.wait_for_timeout(200)
+    icons = page.evaluate("[...document.querySelectorAll('#new-session .ico svg, #new-menu .ico svg')].map((s) => s.namespaceURI === 'http://www.w3.org/2000/svg' && s.getBoundingClientRect().width > 0)")
+    wall.check(len(icons) >= 1 and all(icons), "the engine's logo draws on the button", icons)
+    wall.check(calls(page, "launch_session") == [["launch_session", {"engine": "claude", "account": RIT}]],
+               "the main button launches the default engine on its account", calls(page, "launch_session"))
+
+    # Keyboard: Enter on the caret opens the menu with focus on its first row.
+    page.focus("#new-kind")
+    page.keyboard.press("Enter")
     page.wait_for_timeout(300)
-    kind = page.locator("#new-kind")
-    wall.check(kind.is_visible() and kind.get_attribute("aria-label") == "Start another kind of session", "with agy's models, the split button's menu half shows, named", kind.get_attribute("aria-label"))
-    kind.click()
+    rows = page.evaluate(MENU_ROWS)
+    wall.check(rows == ["Antigravity", "Claude on Personal", "Copilot"],
+               "the menu lists the other engines, the free-first Recommended one first, never the default", rows)
+    wall.check(page.evaluate(FOCUS_KEY) == "h:agy", "opening puts focus on the first row", page.evaluate(FOCUS_KEY))
+    personal = page.locator("#new-menu .eng", has_text="Claude on Personal")
+    wall.check(personal.locator(".room b").inner_text() == "43%" and personal.locator(".room-detail").inner_text().startswith("week · resets "),
+               "an account's room is the reconciled reading's binding window, one row however many sessions", personal.locator(".room").inner_text())
+    page.focus(f"#new-menu [data-fk='h:claude:{PERSONAL}']")
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(200)
+    wall.check(page.evaluate(FOCUS_KEY) == f"h:claude:{PERSONAL}" and personal.locator(".eng-h").get_attribute("aria-expanded") == "true",
+               "Enter on a row opens it and focus stays on it through the redraw", page.evaluate(FOCUS_KEY))
+    send(page, page.snapshot)
+    wall.check(page.evaluate(FOCUS_KEY) == f"h:claude:{PERSONAL}", "a snapshot arriving while the menu is open keeps focus", page.evaluate(FOCUS_KEY))
+    models = page.evaluate("[...document.querySelectorAll('#new-menu .eng.open .model-name')].map((e) => e.textContent)")
+    wall.check(models == ["Opus", "Sonnet", "Fable"], "Claude's row offers its models", models)
+    page.focus(f"#new-menu [data-fk='m:claude:{PERSONAL}:sonnet']")
+    page.keyboard.press("Space")
     page.wait_for_timeout(150)
-    opts = page.evaluate("[...document.querySelectorAll('#agy-model option')].map((o) => o.value)")
-    wall.check(
-        page.locator("#new-menu").is_visible() and opts == ["gemini-3.8-flash-high", "gemini-3.8-flash-low", "claude-opus-4-6-thinking"],
-        "its menu opens with Gemini first, then the rest in agy's order",
-        opts,
-    )
-    shot = os.environ.get("KLEPSYDRA_AGY_SHOT")
-    if shot:
-        page.screenshot(path=f"{shot}-menu.png")
-    page.select_option("#agy-model", "gemini-3.8-flash-low")
-    page.click("#agy-start")
-    page.wait_for_timeout(200)
-    sent = calls(page, "launch_session")
-    wall.check(
-        sent == [["launch_session", {"agyModel": "gemini-3.8-flash-low"}]] and page.locator("#new-menu").is_hidden(),
-        "Start sends one launch on the model picked and closes the menu",
-        sent,
-    )
-    page.click("#new-session")
-    page.wait_for_timeout(200)
-    sent = calls(page, "launch_session")
-    wall.check(sent[-1] == ["launch_session", None], "+ New session itself still starts Claude Code", sent)
+    wall.check(page.evaluate(FOCUS_KEY) == f"m:claude:{PERSONAL}:sonnet", "picking a model keeps focus on it", page.evaluate(FOCUS_KEY))
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(150)
+    wall.check(page.locator("#new-menu").is_hidden() and page.evaluate(FOCUS_KEY) == "new-kind", "Escape closes the menu and returns focus to the caret",
+               page.evaluate(FOCUS_KEY))
     page.close()
+
+    # agy: models in their quota groups; a spent group's models are off; Start sends the model.
+    page = ns_open(wall, usage=readings(claude_gpt=100))
+    page.click("#new-kind")
+    page.wait_for_timeout(250)
+    groups = page.evaluate("[...document.querySelectorAll('#new-menu .eng.open .mgrp')].map((e) => e.textContent)")
+    wall.check(len(groups) == 2 and groups[0] == "Gemini · 74% of the session, 68% of the week" and groups[1].startswith("Claude & GPT · spent, back "),
+               "agy's models sit under their quota groups, each with its room", groups)
+    off = page.evaluate("[...document.querySelectorAll('#new-menu .eng.open .model input')].map((i) => i.disabled)")
+    wall.check(off == [False, False, False, True, True, True], "only the spent group's models are off", off)
+    wall.check("leaving agy" not in page.locator("#new-menu").inner_text(), "no stale 'leaving agy today' note", None)
+    page.click("#new-menu .model:has(input[value='gemini-3.8-flash-low'])")
+    page.click("#new-menu .eng.open .eng-start")
+    page.wait_for_timeout(200)
+    wall.check(calls(page, "launch_session") == [["launch_session", {"engine": "agy", "model": "gemini-3.8-flash-low"}]] and page.locator("#new-menu").is_hidden(),
+               "Start sends one launch of agy on the model picked and closes the menu", calls(page, "launch_session"))
+    # Set as default: saved through the app, the button follows, focus lands on the caret, not the page.
+    page.click("#new-kind")
+    page.wait_for_timeout(250)
+    page.click("#new-menu .eng:has-text('Copilot') .eng-h")
+    page.click("#new-menu .eng.open .eng-default")
+    page.wait_for_timeout(200)
+    wall.check(calls(page, "set_new_session_default") == [["set_new_session_default", {"id": "copilot"}]] and "New Copilot session" in page.inner_text("#new-session"),
+               "Set as default saves it in the app's prefs and the button names it", [calls(page, "set_new_session_default"), page.inner_text("#new-session")])
+    wall.check(page.evaluate(FOCUS_KEY) != "body", "focus never drops to the page when the default leaves the menu", page.evaluate(FOCUS_KEY))
+    wall.check(page.locator("#new-menu .eng-reset").is_visible(), "a chosen default can be cleared from the menu", None)
+    page.close()
+
+    # The saved default is judged before the button acts: a click while the engine list is
+    # still on its way starts nothing, then the button names the saved engine.
+    page = open_app(wall, init=(f"window.__agy = {json.dumps(AGY)}; window.__engines = {json.dumps(ENGINES)};"
+                                f"window.__usage = {json.dumps(readings())}; window.__enginesDelay = 1500;"
+                                "window.__nsprefs = { default: 'copilot', last: null };"))
+    page.wait_for_timeout(200)
+    early = page.get_attribute("#new-session", "aria-disabled")
+    page.click("#new-session", force=True)  # Playwright waits on an aria-disabled button
+    page.wait_for_timeout(1800)
+    wall.check(early == "true" and calls(page, "launch_session") == [] and "New Copilot session" in page.inner_text("#new-session")
+               and page.get_attribute("#new-session", "aria-disabled") is None,
+               "until the saved default can be judged the button is off and a click starts nothing; then it names it",
+               [early, calls(page, "launch_session"), page.inner_text("#new-session")])
+    # One launch at a time, through any repaint: a launch still running keeps the button off.
+    page.evaluate("() => { window.__launchHold = new Promise(() => {}); }")  # returning the promise would wait on it
+    page.click("#new-session")
+    page.wait_for_timeout(150)
+    page.click("#new-kind", force=True)  # off while the launch runs; the menu still opens, and repaints the button
+    page.wait_for_timeout(250)
+    page.keyboard.press("Escape")
+    page.click("#new-session", force=True)
+    page.wait_for_timeout(150)
+    wall.check(len(calls(page, "launch_session")) == 1 and page.get_attribute("#new-session", "aria-disabled") == "true",
+               "a repaint while a launch runs never turns the button back on", calls(page, "launch_session"))
+    page.close()
+
+    # Missing engines stay listed, off, with the step that fixes them; agy failing is an error, not a sign-in.
+    page = ns_open(wall, agy=None, engines={"claude": [RIT], "agy": False, "copilot": False})
+    page.click("#new-kind")
+    page.wait_for_timeout(250)
+    copilot = page.locator("#new-menu .eng", has_text="Copilot")
+    wall.check(copilot.locator(".eng-acct").inner_text() == "Not installed on this PC" and copilot.locator(".eng-start:visible").count() == 0,
+               "no agy or Copilot: each is listed off, nothing to start", copilot.inner_text())
+    copilot.locator(".eng-fix").click()
+    page.wait_for_timeout(150)
+    wall.check(copilot.locator(".eng-step code").inner_text() == "npm install -g @github/copilot" and copilot.locator(".eng-fix").get_attribute("aria-expanded") == "true",
+               "How to install shows the one command", copilot.locator(".eng-step").inner_text())
+    personal = page.locator("#new-menu .eng", has_text="Claude on Personal")
+    wall.check(personal.locator(".eng-acct").inner_text() == "Installed, not signed in" and personal.locator(".eng-fix").inner_text() == "Sign in",
+               "an account with readings but no login here offers Sign in", personal.inner_text())
+    page.close()
+    page = open_app(wall, init=(f"window.__engines = {json.dumps(ENGINES)}; window.__usage = {json.dumps(readings())};"
+                                "window.__agyError = 'agy models did not answer.';"))
+    page.wait_for_timeout(300)
+    page.click("#new-kind")
+    page.wait_for_timeout(250)
+    agy = page.locator("#new-menu .eng", has_text="Antigravity")
+    wall.check(agy.locator(".eng-acct").inner_text() == "agy models did not answer." and agy.locator(".eng-fix").inner_text() == "Try again"
+               and agy.locator(".rec").is_hidden(),
+               "agy installed but failing says why and offers a retry, never 'not signed in', and is not Recommended", agy.inner_text())
+    page.close()
+
+    # Narrow: the button stays one line and clear of the gear, the bar inside the window. The
+    # app's window is 420 at its narrowest (fleet.rs); 390 is the mockup's phone width.
+    for width, height in ((1920, 1000), (420, 844), (390, 844)):
+        for scheme in ("dark", "light"):
+            page = ns_open(wall, width=width, height=height, prefs={"default": None, "last": f"claude:{RIT}"}, scheme=scheme)
+            box = page.evaluate("""() => {
+              const r = (s) => document.querySelector(s).getBoundingClientRect();
+              const b = r('#new-session'), k = r('#new-kind'), g = r('.gear summary');
+              const hit = (a, c) => a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom;
+              const out = [...document.querySelectorAll('.bar *')].some((e) => e.checkVisibility() && e.getBoundingClientRect().right > innerWidth + 0.5);
+              return { h: Math.round(b.height), gearHitsCaret: hit(k, g), wide: out };
+            }""")
+            wall.check(box["h"] <= 40 and not box["gearHitsCaret"] and not box["wide"],
+                       f"{width} {scheme}: the split button is one line, the gear clear of the caret, the bar inside the window", box)
+            if os.environ.get("KLEPSYDRA_NS_SHOTS"):
+                out = ROOT / "shots" / time.strftime("%Y-%m-%d")
+                out.mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(out / f"new-session-{width}-{scheme}-closed.png"))
+            page.click("#new-kind")
+            page.wait_for_timeout(250)
+            menu = page.evaluate("""() => { const m = document.getElementById('new-menu').getBoundingClientRect();
+              const k = document.getElementById('new-kind').getBoundingClientRect();
+              return { top: Math.round(m.top - k.bottom), left: Math.round(m.left), right: Math.round(innerWidth - m.right) }; }""")
+            wall.check(0 <= menu["top"] <= 12 and menu["left"] >= 0 and menu["right"] >= 0,
+                       f"{width} {scheme}: the menu opens just under the caret, on screen", menu)
+            if os.environ.get("KLEPSYDRA_NS_SHOTS"):
+                page.screenshot(path=str(out / f"new-session-{width}-{scheme}-open.png"))
+            page.close()
 
 
 def gear_closes(wall):
@@ -4739,6 +5045,30 @@ def worn(wall, page, theme, got, what):
     wrong = [c for c in cards if not ok(c)]
     keeper = f"fleet/faces/{theme}/{cast[THEMES[theme]['keeper']]['face']}-full.webp"
     wall.check(cards and not wrong and got["picker"] == theme and got["keeper"] == keeper, f"{what}: every cast card wears {theme}", [wrong[:2], got["picker"], got["keeper"]])
+
+
+def gauge_opacity_slider(wall):
+    """Gauge background (#438): the gear's slider shows the saved opacity; arrow
+    steps show at once and are saved once, where the slider rests; with no push
+    back from the app (Tauri does not order one before the reply) the thumb
+    stays where it was asked."""
+    page = open_app(wall, 1920, 1000, init="window.__savedOpacity = 35;")
+    open_gear(page)
+    got = page.evaluate("[document.querySelector('.opacity-pick').hidden, document.getElementById('gauge-opacity').value, document.querySelector('.opacity-value').textContent, document.getElementById('gauge-opacity').getAttribute('aria-valuetext')]")
+    wall.check(got == [False, "35", "35%", "35%"], "the slider shows the saved opacity, in words too", got)
+    box = page.locator("#gauge-opacity").bounding_box()
+    wall.check(box is not None and box["height"] >= 24, "the slider is a real target", box)
+    before = len(page.evaluate("window.__calls"))
+    page.focus("#gauge-opacity")
+    for _ in range(3):
+        page.keyboard.press("ArrowRight")
+    early = page.evaluate("window.__calls")[before:]
+    shown = page.evaluate("document.querySelector('.opacity-value').textContent")
+    page.wait_for_timeout(600)
+    calls = page.evaluate("window.__calls")[before:]
+    value = page.evaluate("document.getElementById('gauge-opacity').value")
+    wall.check(early == [] and shown == "50%" and calls == [["set_gauge_opacity", {"opacity": 50}]] and value == "50",
+               "arrow steps show at once and save once, where the slider rests; the thumb stays", [early, shown, calls, value])
 
 
 def themes_switch_live(wall):
@@ -4936,6 +5266,26 @@ def theme_renames_the_queue_keeper(wall):
     page.close()
 
 
+def refused_saves_say_so(wall):
+    """A density prefs.json refused says so in the bar, as a refused theme
+    does, and the next save that takes clears it (#484: a corrupt prefs.json
+    reads as the defaults, so silence looked saved)."""
+    page = open_app(wall)
+    density = "prefs.json could not be saved, so the density is not kept."
+    page.evaluate("(m) => { window.__fails = { set_wall_density: m }; }", density)
+    open_gear(page)
+    pick(page, ".density label:has([value=compact])")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
+    wall.check(got == [f"Not saved: {density}", True], "a refused density save says why in the bar", got)
+    page.evaluate("window.__fails = null")
+    pick(page, ".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
+    wall.check(got == ["", False], "the next density save that takes clears the note", got)
+    page.close()
+
+
 def theme_save_flushes_and_says_when_refused(wall):
     """A choice still waiting to be saved is saved at once when the picker
     loses focus (a click on the tray's Quit takes it away), and only once; a
@@ -4952,19 +5302,19 @@ def theme_save_flushes_and_says_when_refused(wall):
     page.wait_for_timeout(SAVE_MS + 200)
     late = page.evaluate("window.__calls")[before:]
     wall.check(early == [["set_theme", {"theme": "professions"}]] and late == early, "a blur saves the waiting choice at once, and once", [early, late])
-    page.evaluate("window.__setThemeFails = 'prefs.json could not be saved, so the theme is still kourai, not dicebear.'")
+    page.evaluate("window.__setThemeFails = 'prefs.json could not be written: the theme is still kourai, not dicebear.'")
     open_gear(page)
     page.select_option("#theme", "dicebear")
     page.wait_for_timeout(SAVE_MS + 200)
     page.evaluate("window.__theme.onmessage('kourai')")
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate("[document.getElementById('theme-note').textContent, document.getElementById('theme-note').checkVisibility(), document.documentElement.dataset.theme, document.getElementById('theme').value]")
-    wall.check(got == ["Not saved: prefs.json could not be saved, so the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
+    wall.check(got == ["Not saved: prefs.json could not be written: the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
                "a refused save says why, and the wall wears the theme the app kept", got)
     logs = page.evaluate("window.__logs ?? []")
     want = {
         "level": 5,
-        "message": "set_theme refused theme dicebear: prefs.json could not be saved, so the theme is still kourai, not dicebear.",
+        "message": "set_theme refused theme dicebear: prefs.json could not be written: the theme is still kourai, not dicebear.",
         "location": "fleet/wall.js",
     }
     wall.check([{k: entry.get(k) for k in want} for entry in logs] == [want],
@@ -5209,6 +5559,58 @@ def theme_file_that_never_answers(wall):
     page.close()
 
 
+STRIP_KEEPER = """
+async () => {
+  const { mountStrip } = await import('/src/fleet/strip.js');
+  const { loadTheme } = await import('/src/fleet/theme.js');
+  const old = document.getElementById('strip');
+  const el = old.cloneNode(false);
+  el.hidden = true;
+  old.replaceWith(el);
+  let cast = await loadTheme('professions');
+  const render = mountStrip(el, { open() {}, cast: () => cast });
+  window.__strip = { el, render, set: (c) => { cast = c; render([], Date.now()); }, bare: { ...cast, keeper: null } };
+  render([], Date.now());
+}
+"""
+STRIP_BOX = """() => {
+  const b = document.querySelector('#strip .face.rest'), i = b.querySelector('img'), g = b.querySelector('.glyph');
+  const box = (e) => { const r = e.getBoundingClientRect(), c = getComputedStyle(e); return { w: r.width, h: r.height, display: c.display, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
+  return { button: box(b), img: box(i), src: i.getAttribute('src'), glyph: g && box(g) };
+}"""
+
+
+def strip_keeper_states(wall):
+    """With no sessions the gauge strip is one button: the keeper's face, and for
+    a theme with no keeper a plain wall mark that sits centred with no image
+    sliver (badge.css's `.face img { display: block }` once beat [hidden]), also
+    after a switch from a keeper, whose face must be gone."""
+    page = wall.browser.new_page(viewport={"width": 1200, "height": 400})
+    page.goto(f"http://127.0.0.1:{wall.port}/src/index.html?still=1&zoom=3&theme=professions")
+    page.wait_for_selector("#strip", state="attached")
+    page.evaluate(STRIP_KEEPER)
+    page.wait_for_selector("#strip .face.rest img[src]")
+    got = page.evaluate(STRIP_BOX)
+    wall.check(got["img"]["display"] == "block" and got["img"]["w"] > 20 and not got["glyph"], "the keeper's face fills its button", got)
+    shot = pathlib.Path(os.environ["STRIP_SHOTS"]) if os.environ.get("STRIP_SHOTS") else None
+    if shot:
+        page.locator("#strip").screenshot(path=str(shot / "keeper-strip-browser-keeper.png"))
+    page.evaluate("window.__strip.set(window.__strip.bare)")
+    got = page.evaluate(STRIP_BOX)
+    centred = abs(got["glyph"]["cx"] - got["button"]["cx"]) < 1 and abs(got["glyph"]["cy"] - got["button"]["cy"]) < 1 if got["glyph"] else False
+    ok = got["img"]["display"] == "none" and got["src"] is None and got["glyph"] and abs(got["glyph"]["w"] - got["glyph"]["h"]) < 1 and centred
+    wall.check(ok, "switching to a theme with no keeper leaves a centred wall mark, no face and no image", got)
+    if shot:
+        page.locator("#strip").screenshot(path=str(shot / "keeper-strip-browser-switched-plain.png"))
+    page.evaluate("window.__strip.el.replaceChildren(); window.__strip.render([], Date.now())")
+    got = page.evaluate(STRIP_BOX)
+    centred = abs(got["glyph"]["cx"] - got["button"]["cx"]) < 1 and abs(got["glyph"]["cy"] - got["button"]["cy"]) < 1 if got["glyph"] else False
+    wall.check(got["img"]["display"] == "none" and got["glyph"] and centred, "a fresh plain button draws the same", got)
+    if shot:
+        page.locator("#strip").screenshot(path=str(shot / "keeper-strip-browser-fresh-plain.png"))
+    page.close()
+
+
 def theme_switch_commits_only_what_it_wore(wall):
     """A theme whose file fails to load is never worn, saved or sent: the
     wall keeps its theme, the picker goes back and the note says why. The
@@ -5386,7 +5788,7 @@ def picker_costs_no_height(wall):
         for app in (True, False):
             page = wall.open(width, 1000, 8, query="&theme=professions")
             if not app:
-                page.evaluate("document.getElementById('new-session').hidden = true; document.getElementById('wrapup-open').hidden = true; dispatchEvent(new Event('resize'))")
+                page.evaluate("document.getElementById('new-session').hidden = true; document.getElementById('new-kind').hidden = true; document.getElementById('wrapup-open').hidden = true; dispatchEvent(new Event('resize'))")
                 page.wait_for_timeout(SETTLE_MS)
             got = page.evaluate(PICKER)
             ok = got["with"] == got["without"] == got["opened"] and got["inside"] and got["select"] >= 24 and min(got["labels"]) >= 24
@@ -5489,12 +5891,14 @@ def main() -> int:
             reply_buttons,
             bulk_end_waits_on_ready,
             wrapup_dialogs_close_on_change,
+            native_flag_reaches_the_cards,
             one_click_or_key_never_ends_all,
             empty_state,
             fleet_health,
             gear_closes,
-            agy_menu,
+            new_session_menu,
             ended_only,
+            narrow_window_keeps_cards_inside,
             long_folder_fits,
             reveal_density,
             separate_notes,
@@ -5546,6 +5950,7 @@ def main() -> int:
             split_toggle,
             ci_watch,
             themes_switch_live,
+            gauge_opacity_slider,
             themes_keeper_and_portrait,
             themes_fit,
             picker_costs_no_height,
@@ -5553,8 +5958,10 @@ def main() -> int:
             theme_everywhere,
             theme_renames_the_queue_keeper,
             theme_save_flushes_and_says_when_refused,
+            refused_saves_say_so,
             theme_first_paint,
             strip_first_paint,
+            strip_keeper_states,
             theme_switch_commits_only_what_it_wore,
             theme_stale_load_leaves_the_choice,
             theme_file_that_never_answers,

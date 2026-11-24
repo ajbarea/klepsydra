@@ -41,7 +41,9 @@ test("every badge meets 3:1 against the strip's backdrop, and its symbol against
   const { ring, tones: all } = tones(badgeCss);
   assert.deepEqual(Object.keys(all).sort(), ["done", "error", "needs", "quiet", "working"]);
   // The ring is the panel's own colour: what every badge sits on.
-  const panel = token(read("./style.css"), "--panel-bg");
+  // At the default opacity (#438): the alpha is the setting's token.
+  const style = read("./style.css");
+  const panel = token(style, "--panel-bg").replace("var(--panel-alpha)", token(style, "--panel-alpha"));
   assert.equal(over(panel, ring), ring.toLowerCase(), "ring matches the panel over a dark desktop");
   const onWhite = over(panel, "#ffffff");
   for (const [tone, t] of Object.entries(all)) {
@@ -443,3 +445,13 @@ test("the Queue panel's text meets 4.5:1 on every surface it sits on, and its ma
   assert.ok(contrast(t("--tone-working"), t("--card-bg")) >= 3, "the pending mark");
   assert.ok(contrast(t("--card-focus"), t("--card-bg")) >= 3, "the focus ring on the separator and summaries");
 });
+
+test("#505: wall grid uses intrinsically responsive column sizing to prevent overflow on narrow desktop windows", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(
+    css,
+    /\.wall\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(var\(--card-min\),\s*100%\),\s*1fr\)\)/,
+    "wall grid uses minmax(min(var(--card-min), 100%), 1fr)"
+  );
+});
+

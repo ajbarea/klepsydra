@@ -212,10 +212,11 @@ test("the exit-code allowance covers nothing else that starts a process", () => 
   }
 });
 
-test("the launcher starts only wsl.exe, from its fixed path, without a window", () => {
+test("the launcher starts only wsl.exe or linux bash, from fixed paths, without a window", () => {
   const src = read(LAUNCHER);
-  assert.deepEqual([...src.matchAll(/Command::new\(([^)]*)\)/g)].map((m) => m[1].trim()), ["WSL_EXE"]);
+  assert.deepEqual([...src.matchAll(/Command::new\(([^)]*)\)/g)].map((m) => m[1].trim()), ["WSL_EXE", "LINUX_EXE"]);
   assert.match(src, /pub const WSL_EXE: &str = r"C:\\Windows\\System32\\wsl\.exe";/);
+  assert.match(src, /pub const LINUX_EXE: &str = "\/bin\/bash";/);
   assert.match(src, /creation_flags\(CREATE_NO_WINDOW\)/);
   assert.deepEqual(launcherHazards(src), []);
 });
@@ -551,7 +552,7 @@ test("the wall's Jump passes the session id along with its name", () => {
 });
 
 test("the wall has a New session button that calls the launcher", () => {
-  assert.match(read("src/wall.html"), /<button type="button" id="new-session" class="primary">\+ New session<\/button>/);
+  assert.match(read("src/wall.html"), /<button type="button" id="new-session" class="primary"><span class="ico" aria-hidden="true"><\/span><span class="new-label">\+ New session<\/span>/);
   assert.match(read("src/wall.html"), /<span id="new-note" role="status"><\/span>/);
   assert.match(read("src/fleet/wall.js"), /invoke\("launch_session"/);
   assert.match(read("src/fleet/wall.js"), /newButton\.hidden = !inTauri/);
@@ -639,7 +640,9 @@ test("the demo feed is never reachable inside the app", async () => {
 
 test("wall buttons disable by aria-disabled, never by the disabled property, and paint leaves the note alone", () => {
   const src = read("src/fleet/wall.js");
-  assert.doesNotMatch(src, /\.disabled\s*=/);
+  // One exception, not a button: a spent model's radio, which arrow keys must pass over.
+  const writes = src.match(/^.*\.disabled\s*=.*$/gm) ?? [];
+  assert.deepEqual(writes.map((l) => l.trim()), ["input.disabled = m.disabled; // a spent model: arrow keys pass over it"]);
   const paint = src.slice(src.indexOf("function paint("), src.indexOf("\nfunction render("));
   assert.ok(paint.length > 100, "paint found");
   assert.doesNotMatch(paint, /note/);

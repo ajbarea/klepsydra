@@ -22,7 +22,10 @@ fi
 t() { tmux -S "$sock" "$@"; }
 
 # Tab-separated (tmux prints other control characters as octal), "-" for an empty field.
-IFS=$'\t' read -r dead ppid st sig cmd < <(t display-message -p -t "$pane" $'#{pane_dead}\t#{pane_pid}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{pane_start_command}' 2>/dev/null)
+# tmux 3.8 prints an empty #{pane_pid} for a dead pane (format.c: it needs the pty
+# open, wp->fd != -1); 3.7c and earlier, Debian 13's 3.5a too, print the old pid.
+IFS=$'\t' read -r dead ppid st sig cmd < <(t display-message -p -t "$pane" $'#{pane_dead}\t#{?pane_pid,#{pane_pid},-}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{pane_start_command}' 2>/dev/null)
+[[ ${ppid:-} == - ]] && ppid=""
 [[ ${st:-} == - ]] && st=""
 [[ ${sig:-} == - ]] && sig=""
 [[ ${dead:-} == 1 ]] || exit 0
@@ -30,7 +33,8 @@ IFS=$'\t' read -r dead ppid st sig cmd < <(t display-message -p -t "$pane" $'#{p
 # shown again. A mark left by an older viewer (the pane started again by hand) goes.
 mark=$(t show -pqv -t "$pane" @klepsydra_dead 2>/dev/null)
 if [[ -n $mark ]]; then
-  if [[ ${mark%% *} == "${ppid:-}" ]]; then
+  # With no pid to compare (3.8), the viewer is told by its command: it ends in `read -r _`.
+  if [[ ${mark%% *} == "${ppid:-}" || ( -z ${ppid:-} && ${cmd:-} == *"read -r _"* ) ]]; then
     t kill-pane -t "$pane" 2>/dev/null
     flog INFO "a dead pane's viewer ended; closed it" pane="$pane"
     exit 0

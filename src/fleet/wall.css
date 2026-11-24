@@ -200,20 +200,71 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .tally .t-error b { color: var(--tone-error); }
 #new-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #new-note:empty { display: none; }
-/* + New session and its other kinds (#323): one split button, the menu half joined on. */
-.new-split { display: inline-flex; align-items: stretch; }
-#new-kind { padding: 0 var(--space-3); border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid var(--wall-bg); }
+/* + New session (#440, Variant A): the split button names its engine; the caret opens the other engines. */
+.new-split { display: inline-flex; align-items: stretch; flex: none; }
+#new-session { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+#new-session .ico:empty { display: none; }
+/* Under 1200 px "session" goes: the logo, the engine and the account stay, so the half-screen bar keeps its height. */
+@media (width < 1200px) { #new-session .ns-word { display: none; } }
+#new-session .ico, #new-kind .ico { width: 15px; height: 15px; display: inline-flex; }
+#new-session .ico svg, #new-kind .ico svg { width: 100%; height: 100%; display: block; }
+.mono { font: 600 10px/1 var(--font); letter-spacing: 0.04em; padding: 2px 4px; border: 1px solid currentColor; border-radius: 4px; }
 #new-session:has(+ #new-kind:not([hidden])) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+#new-kind { anchor-name: --new-kind; padding: 0 9px; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid var(--wall-bg); display: inline-flex; align-items: center; }
+#new-kind[aria-expanded="true"] { box-shadow: inset 0 0 0 2px var(--wall-bg), 0 0 0 2px var(--text); }
+
 #new-menu {
-  margin: 0; inset: auto; top: 56px; right: 16px; width: min(360px, calc(100vw - 32px));
-  padding: var(--space-5) var(--space-6); display: none;
-  background: var(--card-bg); color: var(--text); border: 1px solid var(--card-line); border-radius: 10px;
+  /* Under the caret, its right edge on the caret's (anchor positioning, Chromium 125+). */
+  margin: 8px 0 0; inset: auto; position: fixed; position-anchor: --new-kind;
+  top: anchor(bottom); right: anchor(right); width: min(460px, calc(100vw - 32px));
+  max-height: calc(100dvh - 96px); overflow-y: auto; padding: 6px; display: none;
+  background: var(--card-bg); color: var(--text); border: 1px solid var(--card-line); border-radius: 12px;
+  box-shadow: 0 18px 40px rgb(0 0 0 / 0.35);
 }
-#new-menu:popover-open { display: grid; gap: var(--space-4); }
-#new-menu .new-menu-title { margin: 0; font: 600 14px/1.3 var(--font); }
-#new-menu .new-menu-model { display: grid; gap: var(--space-2); font-size: 12.5px; color: var(--text-dim); }
-#new-menu select { min-height: 32px; }
-#new-menu .new-menu-hint { margin: 0; font-size: 12.5px; color: var(--text-dim); }
+#new-menu:popover-open { display: grid; gap: 2px; }
+#new-menu .mhead { display: flex; justify-content: space-between; padding: 8px 10px 6px; font-size: 12.5px; color: var(--text-dim); }
+#new-menu .eng-list { display: grid; gap: 2px; }
+#new-menu .eng { border-radius: 9px; padding: 4px; display: grid; gap: 6px; }
+#new-menu .eng.open { background: var(--card-quiet); box-shadow: inset 0 0 0 1px var(--card-line); padding-bottom: 10px; }
+#new-menu .eng-h {
+  all: unset; box-sizing: border-box; width: 100%; padding: 6px; border-radius: 7px; cursor: pointer;
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; color: var(--text);
+}
+#new-menu .eng-h:hover:not([aria-disabled="true"]) { background: var(--button-bg); }
+#new-menu .eng-h:focus-visible, #new-menu .model input:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+#new-menu .eng-h[aria-disabled="true"] { cursor: default; }
+#new-menu .eng-h .ico { width: 20px; height: 20px; display: inline-flex; }
+#new-menu .eng-h .ico svg { width: 100%; height: 100%; display: block; }
+#new-menu .eng-title { font-weight: 650; font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+#new-menu .eng-acct { grid-column: 2; font-size: 12.5px; color: var(--text-dim); }
+#new-menu .room { grid-column: 3; grid-row: 1 / span 2; text-align: right; font-size: 12.5px; color: var(--text-dim); }
+#new-menu .room b { display: block; font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
+#new-menu .rec { white-space: nowrap; font-size: 11.5px; font-weight: 650; padding: 1px 7px; border-radius: 999px; box-shadow: inset 0 0 0 1px currentColor; }
+#new-menu .rec::before { content: "\2605 "; }
+#new-menu .off .eng-name, #new-menu .off .ico { color: var(--text-faint); }
+#new-menu .eng-fixrow { margin-left: 38px; display: grid; gap: 6px; justify-items: start; }
+#new-menu .eng-step { margin: 0; font-size: 12.5px; color: var(--text-dim); }
+#new-menu .eng-step code { color: var(--text); user-select: all; overflow-wrap: anywhere; }
+#new-menu .models { border: 0; margin: 0 0 0 38px; padding: 0; display: grid; gap: 1px; min-width: 0; }
+#new-menu .mgrp { font-size: 12px; color: var(--text-dim); padding: 6px 0 2px; }
+#new-menu .model { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+#new-menu .model:has(input:checked) { background: var(--button-bg); }
+#new-menu .model input { margin: 0; accent-color: var(--text); }
+#new-menu .model:has(input:disabled) { color: var(--text-faint); cursor: default; }
+#new-menu .model .why { font-size: 12px; color: var(--text-faint); }
+#new-menu .eng-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: 38px; padding-top: 4px; }
+#new-menu .mfoot { border-top: 1px solid var(--card-line); margin-top: 4px; padding: 10px 10px 6px; font-size: 12.5px; color: var(--text-dim); display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; }
+
+/* At the window's narrowest the panels take a line, the split button and the gear the next, never wrapped. */
+@media (max-width: 480px) {
+  .bar-right { flex-wrap: wrap; row-gap: var(--space-3); }
+  .bar-right:has(#new-session:not([hidden])) .tools { flex: 1 1 100%; max-width: none; }
+  .gear { align-self: center; }
+  #new-menu { left: 8px; right: 8px; width: auto; }
+  #new-menu .eng-fixrow, #new-menu .models, #new-menu .eng-actions { margin-left: 0; }
+  #new-menu .room { grid-column: 2 / -1; grid-row: auto; text-align: left; }
+  #new-menu .room b { display: inline; margin-right: 6px; }
+}
 /* Split with terminal: a toggle in the bar's tools, sized as Ledger so a
    half-screen bar grows no taller. Pressed fills its box as well as
    brightening, so the state is not colour alone. */
@@ -224,8 +275,8 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 #split[aria-pressed="true"]::before { background: currentColor; }
 #split-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #split-note:empty { display: none; }
-#theme-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
-#theme-note:empty { display: none; }
+#theme-note, #opacity-note, #density-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
+#theme-note:empty, #opacity-note:empty, #density-note:empty { display: none; }
 /* Ledger, Wrap up and the wrap-up bar's buttons share one short height, so a wrapped bar grows no taller; the
    hit area reaches 3 px past each border edge, 24 px in all (WCAG 2.2, 2.5.8). */
 #ledger-open, #wrapup-open, .wrapup-bar button { position: relative; padding: 0 var(--space-5); font-size: 12.5px; line-height: 16px; }
@@ -317,6 +368,19 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
    at once. */
 .theme-pick option { background: var(--card-bg); color: var(--text); }
 .theme-pick option:checked { background: var(--button-hover); color: var(--text); }
+/* The gauge's background opacity (#438): saved and applied on each step. */
+.opacity-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-dim);
+  font: 600 12.5px/1 var(--font);
+  white-space: nowrap;
+}
+.opacity-pick[hidden] { display: none; }
+.opacity-pick input { width: 120px; height: 28px; accent-color: var(--card-focus); } /* neutral: amber means needs you */
+.opacity-pick input:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.opacity-value { min-width: 4ch; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
 
 button {
   font: 600 13px/1 var(--font);
@@ -348,9 +412,10 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .wall, .empty, .limits { position: relative; z-index: 1; }
 .wall {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min), 100%), 1fr));
   gap: var(--card-gap);
   padding: var(--card-gap) var(--wall-pad) var(--wall-pad);
+  container: wall / inline-size; /* card-width rules below query the wall, not the window */
 }
 /* Comfortable rows leave room for the figures that break the frame (#247). */
 .wall:not([data-density="compact"]) { row-gap: var(--fig-over); padding-top: var(--fig-over); }
@@ -849,6 +914,8 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
    calls a guardrail turned down. Comfortable: a row above the footer. */
 .ledger-line { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .receipt { min-width: 0; }
+/* Past the context budget (#515): louder text, not amber, which means needs you. */
+.receipt.warn { color: var(--text); font-weight: 600; }
 .r-short { display: none; }
 .partial {
   flex: none;
@@ -967,6 +1034,32 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 [data-density="compact"] .pill { position: static; grid-area: pill; align-self: center; margin-left: var(--space-3); gap: 6px; padding: 3px 8px 3px 6px; font-size: 12px; }
 [data-density="compact"] .pill .badge { width: 14px; height: 14px; }
 [data-density="compact"] .pill .age { display: none; }
+/* A compact card too narrow for name, pill and Open terminal on one line (#505)
+   gives the name its own: the pill and the buttons take a line under the task,
+   beside the portrait, so an arrival's herald still covers just name and task.
+   Measured on the demo wall (11-24): the widest one-line header takes 360 px of a
+   card's content without its name; with 90 px for a name, the card's 30 px of
+   padding and border, and 20 px for a longer age, a wall narrower than 500 px
+   stacks. That is always one column, where a card is as wide as the wall's
+   content, which a queue or ledger tab narrows. */
+@container wall (max-width: 499.98px) {
+  /* The phone wall keeps its own one-line header (.served), so these are the desktop's. */
+  :root:not(.served) .wall[data-density="compact"] .card {
+    grid-template-rows: auto auto auto auto auto 1fr auto;
+    grid-template-areas:
+      "face name name name name"
+      "face task task task task"
+      "face pill pill clear jump"
+      "meta meta meta meta meta"
+      "ask ask ask ask ask"
+      "said said said said said"
+      "menu note note note note";
+  }
+  /* The pill keeps to its share of the line: its time gives way first ("12m qu…"). */
+  :root:not(.served) [data-density="compact"] .pill { justify-self: start; min-width: 0; max-width: calc(100% - var(--head-gap)); margin-left: var(--head-gap); }
+  :root:not(.served) [data-density="compact"] .pill :is(.mark, .label) { flex-shrink: 0; }
+  :root:not(.served) [data-density="compact"] .pill .when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 [data-density="compact"] .pill .when { display: inline; }
 [data-density="compact"] .jump,
 [data-density="compact"] .clear {
@@ -1333,7 +1426,8 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
    way before the tally, so the gear fits beside a one-row tally (#248). */
 @media (width < 1200px) {
   .bar { gap: var(--space-5); }
-  .bar-right { gap: var(--space-2); flex-shrink: 8; }
+  /* On the bar's bottom edge: once the tally wraps to two lines, the gear's menu still opens under the bar. */
+  .bar-right { gap: var(--space-2); flex-shrink: 8; align-self: flex-end; }
   .tools { column-gap: var(--space-2); }
   #ledger-open, #queue-open, #wrapup-open { padding-inline: var(--space-4); }
 }

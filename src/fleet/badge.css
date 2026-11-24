@@ -45,3 +45,4 @@ img.face, .face img { display: block; width: 100%; height: 100%; border-radius: 
 @media (prefers-reduced-motion: reduce) {
   .pulse .badge { animation: none; }
 }
+.face img[hidden] { display: none; } /* the plain button (#461): .face img's display would beat [hidden] */

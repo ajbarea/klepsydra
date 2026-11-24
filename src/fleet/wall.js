@@ -1,7 +1,7 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
 import { RINGS, accountsDiffer, arrivalLine, arrivals, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
-import { announcer, press, say, setOff, syncChildren } from "./dom.js";
+import { announcer, press, say, setOff, setWaiting, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
@@ -10,6 +10,7 @@ import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { createEdge } from "./sidepanel.js";
 import { showFace } from "./face.js";
+import { MAKER_ICONS } from "./icons.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
 import { parseDensity, resolveDensity } from "./density.js";
 import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.js";
@@ -19,9 +20,13 @@ import { ciView } from "./ci.js";
 import { healthView } from "./health.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
-import { WAITING, usageRows } from "../gauge.js";
+import { WAITING, toRows, usageRows } from "../gauge.js";
+import { hiddenRows } from "./chips.js";
+import { wireOpacityPick } from "./opacitypick.js";
+import { subscribeOpacity } from "../opacity.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
+import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
 
 const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
@@ -39,30 +44,6 @@ const BRANCH_ICON =
 const ACCOUNT_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 14c.6-2.8 2.6-4.2 5-4.2s4.4 1.4 5 4.2"/></svg><span class="visually-hidden">account </span><span></span>';
 
-// Official model maker & harness icons from upstream brand assets (viewBox 0 0 24 24):
-// - Anthropic: Simple Icons (anthropic.svg, CC0)
-// - Gemini: Simple Icons (googlegemini.svg, CC0)
-// - OpenAI: OpenAI vector mark (CC0)
-// - Meta: Simple Icons (meta.svg, CC0)
-// - Copilot: Simple Icons (githubcopilot.svg, CC0)
-// - Claude: Simple Icons (claude.svg, CC0)
-// - Antigravity: Google Antigravity vector mark
-const MAKER_ICONS = {
-  anthropic:
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.304 3.541h-3.672l6.696 16.918H24Zm-10.608 0L0 20.459h3.744l1.37-3.553h7.005l1.369 3.553h3.744L10.536 3.541Zm-.371 10.223L8.616 7.82l2.291 5.945Z"/></svg>',
-  gemini:
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C12 6.627 6.627 12 0 12c6.627 0 12 5.373 12 12 0-6.627 5.373-12 12-12-6.627 0-12-5.373-12-12z"/></svg>',
-  openai:
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523z"/></svg>',
-  meta:
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a7 7 0 0 0 .265.86a5.3 5.3 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927c1.497 0 2.633-.671 3.965-2.444c.76-1.012 1.144-1.626 2.663-4.32l.756-1.339l.186-.325c.061.1.121.196.183.3l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314c1.046.987 1.992 1.22 3.06 1.22c1.075 0 1.876-.355 2.455-.843a3.7 3.7 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745c0-2.72-.681-5.357-2.084-7.45c-1.282-1.912-2.957-2.93-4.716-2.93c-1.047 0-2.088.467-3.053 1.308c-.652.57-1.257 1.29-1.82 2.05c-.69-.875-1.335-1.547-1.958-2.056c-1.182-.966-2.315-1.303-3.454-1.303zm10.16 2.053c1.147 0 2.188.758 2.992 1.999c1.132 1.748 1.647 4.195 1.647 6.4c0 1.548-.368 2.9-1.839 2.9-.58 0-1.027-.23-1.664-1.004c-.496-.601-1.343-1.878-2.832-4.358l-.617-1.028a45 45 0 0 0-1.255-1.98c.07-.109.141-.224.211-.327c1.12-1.667 2.118-2.602 3.358-2.602zm-10.201.553c1.265 0 2.058.791 2.675 1.446c.307.327.737.871 1.234 1.579l-1.02 1.566c-.757 1.163-1.882 3.017-2.837 4.338c-1.191 1.649-1.81 1.817-2.486 1.817c-.524 0-1.038-.237-1.383-.794c-.263-.426-.464-1.13-.464-2.046c0-2.221.63-4.535 1.66-6.088c.454-.687.964-1.226 1.533-1.533a2.26 2.26 0 0 1 1.088-.285z"/></svg>',
-  copilot:
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M23.922 16.997C23.061 18.492 18.063 22.02 12 22.02S.939 18.492.078 16.997A.6.6 0 0 1 0 16.741v-2.869a1 1 0 0 1 .053-.22c.372-.935 1.347-2.292 2.605-2.656c.167-.429.414-1.055.644-1.517a10 10 0 0 1-.052-1.086c0-1.331.282-2.499 1.132-3.368c.397-.406.89-.717 1.474-.952C7.255 2.937 9.248 1.98 11.978 1.98s4.767.957 6.166 2.093c.584.235 1.077.546 1.474.952c.85.869 1.132 2.037 1.132 3.368c0 .368-.014.733-.052 1.086c.23.462.477 1.088.644 1.517c1.258.364 2.233 1.721 2.605 2.656a.8.8 0 0 1 .053.22v2.869a.6.6 0 0 1-.078.256m-11.75-5.992h-.344a4 4 0 0 1-.355.508c-.77.947-1.918 1.492-3.508 1.492c-1.725 0-2.989-.359-3.782-1.259a2 2 0 0 1-.085-.104L4 11.746v6.585c1.435.779 4.514 2.179 8 2.179s6.565-1.4 8-2.179v-6.585l-.098-.104s-.033.045-.085.104c-.793.9-2.057 1.259-3.782 1.259c-1.59 0-2.738-.545-3.508-1.492a4 4 0 0 1-.355-.508m2.328 3.25c.549 0 1 .451 1 1v2c0 .549-.451 1-1 1s-1-.451-1-1v-2c0-.549.451-1 1-1m-5 0c.549 0 1 .451 1 1v2c0 .549-.451 1-1 1s-1-.451-1-1v-2c0-.549.451-1 1-1m3.313-6.185c.136 1.057.403 1.913.878 2.497c.442.544 1.134.938 2.344.938c1.573 0 2.292-.337 2.657-.751c.384-.435.558-1.15.558-2.361c0-1.14-.243-1.847-.705-2.319c-.477-.488-1.319-.862-2.824-1.025c-1.487-.161-2.192.138-2.533.529c-.269.307-.437.808-.438 1.578v.021q0 .397.063.893m-1.626 0q.063-.496.063-.894v-.02c-.001-.77-.169-1.271-.438-1.578c-.341-.391-1.046-.69-2.533-.529c-1.505.163-2.347.537-2.824 1.025c-.462.472-.705 1.179-.705 2.319c0 1.211.175 1.926.558 2.361c.365.414 1.084.751 2.657.751c1.21 0 1.902-.394 2.344-.938c.475-.584.742-1.44.878-2.497z"/></svg>',
-  claude:
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>',
-  agy:
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.94 20.59c1.09.82 2.73.27 1.23-1.23C16.67 15 17.62 3 12.03 3S7.39 15 2.89 19.36c-1.64 1.64.14 2.05 1.23 1.23c4.23-2.86 3.95-7.91 7.91-7.91s3.68 5.05 7.91 7.91"/></svg>',
-};
 const TALLY = [
   ["needs", "needs you"],
   ["working", "working"],
@@ -103,56 +84,321 @@ document.addEventListener("pointerdown", (e) => {
   if (gear.open && !gear.contains(e.target)) gear.open = false;
 });
 const limitWait = limits.querySelector(".limit-wait");
-// + New session and the empty state's button start a session the same way,
-// and while one runs the other is off too.
-async function startSession(button, note) {
-  if (button.getAttribute("aria-disabled") === "true") return;
-  const other = button === newButton ? startButton : newButton;
-  setOff(other, true);
-  try {
-    await press(button, note, () => window.__TAURI__.core.invoke("launch_session"), "Starting…");
-  } finally {
-    setOff(other, false);
-  }
-}
-newButton.hidden = !inTauri;
-newButton.addEventListener("click", () => startSession(newButton, newNote));
-// + New session's other kind, Antigravity (#323): its menu shows once agy
-// has listed its models, Gemini first, since it spends Google's quota, not Claude's.
+// + New session (#440, Variant A): the split button names the engine it
+// starts; its caret opens one row per other engine with its account, room and
+// models. Room comes from read_usage through the gauge's own toRows (the
+// desktop snapshot carries no readings), engines and accounts from the
+// launcher, the default and the last used from prefs.json.
+let sessions = [];
+let latestSnapshot = null; // its usage readings draw the limit gauges
 const newKind = document.getElementById("new-kind");
 const newMenu = document.getElementById("new-menu");
-const agyModel = document.getElementById("agy-model");
-const agyStart = document.getElementById("agy-start");
-if (inTauri) {
-  window.__TAURI__.core.invoke("agy_models").then(
-    (models) => {
-      if (!Array.isArray(models) || !models.length) return;
-      const gemini = models.filter((m) => m.id.startsWith("gemini"));
-      agyModel.replaceChildren(...[...gemini, ...models.filter((m) => !gemini.includes(m))].map((m) => new Option(m.label, m.id)));
-      newKind.hidden = false;
-    },
-    () => {}, // no agy here: + New session starts Claude Code only, as before
-  );
+const engList = newMenu.querySelector(".eng-list");
+const footWhy = newMenu.querySelector(".mfoot-why");
+const footReset = newMenu.querySelector(".eng-reset");
+const engTpl = document.getElementById("eng-tpl");
+const modelTpl = document.getElementById("model-tpl");
+const USAGE_MS = 60_000; // readings change only as sessions reply; the menu reads again on opening
+const ENGINES_MS = 60_000; // a newly installed engine shows by the next opening after this
+const ns = {
+  rows: [],
+  engines: null,
+  agy: { state: inTauri ? "waiting" : "missing", models: [] },
+  prefs: { default: null, last: null },
+  enginesError: null,
+  ready: !inTauri, // the saved default can be judged: prefs, engines and (when it names agy) agy answered
+  open: null, // the menu row shown open
+  picked: new Map(), // entry id -> model id the user picked
+  fixShown: new Set(), // entry ids whose fix step is shown
+  enginesAt: 0,
+};
+
+// The engine icons as nodes, parsed once from their constant markup.
+const iconCache = new Map();
+function iconNode(key) {
+  if (!iconCache.has(key)) {
+    // The HTML parser puts <svg> in the SVG namespace; the markup carries no xmlns for an XML parse.
+    const doc = new DOMParser().parseFromString(MAKER_ICONS[key] ?? MAKER_ICONS.claude, "text/html");
+    iconCache.set(key, doc.body.firstElementChild);
+  }
+  return document.importNode(iconCache.get(key), true);
 }
-agyStart.addEventListener("click", async () => {
-  if (agyStart.getAttribute("aria-disabled") === "true") return;
-  const model = agyModel.value;
-  newMenu.hidePopover();
-  setOff(newButton, true);
+
+function nsState() {
+  const entries = buildEntries({ rows: ns.rows, engines: ns.engines, enginesError: ns.enginesError, agy: ns.agy, nowMs: Date.now() });
+  const pick = pickDefault(entries, { userDefault: ns.prefs.default, lastUsed: ns.prefs.last });
+  return { entries, pick };
+}
+
+const modelOf = (entry) => (ns.picked.has(entry.id) ? ns.picked.get(entry.id) : firstModel(entry));
+
+async function startSession(button, note, args) {
+  if (button.getAttribute("aria-disabled") === "true") return;
+  const others = [newButton, startButton, newKind].filter((b) => b !== button);
+  for (const b of others) setOff(b, true);
   try {
-    await press(
-      newKind,
-      newNote,
-      () => window.__TAURI__.core.invoke("launch_session", { agyModel: model }),
-      "Starting…",
-    );
+    await press(button, note, () => window.__TAURI__.core.invoke("launch_session", args ?? {}), "Starting…");
   } finally {
-    setOff(newButton, false);
+    for (const b of others) setOff(b, false);
+    loadPrefs(); // a launch that started is now the last used
+  }
+}
+const startDefault = (button) => {
+  if (!ns.ready) return; // a click before the saved default is known would start the wrong engine
+  const { entry } = nsState().pick;
+  startSession(button, newNote, launchArgs(entry, modelOf(entry)));
+};
+newButton.hidden = !inTauri;
+newButton.addEventListener("click", () => startDefault(newButton));
+
+function paintButton() {
+  const { entry, reason } = nsState().pick;
+  newButton.querySelector(".ico").replaceChildren(iconNode(entry.engine));
+  const label = newButton.querySelector(".new-label");
+  label.replaceChildren(`New ${entry.shortName}`, Object.assign(document.createElement("span"), { className: "ns-word", textContent: " session" }));
+  const mono = newButton.querySelector(".mono");
+  mono.hidden = !entry.badge;
+  mono.textContent = entry.badge;
+  newButton.title = buttonTitle(entry);
+  setWaiting(newButton, !ns.ready);
+  setWaiting(startButton, !ns.ready);
+  newButton.setAttribute("aria-label", `New ${entry.name} session`);
+  newKind.hidden = !inTauri;
+  footWhy.textContent = `Default: ${entry.name}, ${reason}.`;
+  footReset.hidden = !ns.prefs.default;
+}
+
+/** One menu row. Keys in data-fk let a redraw put focus back where it was. */
+function engRow(e, openId) {
+  const row = engTpl.content.firstElementChild.cloneNode(true);
+  const head = row.querySelector(".eng-h");
+  row.dataset.id = e.id;
+  row.setAttribute("aria-label", e.name);
+  head.dataset.fk = `h:${e.id}`;
+  row.querySelector(".ico").append(iconNode(e.engine));
+  row.querySelector(".eng-name").textContent = e.name;
+  row.querySelector(".rec").hidden = !e.recommended;
+  const words = roomWords(e.room);
+  row.querySelector(".room b").textContent = e.usable ? words.bold : "";
+  row.querySelector(".room-detail").textContent = e.usable ? words.detail : "";
+  row.querySelector(".eng-acct").textContent = e.usable
+    ? e.accountLabel
+    : e.fix === "install"
+      ? "Not installed on this PC"
+      : e.fix === "signin"
+        ? "Installed, not signed in"
+        : e.failed ?? (e.engine === "copilot" ? "Checking whether Copilot is installed…" : "Asking Antigravity for its models…");
+  if (!e.usable) {
+    row.classList.add("off");
+    head.setAttribute("aria-disabled", "true");
+    head.removeAttribute("aria-expanded");
+    const fixRow = row.querySelector(".eng-fixrow");
+    const fix = row.querySelector(".eng-fix");
+    const step = FIX_STEPS[e.engine]?.[e.fix];
+    fixRow.hidden = !e.fix || (e.fix !== "retry" && !step);
+    fix.dataset.fk = `f:${e.id}`;
+    fix.dataset.fix = e.fix ?? "";
+    fix.textContent = e.fix === "install" ? "How to install" : e.fix === "signin" ? "Sign in" : "Try again";
+    if (step && e.fix !== "retry") {
+      const shown = ns.fixShown.has(e.id);
+      fix.setAttribute("aria-expanded", String(shown));
+      const p = row.querySelector(".eng-step");
+      p.hidden = !shown;
+      p.id = `step-${e.id.replace(/[^A-Za-z0-9-]/g, "-")}`;
+      fix.setAttribute("aria-controls", p.id);
+      p.querySelector("code").textContent = step;
+    } else fix.removeAttribute("aria-expanded");
+    return row;
+  }
+  const open = e.id === openId;
+  head.setAttribute("aria-expanded", String(open));
+  if (!open) return row;
+  row.classList.add("open");
+  const models = row.querySelector(".models");
+  const picked = modelOf(e);
+  if (e.models.length) {
+    models.hidden = false;
+    models.querySelector("legend").textContent = `${e.name} model`;
+    const groups = e.groups ?? [{ key: "all", label: e.engine === "claude" ? "Model · Claude Code's default unless you pick one" : "", models: e.models }];
+    for (const g of groups) {
+      if (g.label) models.append(Object.assign(document.createElement("div"), { className: "mgrp", textContent: g.label }));
+      for (const m of g.models) {
+        const lab = modelTpl.content.firstElementChild.cloneNode(true);
+        const input = lab.querySelector("input");
+        input.name = `model-${e.id}`;
+        input.value = m.id;
+        input.checked = m.id === picked;
+        input.disabled = m.disabled; // a spent model: arrow keys pass over it
+        input.dataset.fk = `m:${e.id}:${m.id}`;
+        lab.querySelector(".model-name").textContent = m.label;
+        lab.querySelector(".why").textContent = m.why;
+        models.append(lab);
+      }
+    }
+  }
+  row.querySelector(".eng-actions").hidden = false;
+  const start = row.querySelector(".eng-start");
+  start.textContent = `Start ${e.shortName} session`;
+  start.dataset.fk = `s:${e.id}`;
+  if ((e.engine === "agy" && !picked) || e.spent) start.setAttribute("aria-disabled", "true");
+  row.querySelector(".eng-default").dataset.fk = `d:${e.id}`;
+  return row;
+}
+
+/** Draw the menu, keeping focus on the control that had it. Only while it is open. */
+function paintMenu() {
+  if (!newMenu.matches(":popover-open")) return;
+  const { entries, pick } = nsState();
+  const menu = menuEntries(entries, pick.entry.id);
+  if (!menu.some((e) => e.id === ns.open && e.usable)) ns.open = menu.find((e) => e.usable)?.id ?? null;
+  const active = newMenu.contains(document.activeElement) ? document.activeElement : null;
+  const had = active?.dataset.fk;
+  const hadRow = active?.closest(".eng")?.dataset.id;
+  engList.replaceChildren(...menu.map((e) => engRow(e, ns.open)));
+  if (active) {
+    // The same control, else its row's header, else the footer's button, else the caret: never the page.
+    const same = had && engList.querySelector(`[data-fk="${CSS.escape(had)}"]`);
+    const head = hadRow && engList.querySelector(`.eng[data-id="${CSS.escape(hadRow)}"] .eng-h:not([aria-disabled="true"])`);
+    const keep = active === footReset && !footReset.hidden ? footReset : null;
+    (same && same.getAttribute("aria-disabled") !== "true" && !same.disabled ? same : head || keep || newKind).focus();
+  }
+}
+
+function paintNewSession() {
+  paintButton();
+  paintMenu();
+}
+
+async function readRows() {
+  try {
+    ns.rows = toRows(await window.__TAURI__.core.invoke("read_usage"), Date.now());
+  } catch (err) {
+    log.warnRepeat("read_usage", "read_usage failed, so + New session shows no room", err);
+  }
+}
+async function readEngines(force = false) {
+  if (!force && Date.now() - ns.enginesAt < ENGINES_MS) return;
+  ns.enginesAt = Date.now();
+  try {
+    ns.engines = await window.__TAURI__.core.invoke("engines_status");
+    ns.enginesError = null;
+  } catch (err) {
+    ns.enginesAt = 0;
+    if (!ns.engines) ns.enginesError = `klepsydra could not ask which engines are here: ${err}`;
+    log.warnRepeat("engines_status", "engines_status failed, so + New session lists every engine as it last knew", err);
+  }
+}
+// agy's models: "not found" alone means not installed; any other failure is
+// an error to show, with a retry, never a sign-in.
+async function readAgy() {
+  ns.agy = { state: "waiting", models: [] };
+  try {
+    const models = await window.__TAURI__.core.invoke("agy_models");
+    ns.agy = Array.isArray(models) && models.length ? { state: "ok", models } : { state: "error", models: [], error: "Antigravity listed no models." };
+  } catch (err) {
+    const msg = String(err ?? "");
+    ns.agy = /not found/i.test(msg)
+      ? { state: "missing", models: [] }
+      : /not (logged|signed) in|log ?in required|unauthori[sz]ed/i.test(msg)
+        ? { state: "signedout", models: [] }
+        : { state: "error", models: [], error: msg || "Antigravity did not list its models." };
+  }
+}
+async function loadPrefs() {
+  try {
+    ns.prefs = await window.__TAURI__.core.invoke("new_session_prefs");
+  } catch (err) {
+    log.warnRepeat("new_session_prefs", "new_session_prefs failed, so + New session uses the first engine set up", err);
+  }
+  paintNewSession();
+}
+
+newKind.addEventListener("click", () => {
+  // Fresh room and engines for the opening menu; the open menu redraws as they land.
+  if (!inTauri) return;
+  readRows().then(paintNewSession);
+  readEngines().then(paintNewSession);
+});
+newMenu.addEventListener("toggle", (e) => {
+  const open = e.newState === "open";
+  newKind.setAttribute("aria-expanded", String(open));
+  if (open) {
+    paintMenu();
+    engList.querySelector('.eng-h:not([aria-disabled="true"]), .eng-fix')?.focus();
+  } else if (newMenu.contains(document.activeElement) || document.activeElement === document.body) {
+    newKind.focus(); // Escape or a click outside: back to the caret, never the page
   }
 });
+
+newMenu.addEventListener("click", async (e) => {
+  const head = e.target.closest(".eng-h");
+  if (head?.getAttribute("aria-disabled") === "true") return;
+  if (head) {
+    const id = head.closest(".eng").dataset.id;
+    ns.open = ns.open === id ? null : id;
+    paintMenu();
+    return;
+  }
+  const fix = e.target.closest(".eng-fix");
+  if (fix) {
+    const id = fix.closest(".eng").dataset.id;
+    if (fix.dataset.fix === "retry") {
+      if (id === "copilot") await readEngines(true);
+      else await readAgy();
+    } else if (ns.fixShown.has(id)) ns.fixShown.delete(id);
+    else ns.fixShown.add(id);
+    paintNewSession();
+    return;
+  }
+  const start = e.target.closest(".eng-start");
+  if (start?.getAttribute("aria-disabled") === "true") return;
+  if (start) {
+    const entry = nsState().entries.find((x) => x.id === start.closest(".eng").dataset.id);
+    newMenu.hidePopover();
+    if (entry) startSession(newKind, newNote, launchArgs(entry, modelOf(entry)));
+    return;
+  }
+  const def = e.target.closest(".eng-default");
+  if (def) {
+    await saveDefault(def.closest(".eng").dataset.id);
+    return;
+  }
+  if (e.target.closest(".eng-reset")) await saveDefault(null);
+});
+newMenu.addEventListener("change", (e) => {
+  const input = e.target.closest(".model input");
+  if (!input) return;
+  ns.picked.set(input.closest(".eng").dataset.id, input.value);
+  paintMenu();
+});
+
+async function saveDefault(id) {
+  try {
+    await window.__TAURI__.core.invoke("set_new_session_default", { id });
+    ns.prefs = { ...ns.prefs, default: id };
+  } catch (err) {
+    say(newNote, String(err));
+  }
+  // The new default leaves the menu: focus goes to the caret, not the page.
+  paintNewSession();
+  if (!newMenu.contains(document.activeElement)) newKind.focus();
+}
+
+if (inTauri) {
+  const agyRead = readAgy();
+  agyRead.then(paintNewSession);
+  Promise.all([readRows(), readEngines(true), loadPrefs()])
+    .then(() => ([ns.prefs.default, ns.prefs.last].includes("agy") ? agyRead : null))
+    .finally(() => {
+      ns.ready = true;
+      paintNewSession();
+    });
+  setInterval(() => readRows().then(paintNewSession), USAGE_MS);
+}
+paintNewSession();
 startButton.hidden = !inTauri;
 // Its answer goes to the bar's note, which stays in view once the empty state gives way.
-startButton.addEventListener("click", () => startSession(startButton, newNote));
+startButton.addEventListener("click", () => startDefault(startButton));
 // A cleared id stays off the link until the snapshot that drops its card.
 let cleared = new Set();
 // The phone cards whose Full text is open, by id; a card that leaves drops out.
@@ -189,9 +435,8 @@ function updateBackdrop(theme) {
   if (bd?.secondary) wallBackdrop.style.setProperty("--bg-secondary", bd.secondary);
 }
 updateBackdrop(cast);
-let sessions = [];
 let request = null; // the snapshot's wrap-up, while one is shown
-let latestSnapshot = null; // its usage readings draw the limit gauges
+let native = false; // the snapshot's flag for a native Linux app, which reaches tmux itself (launch.rs NATIVE)
 // The Ledger and the Queue share the right edge, one open at a time. Docked,
 // a panel narrows the wall, and Auto measures again (its ResizeObserver).
 const edge = createEdge();
@@ -472,9 +717,10 @@ function paintLedger(el, c) {
   line.hidden = !c.ledger;
   const receipt = el.querySelector(".receipt");
   receipt.hidden = !c.ledger?.full;
+  receipt.classList.toggle("warn", Boolean(c.ledger?.warn));
   setText(receipt.querySelector(".r-full"), c.ledger?.full);
   setText(receipt.querySelector(".r-short"), c.ledger?.short);
-  receipt.title = c.ledger?.full ?? "";
+  receipt.title = c.ledger?.why ? `${c.ledger.full}\n${c.ledger.why}` : (c.ledger?.full ?? "");
   const partial = el.querySelector(".partial");
   show(partial, c.ledger?.partial?.text);
   partial.title = c.ledger?.partial?.label ?? "";
@@ -569,9 +815,12 @@ function paintRing(el, c) {
 // The usage-limit gauges: the desktop gauge's rows, drawn by its own code,
 // for a snapshot that carries readings (the phone server's).
 function paintLimits(now) {
-  const rows = usageRows(latestSnapshot, now);
-  limits.hidden = rows === null;
-  if (rows === null) return;
+  const all = usageRows(latestSnapshot, now);
+  limits.hidden = all === null;
+  if (all === null) return;
+  // A spent week hides its account's session row, as on the gauge strip (#421).
+  const hidden = hiddenRows(all);
+  const rows = all.filter((r) => !hidden.has(r));
   limitWait.hidden = rows.length > 0;
   limitWait.textContent = WAITING;
   syncEntries(limitRows, rows, { compact: true, stops: readStops(), mode: readMode() }, true);
@@ -612,7 +861,7 @@ function render(snapshot) {
   wasState = state;
   paintTally();
   paintLimits(now);
-  const cards = sessions.map((s) => card(s, cast, now, request));
+  const cards = sessions.map((s) => card(s, cast, now, request, native));
   const twoAccounts = accountsDiffer(cards);
   for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);
   cardOf = new Map(cards.map((c) => [c.id, c]));
@@ -909,6 +1158,7 @@ function take(message) {
     before = statuses(fresh);
     sessions = served ? needsFirst(fresh) : fresh;
     request = message.wrapup ?? null;
+    native = message.native === true;
     latestSnapshot = message;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));
@@ -1421,6 +1671,7 @@ function syncFullText() {
 }
 if (served) document.fonts?.ready.then(syncFullText);
 
+const densityNote = document.getElementById("density-note");
 function choose(value) {
   choice = parseDensity(value);
   for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
@@ -1429,7 +1680,11 @@ function choose(value) {
 
 densityPicker.addEventListener("change", (e) => {
   choose(e.target.value);
-  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+  if (inTauri)
+    window.__TAURI__.core.invoke("set_wall_density", { density: choice }).then(
+      () => setText(densityNote, ""),
+      (err) => setText(densityNote, `Not saved: ${err}`),
+    );
 });
 let resizeTimer = 0;
 addEventListener("resize", () => {
@@ -1446,6 +1701,21 @@ new ResizeObserver(() => {
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
+
+// The floating gauge's background opacity (#438), in the app only.
+if (inTauri) {
+  const input = document.getElementById("gauge-opacity");
+  const opacityNote = document.getElementById("opacity-note");
+  input.closest("label").hidden = false;
+  wireOpacityPick({
+    input,
+    value: input.nextElementSibling,
+    invoke: tauri,
+    subscribe: (fn) => subscribeOpacity(fn, { inTauri, follow }),
+    note: (text) => setText(opacityNote, text),
+    log,
+  });
+}
 
 // Characters (#135): the theme picker, the tray's Characters menu and the
 // phone all wear one theme. html[data-theme] names it, as a CSS colour theme
