@@ -260,6 +260,9 @@ pub struct SessionFile {
     /// How many turns have ended (Stops); None from a hook that never counted.
     #[serde(default, deserialize_with = "lenient_turns")]
     pub turns: Option<u64>,
+    /// The context tokens (input + cache_read + cache_creation) of its last request.
+    #[serde(default)]
+    pub call_tokens: Option<u64>,
     /// The `written_at` of the write that kept `turns`. An older hook carries
     /// both along unchanged while it moves `written_at`.
     #[serde(default)]
