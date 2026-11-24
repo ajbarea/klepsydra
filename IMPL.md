@@ -25,10 +25,8 @@ one lock folder per host and boot under ~/.local/state/klepsydra; only `fleet re
 - Independent Opus review of 3e5aa12..1b7b4bb: 0 Blocking; its Should-fix (a host named
   unknown pruned the unusable hosts' folders) and nits fixed in bedbfb0.
 - Mutants at bedbfb0: 22 run, 22 killed. Not run: F2, F3 (doctor trace age), F4, F5
-  (uptime wait), stopped by WSL memory pressure; rerun with
-  `python3 mutate.py <worktree> results.json F2,F3,F4,F5` (script: below).
+  (uptime wait), stopped by WSL memory pressure; each is listed in the PR body's
+  mutation table with its exact edit, to rerun on a quiet machine.
 - Next: Heph's r3; after merge update the main checkout before `fleet install`.
 - Verify: `bash hooks/test_fleet.sh`, `bash statusline/test_statusline.sh`, `bash hooks/test_wrapup.sh`,
   `make test-launch`, `make test-fleet`; shellcheck per file (fleet/test_fleet.sh OOMs locally, #503).
-- Mutation script: scripts are not kept in the repo; it applied each mutant to all three block
-  copies in an rsync'd copy and ran the owning suite (hooks, test-launch, test-fleet).
