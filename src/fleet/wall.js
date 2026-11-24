@@ -436,6 +436,7 @@ function updateBackdrop(theme) {
 }
 updateBackdrop(cast);
 let request = null; // the snapshot's wrap-up, while one is shown
+let native = false; // the snapshot's flag for a native Linux app, which reaches tmux itself (launch.rs NATIVE)
 // The Ledger and the Queue share the right edge, one open at a time. Docked,
 // a panel narrows the wall, and Auto measures again (its ResizeObserver).
 const edge = createEdge();
@@ -716,9 +717,10 @@ function paintLedger(el, c) {
   line.hidden = !c.ledger;
   const receipt = el.querySelector(".receipt");
   receipt.hidden = !c.ledger?.full;
+  receipt.classList.toggle("warn", Boolean(c.ledger?.warn));
   setText(receipt.querySelector(".r-full"), c.ledger?.full);
   setText(receipt.querySelector(".r-short"), c.ledger?.short);
-  receipt.title = c.ledger?.full ?? "";
+  receipt.title = c.ledger?.why ? `${c.ledger.full}\n${c.ledger.why}` : (c.ledger?.full ?? "");
   const partial = el.querySelector(".partial");
   show(partial, c.ledger?.partial?.text);
   partial.title = c.ledger?.partial?.label ?? "";
@@ -859,7 +861,7 @@ function render(snapshot) {
   wasState = state;
   paintTally();
   paintLimits(now);
-  const cards = sessions.map((s) => card(s, cast, now, request));
+  const cards = sessions.map((s) => card(s, cast, now, request, native));
   const twoAccounts = accountsDiffer(cards);
   for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);
   cardOf = new Map(cards.map((c) => [c.id, c]));
@@ -1156,6 +1158,7 @@ function take(message) {
     before = statuses(fresh);
     sessions = served ? needsFirst(fresh) : fresh;
     request = message.wrapup ?? null;
+    native = message.native === true;
     latestSnapshot = message;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));
@@ -1668,6 +1671,7 @@ function syncFullText() {
 }
 if (served) document.fonts?.ready.then(syncFullText);
 
+const densityNote = document.getElementById("density-note");
 function choose(value) {
   choice = parseDensity(value);
   for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
@@ -1676,7 +1680,11 @@ function choose(value) {
 
 densityPicker.addEventListener("change", (e) => {
   choose(e.target.value);
-  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+  if (inTauri)
+    window.__TAURI__.core.invoke("set_wall_density", { density: choice }).then(
+      () => setText(densityNote, ""),
+      (err) => setText(densityNote, `Not saved: ${err}`),
+    );
 });
 let resizeTimer = 0;
 addEventListener("resize", () => {

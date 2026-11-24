@@ -159,9 +159,11 @@ fn read_prefs_at(path: &std::path::Path) -> Option<serde_json::Map<String, serde
     }
 }
 
-fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
+fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) -> bool {
     if let Some(path) = prefs_path(app) {
-        write_pref_at(&path, key, value);
+        write_pref_at(&path, key, value)
+    } else {
+        false
     }
 }
 
@@ -169,13 +171,13 @@ fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
 /// and a rename, so two at once would lose one key or share the tmp file.
 static PREFS_WRITE: Mutex<()> = Mutex::new(());
 
-fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
+fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) -> bool {
     let _one = PREFS_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(mut prefs) = read_prefs_at(path) else {
         log::error!(
             "{key} not saved: {PREFS_FILE} is not a readable JSON object, and is left as it is"
         );
-        return;
+        return false;
     };
     prefs.insert(key.into(), value);
     if let Some(parent) = path.parent() {
@@ -186,7 +188,9 @@ fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
     let text = serde_json::Value::Object(prefs).to_string();
     if let Err(e) = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)) {
         log::error!("{key} not saved to {PREFS_FILE}: {e}");
+        return false;
     }
+    true
 }
 
 /// Each layout keeps its own zoom: compact is sized to the taskbar, the full
@@ -1157,6 +1161,28 @@ mod tests {
                 "k{i}"
             );
         }
+    }
+
+    #[test]
+    fn a_corrupt_prefs_file_is_refused_and_left_intact() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("klepsydra-prefs-corrupt-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prefs.json");
+        std::fs::write(&path, "{").unwrap();
+
+        assert!(!super::write_pref_at(
+            &path,
+            "theme",
+            serde_json::json!("kourai")
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 
     #[test]

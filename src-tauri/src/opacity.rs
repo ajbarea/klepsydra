@@ -38,7 +38,8 @@ pub fn set_gauge_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
     let v = opacity::value(opacity)?;
     let asked = opacity::snap(opacity);
     crate::write_pref(&app, opacity::KEY, v);
-    // Read back once: what the windows get and what the reply says agree.
+    // Read back once: what the windows get and what the reply says agree. A
+    // write refused leaves the key unset or unchanged, which confirm reports.
     let prefs = crate::read_prefs(&app);
     send(&app, opacity::of(prefs.as_ref()));
     opacity::confirm(asked, prefs.as_ref())
