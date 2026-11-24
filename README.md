@@ -377,6 +377,15 @@ sudo apt install ./src-tauri/target/release/bundle/deb/klepsydra_0.1.0_amd64.deb
 Run `klepsydra` once. It registers itself in `~/.config/autostart`, so it starts
 with every later login.
 
+The wall's buttons need tmux, `xdotool` and `xdg-open`, and `xprop` to restore
+a minimized terminal (`sudo apt install tmux xdotool xdg-utils x11-utils`).
+**+ New session** opens the first of xfce4-terminal, gnome-terminal, konsole,
+kitty, alacritty, x-terminal-emulator and xterm on PATH, or only the one
+`KLEPSYDRA_TERMINAL` names. **Open terminal** selects the session's tmux
+window, then raises the terminal that shows it, restoring it when minimized
+(without `xprop`, only a terminal already on screen). Folder and GitHub open
+through `xdg-open`.
+
 The tray icon needs a StatusNotifierItem host. On XFCE that is the Status Tray
 panel plugin (`xfce4-panel --add=systray`). Stock GNOME has none and needs an
 AppIndicator extension. Without a host the gauge still runs, but the tray menu,
@@ -461,6 +470,25 @@ Each layout keeps its own size from the handle, since compact is sized to the
 taskbar and the stack to the desk. Compact opens at 100%, where four chips stand
 42px tall, and it fits inside a 48px taskbar up to 110%. The choice is remembered, and switching keeps the gauge on the
 screen edges it sits nearest, so a gauge on the taskbar stays there.
+
+### Background opacity
+
+The wall's gear menu has a **Gauge background** slider, 0 to 100% in steps of
+5 (85% to start). The gauge wears it once the slider rests (a quarter second,
+or at once on release) and it is saved in `prefs.json` (`gauge_opacity`). As the
+panel thins, its text takes stronger ink, so small text keeps 4.5:1 contrast
+(WCAG 1.4.3) over the lightest or darkest desktop:
+
+| Opacity | Text |
+|---|---|
+| 85% and up | the theme's own |
+| below 85% | the faint words (resets, labels) take the full ink |
+| below 65% (dark scheme) or 50% (light) | light ink with a dark halo, in either scheme |
+
+At 0% the panel is clear: the text, the pips and the portraits stand on the
+desktop with their halo. The tray icon keeps the theme's own colours. With
+Windows' Transparency effects off (or High Contrast on) the panel is solid,
+whatever the slider says.
 
 ### Staying in front of the taskbar
 

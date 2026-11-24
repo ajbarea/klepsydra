@@ -22,6 +22,8 @@ import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
 import { WAITING, toRows, usageRows } from "../gauge.js";
 import { hiddenRows } from "./chips.js";
+import { wireOpacityPick } from "./opacitypick.js";
+import { subscribeOpacity } from "../opacity.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
 import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
@@ -434,6 +436,7 @@ function updateBackdrop(theme) {
 }
 updateBackdrop(cast);
 let request = null; // the snapshot's wrap-up, while one is shown
+let native = false; // the snapshot's flag for a native Linux app, which reaches tmux itself (launch.rs NATIVE)
 // The Ledger and the Queue share the right edge, one open at a time. Docked,
 // a panel narrows the wall, and Auto measures again (its ResizeObserver).
 const edge = createEdge();
@@ -714,9 +717,10 @@ function paintLedger(el, c) {
   line.hidden = !c.ledger;
   const receipt = el.querySelector(".receipt");
   receipt.hidden = !c.ledger?.full;
+  receipt.classList.toggle("warn", Boolean(c.ledger?.warn));
   setText(receipt.querySelector(".r-full"), c.ledger?.full);
   setText(receipt.querySelector(".r-short"), c.ledger?.short);
-  receipt.title = c.ledger?.full ?? "";
+  receipt.title = c.ledger?.why ? `${c.ledger.full}\n${c.ledger.why}` : (c.ledger?.full ?? "");
   const partial = el.querySelector(".partial");
   show(partial, c.ledger?.partial?.text);
   partial.title = c.ledger?.partial?.label ?? "";
@@ -857,7 +861,7 @@ function render(snapshot) {
   wasState = state;
   paintTally();
   paintLimits(now);
-  const cards = sessions.map((s) => card(s, cast, now, request));
+  const cards = sessions.map((s) => card(s, cast, now, request, native));
   const twoAccounts = accountsDiffer(cards);
   for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);
   cardOf = new Map(cards.map((c) => [c.id, c]));
@@ -1154,6 +1158,7 @@ function take(message) {
     before = statuses(fresh);
     sessions = served ? needsFirst(fresh) : fresh;
     request = message.wrapup ?? null;
+    native = message.native === true;
     latestSnapshot = message;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));
@@ -1666,6 +1671,7 @@ function syncFullText() {
 }
 if (served) document.fonts?.ready.then(syncFullText);
 
+const densityNote = document.getElementById("density-note");
 function choose(value) {
   choice = parseDensity(value);
   for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
@@ -1674,7 +1680,11 @@ function choose(value) {
 
 densityPicker.addEventListener("change", (e) => {
   choose(e.target.value);
-  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+  if (inTauri)
+    window.__TAURI__.core.invoke("set_wall_density", { density: choice }).then(
+      () => setText(densityNote, ""),
+      (err) => setText(densityNote, `Not saved: ${err}`),
+    );
 });
 let resizeTimer = 0;
 addEventListener("resize", () => {
@@ -1691,6 +1701,21 @@ new ResizeObserver(() => {
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
+
+// The floating gauge's background opacity (#438), in the app only.
+if (inTauri) {
+  const input = document.getElementById("gauge-opacity");
+  const opacityNote = document.getElementById("opacity-note");
+  input.closest("label").hidden = false;
+  wireOpacityPick({
+    input,
+    value: input.nextElementSibling,
+    invoke: tauri,
+    subscribe: (fn) => subscribeOpacity(fn, { inTauri, follow }),
+    note: (text) => setText(opacityNote, text),
+    log,
+  });
+}
 
 // Characters (#135): the theme picker, the tray's Characters menu and the
 // phone all wear one theme. html[data-theme] names it, as a CSS colour theme

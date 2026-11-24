@@ -19,8 +19,11 @@ export FLEET_RUN_ID
 # the file: one JSON object and nothing after it. Fails 1 when the file is
 # missing, 2 when it does not read as one object.
 prefs_get() { # KEY
-  local f=$KLEPSYDRA_DIR/prefs.json
+  local f=$KLEPSYDRA_DIR/prefs.json lead=""
   [[ -f $f ]] || return 1
+  # A UTF-8 BOM (PowerShell 5 writes one): jq reads past it, serde_json refuses the file.
+  LC_ALL=C IFS= read -r -n 3 lead <"$f" 2>/dev/null
+  [[ $lead == $'\xef\xbb\xbf' ]] && return 2
   jq -sc --arg k "$1" 'if length == 1 and (.[0] | type) == "object" then .[0][$k] else error("not one object") end' "$f" 2>/dev/null || return 2
 }
 
@@ -91,49 +94,85 @@ screen() { t capture-pane -e -p -t "$1" 2>/dev/null; }
 # Text with its escapes removed: SGR and other CSI, and OSC 8 links.
 plain() { sed -E $'s/\e\\][^\a\e]*(\a|\e\\\\)//g; s/\e\\[[0-9;?]*[A-Za-z]//g'; }
 
-# The input box of SCREEN (with escapes): the lines between its last two rules
-# (U+2500), the first starting with U+276F. Prints its text, dim text
-# (Claude Code's placeholder and suggestions) and the mark removed, or
-# nothing when the box is empty or not on screen (a menu replaces it).
-input_text() {
-  sed -E $'s/\e\\[2m[^\e]*//g' <<<"$1" | plain | awk '
-    index($0, "────") == 1 { r[++n] = NR }
-    { line[NR] = $0 }
-    END {
-      if (n < 2 || r[n] - r[n - 1] < 2) exit
-      first = line[r[n - 1] + 1]
-      if (index(first, "❯") != 1) exit
-      sub(/^❯(\xc2\xa0| )?/, "", first)
-      out = first
-      for (i = r[n - 1] + 2; i < r[n]; i++) { l = line[i]; sub(/^  /, "", l); out = out " " l }
-      gsub(/\xc2\xa0/, " ", out); sub(/[ \n]+$/, "", out); sub(/^ +/, "", out)
-      printf "%s", out
-    }'
+# screen_parse SCREEN: what the helpers below read from a capture (with its
+# escapes), worked out by one awk and kept until a different SCREEN comes:
+#   SCR_PLAIN  the screen with its escapes removed (plain's output)
+#   ABOVE      the plain lines above the input box's top rule (the whole
+#              screen without one); BELOW those below its bottom rule
+#   SCR_BOX    1 when the input box shows (idle, or typed into), else 0
+#   SCR_INPUT  the box's text: the lines between the last two rules (U+2500),
+#              the first starting with U+276F, with dim text (Claude Code's
+#              placeholder and suggestions) and the mark removed; empty when
+#              the box is empty or not on screen (a menu replaces it)
+# Asking the same capture again costs no process (#492).
+# shellcheck disable=SC2016  # an awk program: its $fields are awk's, never the shell's.
+SCR_AWK='
+  BEGIN {
+    E = sprintf("%c", 27); B = sprintf("%c", 7); Z = sprintf("%c", 0)
+    osc = E "\\][^" B E "]*(" B "|" E "\\\\)"; csi = E "\\[[0-9;?]*[A-Za-z]"; dim = E "\\[2m[^" E "]*"
+  }
+  {
+    p = $0; gsub(osc, "", p); gsub(csi, "", p); pl[NR] = p
+    if (index(p, "────") == 1) r[++n] = NR
+    d = $0; gsub(dim, "", d); gsub(osc, "", d); gsub(csi, "", d); dl[NR] = d
+    if (index(d, "────") == 1) rd[++nd] = NR
+  }
+  function out(a, b,   i, s) { s = ""; for (i = a; i <= b; i++) s = s pl[i] "\n"; sub(/\n+$/, "", s); printf "%s%s", s, Z }
+  END {
+    out(1, NR)
+    out(1, (n >= 2) ? r[n - 1] - 1 : NR)
+    if (n >= 2) out(r[n] + 1, NR); else printf "%s", Z
+    printf "%d%s", (n >= 2 && index(pl[r[n - 1] + 1], "❯") == 1), Z
+    t = ""
+    if (nd >= 2 && index(dl[rd[nd - 1] + 1], "❯") == 1) {
+      t = dl[rd[nd - 1] + 1]
+      sub(/^❯(\xc2\xa0| )?/, "", t)
+      for (i = rd[nd - 1] + 2; i < rd[nd]; i++) { l = dl[i]; sub(/^  /, "", l); t = t " " l }
+      gsub(/\xc2\xa0/, " ", t); sub(/[ \n]+$/, "", t); sub(/^ +/, "", t)
+    }
+    printf "%s%s", t, Z
+  }'
+screen_parse() { # SCREEN
+  [[ -n ${SCR_RAW+set} && $1 == "$SCR_RAW" ]] && return 0
+  local f=()
+  mapfile -d '' -t f < <(awk "$SCR_AWK" <<<"$1")
+  SCR_PLAIN=${f[0]-} ABOVE=${f[1]-} BELOW=${f[2]-} SCR_BOX=${f[3]:-0} SCR_INPUT=${f[4]-}
+  # Only a whole answer is kept: an awk that failed (a refused fork, a kill)
+  # is asked again at the next call, as each old helper was.
+  if ((${#f[@]} == 5)); then SCR_RAW=$1; else unset SCR_RAW; fi
 }
+
+# nonblank_tail N TEXT: NEAR is TEXT's last N lines that are not blank.
+nonblank_tail() {
+  local n=$1 i lines=()
+  NEAR=()
+  mapfile -t lines <<<"$2"
+  for ((i = ${#lines[@]} - 1; i >= 0 && ${#NEAR[@]} < n; i--)); do
+    [[ ${lines[i]} =~ ^[[:space:]]*$ ]] || NEAR=("${lines[i]}" "${NEAR[@]}")
+  done
+}
+
+# input_text SCREEN: SCR_INPUT, printed.
+input_text() { screen_parse "$1"; printf '%s' "$SCR_INPUT"; }
 
 # Whether SCREEN shows the input box at all (idle, or typed into).
-has_input_box() {
-  plain <<<"$1" | awk 'index($0, "────") == 1 { r[++n] = NR } { line[NR] = $0 }
-    END { exit !(n >= 2 && r[n] - r[n - 1] >= 2 && index(line[r[n - 1] + 1], "❯") == 1) }'
-}
+has_input_box() { screen_parse "$1"; ((SCR_BOX)); }
 
-# The lines above the input box's top rule (or the whole screen without one)
-# and below its bottom rule, plain, as ABOVE and BELOW.
-split_screen() { # SCREEN
-  local p
-  p=$(plain <<<"$1")
-  ABOVE=$(awk 'index($0, "────") == 1 { r[++n] = NR } { line[NR] = $0 }
-    END { last = (n >= 2) ? r[n - 1] - 1 : NR; for (i = 1; i <= last; i++) print line[i] }' <<<"$p")
-  BELOW=$(awk 'index($0, "────") == 1 { r[++n] = NR } { line[NR] = $0 }
-    END { if (n < 2) exit; for (i = r[n] + 1; i <= NR; i++) print line[i] }' <<<"$p")
-}
+# ABOVE and BELOW of SCREEN (screen_parse).
+split_screen() { screen_parse "$1"; } # SCREEN
 
 # The last non-empty lines of ABOVE, nearest the input box.
-near() { grep -v '^[[:space:]]*$' <<<"$ABOVE" | tail -"${1:-6}"; }
+near() { nonblank_tail "${1:-6}" "$ABOVE"; ((${#NEAR[@]} == 0)) || printf '%s\n' "${NEAR[@]}"; }
 
 # A turn is running: the spinner line ("… (" with its timer, or "esc to
 # interrupt") sits just above the input box.
-busy() { split_screen "$1"; near 4 | grep -Eq '… \(|esc to interrupt'; }
+busy() { # SCREEN
+  local l
+  screen_parse "$1"
+  nonblank_tail 4 "$ABOVE"
+  for l in "${NEAR[@]}"; do [[ $l == *'… ('* || $l == *'esc to interrupt'* ]] && return 0; done
+  return 1
+}
 
 # Claude Code names the window in its message ("You've hit your 5-hour
 # limit", "... weekly limit", "... Fable limit", "... org's monthly spend
@@ -151,13 +190,19 @@ unset W
 # /usage or /login answer nothing. "hit your fast limit" is the /fast dialog's,
 # not a usage limit. Prints it; fails when there is none.
 limit_line() {
-  split_screen "$1"
-  { near 6 | awk -v re="$LIMIT_RE" '
-      /hit your fast limit/ { next }
-      $0 ~ re { l = $0; next }
-      /^❯ / && !/^❯ \// { l = "" }
-      END { if (l != "") print l }'
-    printf '%s\n' "$BELOW" | grep -E "$LIMIT_RE"; } | tail -1 | grep .
+  local l hit="" below=()
+  screen_parse "$1"
+  nonblank_tail 6 "$ABOVE"
+  for l in "${NEAR[@]}"; do
+    if [[ $l == *'hit your fast limit'* ]]; then continue
+    elif [[ $l =~ $LIMIT_RE ]]; then hit=$l
+    elif [[ $l == '❯ '* && $l != '❯ /'* ]]; then hit=""
+    fi
+  done
+  mapfile -t below <<<"$BELOW"
+  for l in "${below[@]}"; do [[ $l =~ $LIMIT_RE ]] && hit=$l; done
+  [[ -n $hit ]] || return 1
+  printf '%s\n' "$hit"
 }
 
 # Whether EPOCH reads as HH:MM on the clock in ZONE (empty: local time). GNU
@@ -239,10 +284,14 @@ wait_for() { # PANE SECONDS CHECK
 
 # Claude Code's limit menu, standing where the input box was.
 limit_menu() {
-  local tail
+  local l stop=0 confirm=0
   has_input_box "$1" && return 1
-  tail=$(plain <<<"$1" | grep -v '^[[:space:]]*$' | tail -8)
-  grep -q 'Stop and wait for limit to reset' <<<"$tail" && grep -q 'Enter to confirm' <<<"$tail"
+  nonblank_tail 8 "$SCR_PLAIN"
+  for l in "${NEAR[@]}"; do
+    [[ $l == *'Stop and wait for limit to reset'* ]] && stop=1
+    [[ $l == *'Enter to confirm'* ]] && confirm=1
+  done
+  ((stop && confirm))
 }
 
 # Type TEXT into PANE's empty input box and wait until the box holds exactly
@@ -266,9 +315,10 @@ type_exactly() { # PANE TEXT
 }
 
 not_busy() { has_input_box "$1" && ! busy "$1"; }
-idle_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]] && ! busy "$1"; }
-box_empty() { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }
-holds_input() { [[ -n $(input_text "$1") ]]; }
+# Each parses its own SCREEN first, so SCR_INPUT is never a screen read before.
+idle_empty() { screen_parse "$1"; has_input_box "$1" && [[ -z $SCR_INPUT ]] && ! busy "$1"; }
+box_empty() { screen_parse "$1"; has_input_box "$1" && [[ -z $SCR_INPUT ]]; }
+holds_input() { screen_parse "$1"; [[ -n $SCR_INPUT ]]; }
 started() { busy "$1" || limit_line "$1" >/dev/null; }
 # PANE (showing SCREEN) stopped at a usage limit: no turn running, and a limit
 # line on the screen, else the fleet hook's StopFailure record (#311). Prints
@@ -305,11 +355,12 @@ pane_locked() { # PANE COMMAND [ARG...]
   )
 }
 rc_settled() { # the connect line, or the menu shown when it is already on
-  local p
-  p=$(plain <<<"$1")
-  grep -q 'Enter to select · Esc to continue' <<<"$p" && return 0
-  split_screen "$1"
-  near 4 | grep -q '/remote-control is active' && idle_empty "$1"
+  local l
+  screen_parse "$1"
+  [[ $SCR_PLAIN == *'Enter to select · Esc to continue'* ]] && return 0
+  nonblank_tail 4 "$ABOVE"
+  for l in "${NEAR[@]}"; do [[ $l == *'/remote-control is active'* ]] && { idle_empty "$1"; return; }; done
+  return 1
 }
 
 # Type TEXT into PANE's empty box (type_exactly) and press Enter. Run it under
@@ -1180,9 +1231,9 @@ wrapup_pending() { # SID
 # (klepsydra's) says done, or stopped with only background work, and lists no
 # background work still running, and no wrap-up answer is owed. Prints the session's stamp from the same
 # read, for prompt_stamp comparisons.
-turn_done() { # PANE
-  local sid
-  sid=$(live_session "$1") || return 1
+turn_done() { # PANE [SID]: SID when the caller already has PANE's live session
+  local sid=${2:-}
+  [[ -n $sid ]] || sid=$(live_session "$1") || return 1
   ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and ((.background // []) | length) == 0) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
@@ -1864,3 +1915,8 @@ heph_note() { # WHY SID HEPH DOING
   printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$4"
   printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
 }
+
+# Tokens one request may carry (a session's whole context, re-sent with each
+# call) before the resume service asks the worker to checkpoint and start
+# fresh (#515). The wall's ledger.js CONTEXT_BUDGET holds the same number.
+FLEET_CONTEXT_BUDGET=${FLEET_CONTEXT_BUDGET:-300000}

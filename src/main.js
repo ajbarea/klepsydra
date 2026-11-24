@@ -1,10 +1,11 @@
-import { toRows, formatPct, WAITING } from "./gauge.js";
+import { toRows, formatPct, rampColor, WAITING } from "./gauge.js";
 import { readMode, readStops } from "./gaugeview.js";
 import { dockKey, primaryChip, toChips } from "./fleet/chips.js";
 import { dockSlots, syncChips } from "./fleet/chipview.js";
 import { follow } from "./ipc.js";
 import { wheelPixels, wheelStep, clampLevel, scaleAt } from "./zoom.js";
 import { createLog } from "./log.js";
+import { REDUCED_TRANSPARENCY, applyOpacity, schemeOf, subscribeOpacity, wantsSolid } from "./opacity.js";
 
 const log = createLog("main.js");
 
@@ -153,14 +154,42 @@ function syncSize(pin = false) {
  * The ramp lives in CSS, so rather than reimplement it, read back the colour
  * the browser actually computed -- that resolves `color-mix` for free.
  */
+// Outside #panel, so the tray wears the theme's own ramp whatever the
+// gauge's opacity does to the ink inside it (#438).
+const trayProbe = document.createElement("i");
+trayProbe.style.display = "none";
+document.body.append(trayProbe);
+
+// :root's ramp changes only with the colour scheme, so it is read once per
+// scheme, and the probe only when the colour asked for changes.
+let trayLook = null;
+let trayColour = "";
+let trayRgb = [110, 110, 110];
+window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  trayLook = null;
+  if (started) render(); // the pips and the tray take the new scheme's ramp now, not at the next tick
+});
+
 function syncTray(primary) {
   if (!inTauri) return;
   const pct = primary?.lead?.pct ?? 0;
   let rgb = [110, 110, 110];
-  const probe = primary && [...chipsEl.children].find((c) => c.dataset.key === primary.key)?.querySelector(".pip[data-lead] i");
-  if (probe) {
-    const m = getComputedStyle(probe).backgroundColor.match(/\d+/g);
-    if (m && m.length >= 3) rgb = m.slice(0, 3).map(Number);
+  if (primary) {
+    const root = document.documentElement;
+    trayLook ??= {
+      stops: readStops(root),
+      mode: readMode(root, new URLSearchParams(location.search).get("mode")),
+      dim: getComputedStyle(root).getPropertyValue("--text-dim"),
+    };
+    // A stale reading greys, as its pips do.
+    const colour = primary.stale ? trayLook.dim : rampColor(pct, trayLook.stops, trayLook.mode);
+    if (colour !== trayColour) {
+      trayProbe.style.backgroundColor = colour;
+      const m = getComputedStyle(trayProbe).backgroundColor.match(/\d+/g);
+      trayRgb = m && m.length >= 3 ? m.slice(0, 3).map(Number) : [110, 110, 110];
+      trayColour = colour;
+    }
+    rgb = trayRgb;
   }
   const signature = `${Math.round(pct)}|${rgb.join(",")}`;
   if (signature === lastTray) return; // redraw only when it would look different
@@ -200,7 +229,7 @@ function render(pin = false) {
   syncChips(chipsEl, chips, {
     now,
     layout: chipLayout(),
-    stops: readStops(),
+    stops: readStops(panel), // the halo's brighter ramp lives on #panel (#438)
     mode: readMode(document.documentElement, new URLSearchParams(location.search).get("mode")),
   });
 
@@ -344,6 +373,24 @@ window.__klepsydra = {
   set(p) { lastPayload = p; render(); },
   fleet: receiveFleet,
 };
+
+// The background opacity (#438): live from the app, and again when the
+// colour scheme flips, since the halo starts lower on a light panel, or when
+// the system asks for less transparency, which draws the panel solid.
+let opacity = null;
+let ink; // the ink last worn, so a step that keeps it costs no redraw
+function wearOpacity() {
+  if (opacity === null) return;
+  const next = applyOpacity(document.documentElement, opacity, schemeOf(window), wantsSolid(window));
+  if (next !== ink && started) render(); // the pips' colours follow the ink's ramp
+  ink = next;
+}
+subscribeOpacity((v) => {
+  opacity = v;
+  wearOpacity();
+}, { inTauri, follow, search: location.search });
+window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", wearOpacity);
+window.matchMedia(REDUCED_TRANSPARENCY).addEventListener("change", wearOpacity);
 
 await followLayout();
 // No word from the app in time: draw the full layout; a late word still applies.

@@ -47,7 +47,7 @@ FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a work
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said checkpointed
 declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
@@ -55,11 +55,11 @@ STATE_FILE=$FLEET_STATE/resume-state
 US=$'\x1f' # the field separator: a tab is IFS whitespace, so empty fields would collapse
 
 load_state() {
-  local server p d s r l n m k f a h
+  local server p d s r l n m k f a h c
   [[ -r $STATE_FILE ]] || return 0
   server=$(t display-message -p '#{pid}' 2>/dev/null)
   [[ -n $server && $(head -1 "$STATE_FILE") == "#server $server" ]] || return 0
-  while IFS=$US read -r p d s r l n m k f a h; do
+  while IFS=$US read -r p d s r l n m k f a h c; do
     [[ $p == %* ]] || continue
     [[ -n $d ]] && due[$p]=$d
     [[ -n $s ]] && seen_on[$p]=$s
@@ -71,6 +71,7 @@ load_state() {
     [[ -n $f ]] && fresh_failed[$p]=$f
     [[ -n $a ]] && asked[$p]=$a
     [[ -n $h ]] && held_said[$p]=$h
+    [[ -n $c ]] && checkpointed[$p]=$c
   done <"$STATE_FILE"
 }
 
@@ -81,8 +82,8 @@ save_state() {
   {
     printf '#server %s\n' "$server"
     for p in $(fleet_panes); do
-      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
-        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}" "${held_said[$p]:-}"
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
+        "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}" "${held_said[$p]:-}" "${checkpointed[$p]:-}"
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
@@ -120,6 +121,20 @@ resume_typed() { # PANE
   submit "$1"
 }
 
+# ARMED: the time SCREEN's last "Continuing automatically at TIME" below the
+# input box names, trailing spaces cut; empty when none. Matches as grep -o
+# would: each match runs to the next "·".
+armed_at() { # SCREEN
+  local l rest m="" below=() re='Continuing automatically at ([^·]*)'
+  screen_parse "$1"
+  mapfile -t below <<<"$BELOW"
+  for l in "${below[@]}"; do
+    rest=$l
+    while [[ $rest =~ $re ]]; do m=${BASH_REMATCH[1]} rest=${rest#*"${BASH_REMATCH[0]}"}; done
+  done
+  ARMED=${m%"${m##*[! ]}"}
+}
+
 # When the agent in PANE (screen PLAIN) stopped: the last moment, at most 15
 # min past the clock now (a turn can end while a pass runs), whose local time
 # reads the "done 4:21 PM" its last turn printed, at the end of that minute.
@@ -129,17 +144,18 @@ resume_typed() { # PANE
 # status line redraws keep fresh, so it under-counts. Always a number: when
 # unsure, NOW.
 stopped_at() { # PANE PLAIN
-  local at day now d c k best="" stopped
+  local at day now d c k got best="" stopped
   at=$(grep -o 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$2" | tail -1 | cut -c6-)
   at=${at#0}
   now=$(clock)
-  if [[ -n $at ]] && day=$(date -d "@$now" +%F); then
+  if [[ -n $at ]] && printf -v day '%(%F)T' "$now"; then
     for d in -1 0 1; do
       # Noon is never skipped or repeated, so the day before and after are sure.
       c=$(date -d "$(date -d "$day 12:00 PM $d day" +%F) $at" +%s 2>/dev/null) || continue
       for k in -7200 -3600 -1800 0 1800 3600 7200; do
         (( c + k <= now + 900 && c + k > ${best:-0} )) || continue
-        [[ $(LC_ALL=C date -d "@$((c + k))" '+%-I:%M %p') == "$at" ]] && best=$((c + k))
+        LC_ALL=C printf -v got '%(%-I:%M %p)T' "$((c + k))"
+        [[ $got == "$at" ]] && best=$((c + k))
       done
     done
   fi
@@ -344,7 +360,7 @@ blocked() { # ID
 moved() { # PANE [NEW]
   if [[ -n ${2:-} ]]; then
     last[$2]=$NOW last[$1]=$NOW
-    unset "move_tries[$1]" "fresh_failed[$1]" "asked[$1]"
+    unset "move_tries[$1]" "fresh_failed[$1]" "asked[$1]" "checkpointed[$1]"
     forget "$1"
   else
     # A failure an hour after the last starts the count again (a new limit,
@@ -445,6 +461,16 @@ launching() { # PANE: launch.sh is starting it (a marker under 15 min old)
 }
 
 # Apply the result RC (and NEW pane) of PANE's move of KIND, CTX as spawn got it.
+# A move that did not happen (RC from fresh or heph_move), one rule for every
+# kind: AJ typed before it started (1) costs nothing; a launch AJ undid (4) cost
+# a session, so it waits as after a second failure; anything else is a failure.
+move_refused() { # PANE RC
+  (( $2 == 1 )) && return 0
+  moved "$1"
+  (( $2 == 4 && move_tries[$1] < 2 )) && move_tries[$1]=2
+  return 0
+}
+
 done_move() { # PANE KIND RC NEW CTX
   local p=$1 kind=$2 rc=$3 new=$4 a b c d got
   local e
@@ -459,9 +485,7 @@ done_move() { # PANE KIND RC NEW CTX
         fi
         moved "$p" "$new"
       else
-        (( rc == 1 )) || moved "$p"
-        # A launch AJ undid (4) cost a session: wait as after a second failure.
-        (( rc == 4 && move_tries[$p] < 2 )) && move_tries[$p]=2
+        move_refused "$p" "$rc"
         if [[ $kind == back ]]; then
           flog WARN "could not move back to the preferred account; trying again later" pane="$p" to="$b" orchestrator="$c" why="$rc" tries="${move_tries[$p]:-0}"
           # A worker that stopped for the move (READY-TO-MOVE) waits on nothing:
@@ -480,11 +504,7 @@ done_move() { # PANE KIND RC NEW CTX
           moved "$p" "$new"
           ;;
         1 | 4)
-          # A launch that AJ undid (4) cost a session: wait as after a failure.
-          if (( rc == 4 )); then
-            moved "$p"
-            (( move_tries[$p] < 2 )) && move_tries[$p]=2
-          fi
+          move_refused "$p" "$rc"
           flog INFO "AJ has the pane; leaving it to the next pass" pane="$p" why="$rc"
           ;;
         *)
@@ -520,6 +540,20 @@ done_move() { # PANE KIND RC NEW CTX
             unset "fresh_failed[$p]"
             forget "$p"
           fi
+          ;;
+      esac
+      ;;
+    context) # a=name b=tokens
+      case $rc in
+        0)
+          flog INFO "context budget: a fresh session took over" pane="$p" name="$a" new_pane="${new:-none}" tokens="$b"
+          moved "$p" "$new"
+          ;;
+        *)
+          # Refused or failed: the old session stays, and a later pass (held by
+          # move_hold_ok) relaunches it, with no second ask.
+          move_refused "$p" "$rc"
+          flog WARN "context budget: the fresh session did not start; the old one stays" pane="$p" name="$a" why="$rc" tries="${move_tries[$p]:-0}"
           ;;
       esac
       ;;
@@ -559,8 +593,8 @@ one() { # PANE
   [[ -n ${job[$p]:-} ]] && return
   launching "$p" && return
   s=$(screen "$p") || return
-  ps=$(plain <<<"$s")
-  typed=$(input_text "$s")
+  screen_parse "$s"
+  ps=$SCR_PLAIN typed=$SCR_INPUT
 
   # Claude Code's limit menu: take option 1, "Stop and wait for limit to reset";
   # on the next pass the pane reads as an ordinary limited one.
@@ -573,7 +607,8 @@ one() { # PANE
   # Claude Code's own auto-continue resumes the whole transcript; on a
   # registered pane with over FRESH_AFTER_S to wait, cancel it ("esc to
   # cancel") so the pane gets a fresh session at the reset. Never over typed text.
-  armed=$(split_screen "$s"; printf '%s\n' "$BELOW" | grep -o 'Continuing automatically at [^·]*' | tail -1 | sed 's/^Continuing automatically at //; s/ *$//')
+  armed_at "$s"
+  armed=$ARMED
   if (( !orch )) && [[ -n $armed && -z $typed ]] && registered "$p"; then
     at=$(date -d "${armed//,/}" +%s 2>/dev/null) || at=0
     (( at > 0 && NOW - at > 21600 )) && at=$((at + 86400))
@@ -694,6 +729,42 @@ one() { # PANE
         ;;
     esac
     return
+  fi
+
+  # Context budget (#515): a worker whose last request carried
+  # FLEET_CONTEXT_BUDGET tokens or more (call_tokens, which the fleet hook
+  # records at each turn's end) is asked once, at a finished turn and an empty
+  # prompt, to write its resume state and stop. checkpointed[] keeps "SID STAMP"
+  # (the session and turn asked at) across passes and restarts; once a later
+  # turn of that session has ended, a fresh session takes the pane. Only that
+  # move succeeding (moved PANE NEW) or a new session in the pane clears it, so a
+  # move put off or failed is tried again (move_hold_ok) without asking again.
+  local cur_sid cur_toks cp_stamp
+  if (( !orch )) && [[ -z $limit && -z ${due[$p]:-} ]] && inbox_name=$(reg_field "$p" 2) && [[ -n $inbox_name ]] &&
+    idle_empty "$s" && cur_sid=$(live_session "$p") && cp_stamp=$(turn_done "$p" "$cur_sid") &&
+    cur_toks=$(jq -er '.call_tokens | numbers | floor' "$KLEPSYDRA_DIR/fleet/$cur_sid.json" 2>/dev/null); then
+    [[ -n ${checkpointed[$p]:-} && ${checkpointed[$p]%% *} != "$cur_sid" ]] && unset "checkpointed[$p]"
+    if [[ -n ${checkpointed[$p]:-} ]]; then
+      if [[ ${checkpointed[$p]#* } != "$cp_stamp" ]] && move_hold_ok "$p"; then
+        spawn "$p" context "$inbox_name$US$cur_toks" fresh "$p" "$inbox_name" "$(reg_field "$p" 3)" \
+          "passed the context budget ($cur_toks of $FLEET_CONTEXT_BUDGET tokens a request) and wrote its resume state" "" "" "$cp_stamp"
+      fi
+      return
+    elif (( cur_toks >= FLEET_CONTEXT_BUDGET )); then
+      local ask
+      ask=$(mktemp)
+      printf '%s\n' "Your context is past the fleet's budget: your last request carried $cur_toks tokens (budget $FLEET_CONTEXT_BUDGET), re-sent with every call. Finish the step you are on, write your resume state to IMPL.md (slice, done, next, verify), commit and push it, then end your turn. A fresh session takes over from IMPL.md." >"$ask"
+      got=$(inbox_deliver "$p" "$ask")
+      rm -f -- "${ask:?}"
+      case $got in
+        sent | queued | held) # held: in the box unsent; once sent, its turn is the checkpoint
+          checkpointed[$p]="$cur_sid $cp_stamp"
+          flog WARN "context budget: asked the worker to write its resume state and stop" pane="$p" name="$inbox_name" tokens="$cur_toks" budget="$FLEET_CONTEXT_BUDGET" result="$got"
+          ;;
+        *) flog WARN "context budget: the ask was not delivered; trying again next pass" pane="$p" name="$inbox_name" tokens="$cur_toks" result="$got" ;;
+      esac
+      return
+    fi
   fi
 
   if (( orch )); then
