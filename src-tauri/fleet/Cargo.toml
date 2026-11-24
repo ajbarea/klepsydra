@@ -21,7 +21,7 @@ http-body-util = "0.1"
 tokio = { version = "1", features = ["rt", "net", "time", "sync"] }
 socket2 = "0.6"
 # Ledger days follow the local calendar; bundles tzdb on Windows.
-jiff = "0.2"
+jiff = "1.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }

@@ -15,6 +15,7 @@
 #   eng_answer SCREEN [PROMPT]      the reply under the echo of PROMPT (the last echo without one);
 #                                   no echo of PROMPT on screen gives nothing, never another turn's
 #   eng_trust_key           the key that answers a trust dialog
+#   eng_models              the sorted list of available model identifiers (one per line)
 # The lock is the point: every lane starts with write tools, the shell, MCP and
 # the browser off, and a failure to build the lock starts nothing.
 
@@ -45,6 +46,44 @@ eng_model() { # ENGINE KIND
   case $1 in
     agy) printf 'gemini-3.8-flash-high' ;;
     copilot) printf 'auto' ;;
+  esac
+}
+
+# Available model IDs for ENGINE, one per line, sorted.
+eng_models() { # ENGINE: the model ids ENGINE offers now, sorted, one a line
+  eng_models_raw "$1" | grep -v '^[[:space:]]*$' | LC_ALL=C sort -u
+  (( PIPESTATUS[0] == 0 ))
+}
+
+# Each engine's own list: agy asks its server (`agy models`, about a second);
+# Copilot's is the list its CLI cached at its last start (data.db, read-only),
+# so no login token is read here. FLEET_<ENGINE>_MODELS (one id a line) stands in, for tests.
+eng_models_raw() { # ENGINE
+  local fake
+  case $1 in
+    agy) fake=${FLEET_AGY_MODELS-} ;;
+    copilot) fake=${FLEET_COPILOT_MODELS-} ;;
+    *) return 1 ;;
+  esac
+  if [[ -n $fake ]]; then printf '%s\n' "$fake"; return; fi
+  eng_has "$1" || return 1
+  case $1 in
+    agy)
+      # Whole, or not at all: a listing cut short by an error would read as models gone.
+      local out
+      out=$(timeout "${FLEET_MODELS_TIMEOUT:-10}" "$(eng_bin agy)" models 2>/dev/null) || return 1
+      awk -F'\t' 'NF >= 2 && $1 ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ { print $1 }' <<<"$out"
+      ;;
+    copilot)
+      local db=${COPILOT_HOME:-$HOME/.copilot}/data.db # Copilot's own variable for its folder
+      [[ -r $db ]] || return 1
+      timeout "${FLEET_MODELS_TIMEOUT:-10}" python3 -I -c 'import json, sqlite3, sys, urllib.parse
+c = sqlite3.connect("file:" + urllib.parse.quote(sys.argv[1]) + "?mode=ro", uri=True)
+r = c.execute("SELECT value FROM app_state WHERE key = ?", ("copilot-available-models",)).fetchone()
+for m in json.loads(r[0]) if r else []:
+    if isinstance(m, dict) and m.get("id") not in (None, "auto"):
+        print(m["id"])' "$db" 2>/dev/null
+      ;;
   esac
 }
 
