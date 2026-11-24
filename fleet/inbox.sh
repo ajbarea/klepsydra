@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# inbox.sh: list or acknowledge undelivered reports in the orchestrator's inbox (#367).
+# inbox.sh: list, acknowledge, or deliver undelivered reports in done-reports.tsv (#367).
 #   fleet inbox [--json] [--all]
 #   fleet inbox list [--json] [--all]
 #   fleet inbox ack NAME... | --all
@@ -10,6 +10,7 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 
+usage="usage: fleet inbox [--json] [--all] | fleet inbox ack NAME... | --all | fleet inbox deliver [NAME...] | --all"
 cmd="list"
 json=0
 all=0
@@ -28,36 +29,54 @@ if (( $# > 0 )); then
       exit 0
       ;;
     *)
-      err "usage: fleet inbox [--json] [--all] | fleet inbox ack NAME... | --all"
+      err "$usage"
       exit 2
       ;;
   esac
 fi
 
-# Parse remaining options for list
 if [[ $cmd == list ]]; then
   while (( $# > 0 )); do
     case $1 in
       --json) json=1; shift ;;
       --all) all=1; shift ;;
-      *) break ;;
+      *) err "$usage"; exit 2 ;;
     esac
   done
 fi
 
+read_reports_json() { # SHOW_ALL (0|1)
+  local show_all=${1:-0} now
+  [[ -s $DONE_REPORTS ]] || { echo "[]"; return 0; }
+  now=$(date +%s)
+  jq -Rsc --argjson now "$now" --argjson all "$show_all" '
+    split("\n")
+    | map(select(length > 0) | split("\t"))
+    | map(select((.[0] // "") | test("^[0-9]+$")))
+    | map(
+        (.[0] | tonumber) as $at
+        | (.[3] // "") as $res
+        | (if $res == "acked" then "acked"
+           elif ($res == "sent" or $res == "queued" or $res == "delivered") then "delivered"
+           elif ($res == "pending" and ($now - $at) <= 300) then "inflight"
+           else "pending" end) as $status
+        | {
+            at: $at,
+            iso: ($at | strflocaltime("%Y-%m-%dT%H:%M:%S%z")),
+            name: (.[1] // ""),
+            pane: (.[2] // ""),
+            result: $res,
+            report: ((.[4] // "") | gsub("\\\\(?<c>[nt\\\\])"; if .c == "n" then "\n" elif .c == "t" then "\t" else "\\" end)),
+            status: $status
+          }
+      )
+    | if $all == 1 then . else map(select(.status == "pending")) end
+  ' "$DONE_REPORTS" 2>/dev/null
+}
+
 case $cmd in
   list)
-    if [[ ! -f $FLEET_INBOX ]]; then
-      if (( json )); then
-        echo "[]"
-      else
-        echo "no unread reports"
-      fi
-      exit 0
-    fi
-    filter='select(.status == "pending")'
-    (( all )) && filter='.'
-    items=$(jq -s "[.[] | $filter]" "$FLEET_INBOX" 2>/dev/null)
+    items=$(read_reports_json "$all")
     count=$(jq 'length' <<<"$items" 2>/dev/null || echo 0)
     if (( count == 0 )); then
       if (( json )); then
@@ -69,27 +88,22 @@ case $cmd in
     fi
     if (( json )); then
       jq -c '.[]' <<<"$items"
+    elif (( all )); then
+      jq -r '.[] | "[\(.status)] \(if .name != "" then .name else .pane end) (\(.pane), \(.iso), \(.result)): \(.report)"' <<<"$items"
     else
-      if (( all )); then
-        jq -r '.[] | "[\(.status)] \(.name // .pane) (\(.pane), \(.iso), \(.result)): \(.report)"' <<<"$items"
-      else
-        jq -r '.[] | "\(.name // .pane) (\(.pane), \(.iso), \(.result)): \(.report)"' <<<"$items"
-      fi
+      jq -r '.[] | "\(if .name != "" then .name else .pane end) (\(.pane), \(.iso), \(.result)): \(.report)"' <<<"$items"
     fi
     ;;
   ack)
     (( $# > 0 )) || { err "usage: fleet inbox ack NAME... | --all"; exit 2; }
-    target=$1
-    if [[ $target == --all ]]; then
-      count=$(with_inbox inbox_ack --all) || { err "no unread reports to acknowledge"; exit 1; }
-      with_registry dr_ack --all
+    if [[ $1 == --all ]]; then
+      count=$(with_registry dr_ack --all) || { err "no unread reports to acknowledge"; exit 1; }
       flog INFO "inbox: acknowledged all unread reports" count="$count"
       echo "acknowledged: all ($count report$( (( count > 1 )) && echo s ))"
       exit 0
     fi
     for name in "$@"; do
-      count=$(with_inbox inbox_ack "$name") || { err "no unread report for $name"; exit 1; }
-      with_registry dr_ack "$name"
+      count=$(with_registry dr_ack "$name") || { err "no unread report for $name"; exit 1; }
       flog INFO "inbox: acknowledged report" name="$name" count="$count"
       echo "acknowledged: $name"
     done
@@ -100,13 +114,10 @@ case $cmd in
       err "no orchestrator pane"
       exit 1
     fi
-    if [[ ! -f $FLEET_INBOX ]]; then
-      echo "no unread reports"
-      exit 0
-    fi
+    items=$(read_reports_json 0)
     targets=("$@")
     if (( ${#targets[@]} == 0 )) || [[ ${targets[0]} == --all ]]; then
-      mapfile -t targets < <(jq -r 'select(.status == "pending") | .name' "$FLEET_INBOX" 2>/dev/null | sort -u)
+      mapfile -t targets < <(jq -r '.[].name' <<<"$items" 2>/dev/null | sort -u)
     fi
     if (( ${#targets[@]} == 0 )); then
       echo "no unread reports"
@@ -114,28 +125,34 @@ case $cmd in
     fi
     failed=0
     for name in "${targets[@]}"; do
-      item=$(jq -c --arg name "$name" 'select(.name == $name and .status == "pending")' "$FLEET_INBOX" 2>/dev/null | head -1)
-      if [[ -z $item ]]; then
+      mapfile -t rows < <(jq -c --arg name "$name" '.[] | select(.name == $name)' <<<"$items" 2>/dev/null)
+      if (( ${#rows[@]} == 0 )); then
         err "no unread report for $name"
         failed=1
         continue
       fi
-      at=$(jq -r '.at // 0' <<<"$item")
-      rep=$(jq -r '.report' <<<"$item")
-      id=$(jq -r '.id' <<<"$item")
-      msg="$name finished: $rep"
-      got=$(bash "$here/send.sh" "$orch" - <<<"$msg" 2>/dev/null) || true
-      got=${got##*$'\n'}
-      if [[ $got == sent || $got == queued ]]; then
-        with_inbox inbox_mark_delivered "$name" "$rep" "$id"
-        [[ $at != 0 ]] && with_registry dr_set "$at" "$name" "$got"
-        flog INFO "inbox: delivered report" name="$name" result="$got"
-        echo "delivered: $name ($got)"
-      else
-        flog WARN "inbox: delivery failed" name="$name" result="$got"
-        err "could not deliver $name: $got"
-        failed=1
-      fi
+      for item in "${rows[@]}"; do
+        at=$(jq -r '.at // 0' <<<"$item")
+        res=$(jq -r '.result // ""' <<<"$item")
+        rep=$(jq -r '.report // ""' <<<"$item")
+        if [[ -n $rep ]]; then
+          msg="$name finished: $rep"
+        else
+          msg="$name finished"
+        fi
+        got=$(bash "$here/send.sh" "$orch" - <<<"$msg" 2>/dev/null) || true
+        got=${got##*$'\n'}
+        if [[ $got == sent || $got == queued ]]; then
+          with_registry dr_deliver_row "$at" "$name" "$res" "$rep" "$got" ||
+            flog ERROR "inbox: done-reports.tsv cannot be updated" file="$DONE_REPORTS"
+          flog INFO "inbox: delivered report" name="$name" result="$got"
+          echo "delivered: $name ($got)"
+        else
+          flog WARN "inbox: delivery failed" name="$name" result="$got"
+          err "could not deliver $name: $got"
+          failed=1
+        fi
+      done
     done
     exit $failed
     ;;

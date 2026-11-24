@@ -32,7 +32,7 @@ named=("$REGISTRY")
 [[ -f $FINISHED ]] && named+=("$FINISHED")
 report=${!#}
 [[ $report == - ]] && report=$(cat)
-report=$(tr -d '\r' <<<"$report" | awk 'NF {found=1} found' | sed 's/[[:space:]]*$//')
+report=$(tr '\r\n' '  ' <<<"$report" | sed -E 's/^ +//; s/ +$//')
 [[ -n $report ]] || { err "$usage"; exit 2; }
 # The old one-argument form named an agent. A lone word that is one is refused, not sent as a report,
 # and a worker names only itself (an unquoted two-word report must not finish another agent).
@@ -130,11 +130,11 @@ deliver_report() {
   if [[ $got == sent || $got == queued ]]; then
     flog INFO "done: report delivered to the orchestrator" name="$label" result="$got"
     [[ $orch == "${TMUX_PANE:-}" ]] || echo "report: $got"
-    with_inbox inbox_mark_delivered "$label" "$report" || flog ERROR "done: inbox file cannot be updated" file="$FLEET_INBOX"
+    with_registry dr_mark_delivered "$label" "$report" "$at" ||
+      flog ERROR "done: done-reports.tsv cannot be updated" file="$DONE_REPORTS"
     return 0
   fi
   flog WARN "done: report not delivered; written to the queue file" name="$label" result="$got"
-  with_inbox inbox_append "$label" "$rpane" "$report" "$got" "$at" || flog ERROR "done: inbox file cannot be written" file="$FLEET_INBOX"
   if queue_note "$label" "$got" "$report"; then
     echo "report: $got; written to the queue file's Running now"
   else

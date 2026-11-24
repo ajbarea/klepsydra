@@ -15,7 +15,7 @@
 #   fleet headless NAME BRIEF [--budget USD] [--model M] [--repo DIR] [--wait]  run a job as `claude -p` on the API credit, capped (docs/headless.md); --status lists jobs and costs
 #   fleet done [NAME] "REPORT"  mark an agent finished (default: this pane's), so nothing relaunches it,
 #                         and send the one-line REPORT to the orchestrator (- reads stdin)
-#   fleet inbox [ack NAME...] list or acknowledge undelivered reports in the inbox
+#   fleet inbox [list [--json] [--all] | ack NAME... | --all | deliver [NAME...] | --all]  list, deliver or acknowledge undelivered reports
 #   fleet close NAME      close a finished agent's pane once its report is read
 #   fleet voices [MODE]   make keryx follow the tray's Voices mode (heph, everyone, off) now;
 #                         --if-changed only a mode not yet applied, --check only report

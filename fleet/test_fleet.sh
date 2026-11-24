@@ -2405,23 +2405,23 @@ check "#445: the doctor flags a finished pane left open and unread for over 30 m
 check "#445: with nothing waiting it is ok" "$(doctor | grep -c '^ok  *done reports')" "1"
 t kill-window -t "$h" 2>/dev/null; t kill-window -t "$w2" 2>/dev/null; t kill-window -t "$w3" 2>/dev/null
 t kill-window -t "$w4" 2>/dev/null; t kill-window -t "$w5" 2>/dev/null
-: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$FLEET_INBOX" "$KLEPSYDRA_DIR/fleet/$SID.json"
+: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "fleet done reports must reach the orchestrator (durable inbox: #367)"
-rm -f "$FLEET_INBOX" "$DONE_REPORTS" "$FLEET_STATE/finished.tsv"
+rm -f "$DONE_REPORTS" "$FLEET_STATE/finished.tsv"
 : >"$REGISTRY"
 h367=$(pane hph367 '{"above":["idle"],"on_submit":"none"}')
 printf '%s\n' "$h367" >"$FLEET_STATE/orchestrator.pane"
 
-# 1. busy pane: orchestrator pane busy (AJ typing in box), fleet done cannot paste -> writes to durable inbox (mode 0600, result not-pasted, status pending)
+# 1. busy pane: orchestrator pane busy (AJ typing in box), fleet done cannot paste -> recorded in done-reports.tsv (mode 0600, result not-pasted, report in col 5)
 w_busy=$(dpane wrk_busy)
 t send-keys -t "$h367" -l "AJ: busy working"; settle
 out=$(fdone "$w_busy" "PR #301 open, CI green" 2>&1); rc=$?
 check "#367: fleet done into busy orchestrator pane reports not-pasted" \
   "$rc $(tail -1 <<<"$out" | cut -c1-40)" "0 report: not-pasted; written to the queue"
-check "#367: undelivered report is written to inbox.jsonl (mode 0600, status pending, result not-pasted)" \
-  "$(stat -c %a "$FLEET_INBOX") $(jq -r 'select(.name == "wrk_busy") | "\(.status) \(.result) \(.report)"' "$FLEET_INBOX")" \
-  "600 pending not-pasted PR #301 open, CI green"
+check "#367: undelivered report is written to done-reports.tsv (mode 0600, result not-pasted, col 5 report)" \
+  "$(stat -c %a "$DONE_REPORTS") $(awk -F'\t' '$2 == "wrk_busy" { print $4 "\t" $5 }' "$DONE_REPORTS")" \
+  "600 not-pasted	PR #301 open, CI green"
 check "#367: fleet inbox lists the unread report" \
   "$(bash "$here/fleet" inbox | grep -c 'wrk_busy .*not-pasted.*: PR #301 open, CI green')" "1"
 check "#367: doctor flags the undelivered report" \
@@ -2434,8 +2434,8 @@ state hph367 "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"none\"}"; settle
 out=$(fdone "$w_lim" "PR #302 open" 2>&1); rc=$?
 check "#367: fleet done into limited orchestrator pane reports limited" \
   "$rc $(tail -1 <<<"$out" | cut -c1-40)" "0 report: limited; written to the queue fi"
-check "#367: limited report written to inbox.jsonl as pending" \
-  "$(jq -r 'select(.name == "wrk_lim") | "\(.status) \(.result)"' "$FLEET_INBOX")" "pending limited"
+check "#367: limited report written to done-reports.tsv" \
+  "$(awk -F'\t' '$2 == "wrk_lim" { print $4 "\t" $5 }' "$DONE_REPORTS")" "limited	PR #302 open"
 
 # 3. gone pane: orchestrator pane is gone / dead
 w_gone=$(dpane wrk_gone)
@@ -2443,8 +2443,8 @@ rm -f "$FLEET_STATE/orchestrator.pane"
 out=$(fdone "$w_gone" "PR #303 open" 2>&1); rc=$?
 check "#367: fleet done with gone orchestrator pane reports no-orchestrator-pane" \
   "$rc $(tail -1 <<<"$out" | cut -c1-48)" "0 report: no-orchestrator-pane; written to the que"
-check "#367: gone pane report written to inbox.jsonl as pending" \
-  "$(jq -r 'select(.name == "wrk_gone") | "\(.status) \(.result)"' "$FLEET_INBOX")" "pending no-orchestrator-pane"
+check "#367: gone pane report written to done-reports.tsv" \
+  "$(awk -F'\t' '$2 == "wrk_gone" { print $4 }' "$DONE_REPORTS")" "no-orchestrator-pane"
 
 # Restore orchestrator.pane for subsequent tests
 printf '%s\n' "$h367" >"$FLEET_STATE/orchestrator.pane"
@@ -2460,14 +2460,14 @@ for n in 1 2 3 4 5 6; do
   fdone "$pw" "concurrent report $n" >/dev/null 2>&1 &
 done
 wait
-check "#367: concurrent fleet done calls all land atomically in inbox.jsonl (mode 0600)" \
-  "$(stat -c %a "$FLEET_INBOX") $(jq -s '[.[] | select(.name | startswith("wrk_c"))] | length' "$FLEET_INBOX")" "600 6"
+check "#367: concurrent fleet done calls all land atomically in done-reports.tsv (mode 0600)" \
+  "$(stat -c %a "$DONE_REPORTS") $(awk -F'\t' '$2 ~ /^wrk_c[1-6]$/ && $4 == "not-pasted" { c++ } END { print c + 0 }' "$DONE_REPORTS")" "600 6"
 
 # 5. ack: fleet inbox ack acknowledges individual reports and --all
 check "#367: fleet inbox ack NAME acknowledges the report" \
   "$(bash "$here/fleet" inbox ack wrk_busy)" "acknowledged: wrk_busy"
-check "#367: acked report has status acked in inbox.jsonl and no longer appears in unread list" \
-  "$(jq -r 'select(.name == "wrk_busy") | .status' "$FLEET_INBOX") $(bash "$here/fleet" inbox | grep -c 'wrk_busy')" "acked 0"
+check "#367: acked report has status acked in done-reports.tsv and no longer appears in unread list" \
+  "$(awk -F'\t' '$2 == "wrk_busy" { print $4 }' "$DONE_REPORTS") $(bash "$here/fleet" inbox | grep -c 'wrk_busy')" "acked 0"
 check "#367: fleet inbox ack unknown name fails with exit 1" \
   "$(bash "$here/fleet" inbox ack wrk_busy >/dev/null 2>&1; echo $?)" "1"
 check "#367: fleet inbox ack --all acknowledges all remaining unread reports" \
@@ -2477,12 +2477,12 @@ check "#367: fleet inbox shows no unread reports" \
 check "#367: doctor reports ok once all reports are acked" \
   "$(doctor | grep -c '^ok  *done reports')" "1"
 
-# 6. a later successful paste of a pending item marks it delivered, never twice
+# 6. a later successful paste of a pending item marks the earlier row delivered, never leaving an unread warning
 t send-keys -t "$h367" -l "AJ: busy again"; settle
 w_ret=$(dpane wrk_ret)
 fdone "$w_ret" "PR #304 open" >/dev/null 2>&1
-check "#367: report waiting in inbox as pending" \
-  "$(jq -r 'select(.name == "wrk_ret") | .status' "$FLEET_INBOX")" "pending"
+check "#367: report waiting in inbox as unread" \
+  "$(bash "$here/fleet" inbox | grep -c 'wrk_ret')" "1"
 t send-keys -t "$h367" C-u; settle
 state hph367 '{"above":["idle"],"on_submit":"none"}'; settle
 : >"$work/hph367.log"
@@ -2490,65 +2490,64 @@ out_ret=$(bash "$here/fleet" "done" wrk_ret "PR #304 open" 2>&1)
 check "#367: successful retry delivers report to orchestrator" \
   "$(grep -c 'already finished: wrk_ret' <<<"$out_ret") $(grep -c 'report: sent' <<<"$out_ret") $(grep -c '^SUBMIT wrk_ret finished: PR #304 open$' "$work/hph367.log")" \
   "1 1 1"
-check "#367: pending item in inbox marked delivered with delivered_at" \
-  "$(jq -r 'select(.name == "wrk_ret") | "\(.status) \(.delivered_at != null)"' "$FLEET_INBOX")" "delivered true"
+check "#367: earlier undelivered row in done-reports.tsv is marked delivered; doctor is ok" \
+  "$(awk -F'\t' '$2 == "wrk_ret" && $4 != "sent" && $4 != "delivered" { c++ } END { print c + 0 }' "$DONE_REPORTS") $(doctor | grep -c '^ok  *done reports')" "0 1"
 bash "$here/fleet" "done" wrk_ret "PR #304 open" >/dev/null 2>&1
-check "#367: later call does not mark delivered twice" \
-  "$(jq -s '[.[] | select(.name == "wrk_ret")] | length' "$FLEET_INBOX") $(jq -r 'select(.name == "wrk_ret") | .status' "$FLEET_INBOX")" \
-  "1 delivered"
-check "#367: fleet inbox shows 0 unread reports" \
+check "#367: fleet inbox shows 0 unread reports after retry" \
   "$(bash "$here/fleet" inbox)" "no unread reports"
 
-# 7. Finding 2: an acked report must not hide a newer pending one from the same agent
+# 7. Finding 2: an acked report must not hide a newer pending one from the same agent (even in the same second)
 t send-keys -t "$h367" -l "AJ: busy again"; settle
 w_reup=$(dpane wrk_reup)
 fdone "$w_reup" "first report" >/dev/null 2>&1
 bash "$here/fleet" inbox ack wrk_reup >/dev/null 2>&1
 check "#367: first report is acked" \
-  "$(jq -r 'select(.name == "wrk_reup") | .status' "$FLEET_INBOX")" "acked"
+  "$(awk -F'\t' '$2 == "wrk_reup" { print $4 }' "$DONE_REPORTS")" "acked"
 check "#367: doctor reports ok with first report acked" \
   "$(doctor | grep -c '^ok  *done reports')" "1"
-# Second report from same agent while orchestrator pane is still busy
+# Second report from same agent while orchestrator pane is still busy (runs within the same second)
 bash "$here/fleet" "done" wrk_reup "second report" >/dev/null 2>&1
-check "#367: second report waiting as pending in inbox" \
-  "$(jq -r 'select(.name == "wrk_reup" and .status == "pending") | .report' "$FLEET_INBOX")" "second report"
+check "#367: second report appears as unread in fleet inbox" \
+  "$(bash "$here/fleet" inbox --json | jq -r 'select(.name == "wrk_reup") | .report')" "second report"
 check "#367: doctor flags the newer pending report despite earlier acked one" \
   "$(doctor | grep '^warn  *done reports' | sed -E 's/.*not delivered to the orchestrator: ([^:]*):.*/\1/')" "wrk_reup (not-pasted)"
 bash "$here/fleet" inbox ack wrk_reup >/dev/null 2>&1
 check "#367: both reports are now acked and doctor is ok" \
-  "$(jq -r 'select(.name == "wrk_reup") | .status' "$FLEET_INBOX" | sort -u) $(doctor | grep -c '^ok  *done reports')" "acked 1"
+  "$(awk -F'\t' '$2 == "wrk_reup" { print $4 }' "$DONE_REPORTS" | sort -u) $(doctor | grep -c '^ok  *done reports')" "acked 1"
 
-# 8. Finding 3: fleet inbox deliver sends the whole multi-line report
-t send-keys -t "$h367" -l "AJ: busy again"; settle
-w_ml=$(dpane wrk_ml)
-fdone "$w_ml" - <<<'line 1
-line 2' >/dev/null 2>&1
-check "#367: multi-line report in inbox preserves newlines" \
-  "$(jq -r 'select(.name == "wrk_ml" and .status == "pending") | .report' "$FLEET_INBOX")" $'line 1\nline 2'
+# 8. Finding 3: fleet inbox deliver sends the whole multi-line report (and preserves backslashes/tabs)
 t send-keys -t "$h367" C-u; settle
 state hph367 '{"above":["idle"],"on_submit":"none"}'; settle
 : >"$work/hph367.log"
+w_ml=$(dpane wrk_ml)
+printf '%s\twrk_ml\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$w_ml" "$work/brief.src" "$SID" "$work/cfg-a" >>"$FLEET_STATE/finished.tsv"
+with_registry dr_append "$(date +%s)" wrk_ml "$w_ml" not-pasted $'line 1\nline 2\\nlit'
+check "#367: multi-line report in inbox preserves newlines and literal backslashes in JSON" \
+  "$(bash "$here/fleet" inbox --json | jq -r 'select(.name == "wrk_ml") | .report')" $'line 1\nline 2\\nlit'
 out_ml=$(bash "$here/fleet" inbox deliver wrk_ml 2>&1)
 check "#367: fleet inbox deliver succeeds for multi-line report" \
   "$(grep -c 'delivered: wrk_ml (sent)' <<<"$out_ml")" "1"
 check "#367: whole multi-line report was submitted to orchestrator pane" \
   "$(grep '^SUBMIT wrk_ml' "$work/hph367.log")" \
-  "SUBMIT wrk_ml finished: line 1\nline 2"
+  'SUBMIT wrk_ml finished: line 1\nline 2\nlit'
 
-# 9. Finding 4: done-reports.tsv carries the report in column 5 and tracks delivery state
-check "#367: done-reports.tsv carries the report in column 5" \
-  "$(awk -F'\t' '$2 == "wrk_busy" { print $2 "\t" $4 "\t" $5 }' "$DONE_REPORTS")" \
-  "wrk_busy	acked	PR #301 open, CI green"
-check "#367: done-reports.tsv tracks delivered status in column 4" \
+# 9. Finding 4: done-reports.tsv is the single source of delivery state and prunes on fleet close
+check "#367: no second inbox.jsonl copy exists" \
+  "$(test -e "$FLEET_STATE/inbox.jsonl" && echo exists || echo single)" "single"
+check "#367: done-reports.tsv tracks delivered status in column 4 and report in column 5" \
   "$(awk -F'\t' '$2 == "wrk_ml" { print $2 "\t" $4 "\t" $5 }' "$DONE_REPORTS")" \
-  "wrk_ml	sent	line 1\nline 2"
+  'wrk_ml	sent	line 1\nline 2\\nlit'
+done_live "$w_ml"
+bash "$here/fleet" close wrk_ml >/dev/null 2>&1
+check "#367: fleet close prunes wrk_ml from done-reports.tsv and fleet inbox --all" \
+  "$(awk -F'\t' '$2 == "wrk_ml"' "$DONE_REPORTS" | wc -l) $(bash "$here/fleet" inbox --all --json | jq -s '[.[] | select(.name == "wrk_ml")] | length')" "0 0"
 
 t kill-window -t "$h367" 2>/dev/null; t kill-window -t "$w_busy" 2>/dev/null
 t kill-window -t "$w_lim" 2>/dev/null; t kill-window -t "$w_gone" 2>/dev/null
 t kill-window -t "$w_ret" 2>/dev/null; t kill-window -t "$w_reup" 2>/dev/null
 t kill-window -t "$w_ml" 2>/dev/null
 for cp in "${panes_c[@]}"; do t kill-window -t "$cp" 2>/dev/null; done
-: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$FLEET_INBOX"
+: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS"
 
 : >"$work/moved"
 p=$(backpane bgwork); done_live "$p" working '[{"id": "t1", "kind": "agent"}]'
