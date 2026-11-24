@@ -1206,6 +1206,7 @@ window.__TAURI__ = { core: {
     if (cmd === 'new_session_prefs') { window.__calls.push([cmd, args]); return Promise.resolve(window.__nsprefs ?? { default: null, last: null }); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
+    if (window.__fails && window.__fails[cmd]) { window.__calls.push([cmd, args]); return Promise.reject(window.__fails[cmd]); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
@@ -1595,6 +1596,77 @@ def landmarks(wall):
         )
         wall.check(got == {"main": 1, "h1": 1, "wall": True, "empty": True}, "one main, one h1, the wall and the empty state inside it", got)
         page.close()
+
+
+NARROW = """() => {
+  const cw = document.documentElement.clientWidth;
+  const r = (e) => e.getBoundingClientRect();
+  const cards = [...document.getElementById('wall').children].filter((c) => c.checkVisibility());
+  // Every control inside its own card (the portrait's look button breaks the frame by
+  // design, #247: inside the window is its bound), and every card inside the window.
+  const out = cards.flatMap((c) => [...c.querySelectorAll('button, a')]
+      .filter((e) => e.checkVisibility() && (e.classList.contains('look')
+        ? r(e).right > cw + 0.5 || r(e).left < -0.5
+        : r(e).right > r(c).right + 0.5 || r(e).left < r(c).left - 0.5))
+      .map((e) => (e.getAttribute('aria-label') || e.className || e.tagName).toString().slice(0, 30)))
+    .concat(cards.filter((c) => r(c).right > cw + 0.5).map(() => 'card'));
+  // A label wider than its button spills out though the button's own box fits.
+  const cut = cards.flatMap((c) => [...c.querySelectorAll('button')])
+    .filter((b) => b.checkVisibility() && b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent.trim().slice(0, 30));
+  // No two header controls overlap (a pill running under Open terminal, #505).
+  const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+  const overlap = cards.flatMap((c) => {
+    const els = ['.pill', '.jump', '.clear'].map((q) => c.querySelector(q)).filter((e) => e && e.checkVisibility());
+    return els.flatMap((a, i) => els.slice(i + 1).filter((b) => hit(r(a), r(b))).map((b) => `${a.className}/${b.className}`));
+  });
+  // A name keeps its whole width, or 90 px before it ellipsizes: never squeezed to a letter.
+  const squeezed = cards.map((c) => c.querySelector('.name')).filter((n) => n && n.checkVisibility()
+      && n.clientWidth < Math.min(n.scrollWidth, 90)).map((n) => `${n.textContent} ${n.clientWidth}px`);
+  const jumps = cards.map((c) => c.querySelector('.jump')).filter((b) => b && b.checkVisibility())
+    .map((b) => b.textContent.trim());
+  return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut, squeezed, overlap,
+           density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)] };
+}"""
+
+
+def narrow_window_keeps_cards_inside(wall):
+    """#505: a desktop wall window narrower than a card's 420 px minimum keeps
+    every card inside the window and every button and link inside its card,
+    with no sideways scroll, in both densities and with a queue tab's padding;
+    no name is squeezed (a narrow compact card gives the name its own line) and
+    Open terminal reads whole; at full width the columns are as before."""
+    for density in ("compact", "comfortable"):
+        for width, tabbed in ((360, False), (390, False), (390, True), (420, True), (450, False), (470, False), (520, False), (530, False), (880, False), (1920, False)):
+            page = open_app(wall, width=width, height=900 if width < 1000 else 1000)
+            pick(page, f".density label:has([value={density}])")
+            if tabbed:
+                page.evaluate("document.body.classList.add('queue-tabbed')")
+            page.wait_for_timeout(1500)  # past an arrival's spring over the frame
+            got = page.evaluate(NARROW)
+            tab = " with a queue tab" if tabbed else ""
+            # Left for #535: a two-column compact wall, and a comfortable one under 400 px.
+            names = "" if (density == "compact" and width == 880) or (density == "comfortable" and width < 400) else ", no name squeezed"
+            wall.check(got["density"] == density and got["cards"] > 0 and not got["wide"] and not got["out"]
+                       and not got["cut"] and not got["overlap"] and (not names or not got["squeezed"]) and got["jumps"] in ([], ["Open terminal"]),
+                       f"{density} at {width} px{tab}: cards in the window, controls in their card and apart{names}, Open terminal whole", got)
+            page.close()
+    page = open_app(wall, width=1920, height=1000)
+    cols = page.evaluate("getComputedStyle(document.getElementById('wall')).gridTemplateColumns.split(' ').length")
+    wall.check(cols == 4, "at 1920 px the wall still has four columns", cols)
+    page.close()
+    # The phone wall (.served) keeps its own one-line compact header: none of the stacking reaches it.
+    page = open_app(wall, width=390, height=900)
+    pick(page, ".density label:has([value=compact])")
+    page.evaluate("document.documentElement.classList.add('served')")
+    page.wait_for_timeout(1500)
+    phone = page.evaluate("""() => {
+      const c = [...document.getElementById('wall').children].find((e) => e.checkVisibility() && e.querySelector('.pill'));
+      const p = c.querySelector('.pill'), n = c.querySelector('.name');
+      const mid = (e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; };
+      return { margin: getComputedStyle(p).marginLeft, sameLine: Math.abs(mid(p) - mid(n)) < 12 };
+    }""")
+    wall.check(phone["margin"] == "8px" and phone["sameLine"], "the phone wall at 390 px keeps the pill beside the name, as before", phone)
+    page.close()
 
 
 def ended_only(wall):
@@ -2224,6 +2296,62 @@ def wrapup_confirm_lists_routes(wall):
         [note, card_note],
     )
     wall.check(sorted((starts[0][1] or {}).get("ids") or []) == sorted(LIVE), "start_wrapup gets exactly the sessions the confirm listed", starts[0][1])
+    page.close()
+
+
+NATIVE_KEYS = ("demo-1-am_michael", "demo-2-af_bella", "demo-5-bf_isabella")  # needs_you, working, done
+
+
+def native_flag_reaches_the_cards(wall):
+    """A native Linux snapshot (native: true) offers its null-distro sessions End, Interrupt, a typed wrap-up and an
+    unnamed Jump styled like any other; the same snapshot with native false (what Windows sends) or
+    without the flag (an older app) offers none of them."""
+    page = open_app(wall, keep=lambda s: s["session_id"] in NATIVE_KEYS)
+    names = names_by_key(page)
+    base = json.loads(json.dumps(page.snapshot))
+    for row in base["sessions"]:
+        row["distro"] = None  # the hook records none on native Linux
+        if row["session_id"] != "demo-2-af_bella":
+            row["name"] = None  # unnamed: Jump finds it by its pane alone
+    state = """() => Object.fromEntries([...document.querySelectorAll('.card')].map((c) => [c.dataset.key, {
+      menu: !c.querySelector('.menu').hidden,
+      jump: !('off' in c.querySelector('.jump').dataset),
+      kind: c.querySelector('.jump').dataset.kind,
+    }]))"""
+    for native in (True, False, None):
+        snap = json.loads(json.dumps(base))
+        if native is not None:
+            snap["native"] = native
+        at = " (flag missing)" if native is None else f" (native: {native})"
+        send(page, snap)
+        got = page.evaluate(state)
+        kinds = {k: got[k]["kind"] for k in NATIVE_KEYS}
+        menus = {k: got[k]["menu"] for k in NATIVE_KEYS}
+        jumps = {k: got[k]["jump"] for k in ("demo-1-am_michael", "demo-5-bf_isabella")}
+        if native:
+            wall.check(all(menus.values()), "every null-distro session in klepsydra's tmux gets the actions menu" + at, menus)
+            wall.check(all(jumps.values()) and kinds["demo-1-am_michael"] == "needs" and kinds["demo-5-bf_isabella"] in ("accent", "plain"),
+                       "an unnamed session's Open terminal is on, filled when it needs you, marked otherwise" + at, [jumps, kinds])
+            open_menu(page, page.locator(".card[data-key='demo-2-af_bella']"))
+            items = page.evaluate(
+                "[...document.querySelectorAll('#session-menu [role=menuitem]')].filter((i) => !i.hidden).map((i) => i.textContent.trim())"
+            )
+            page.keyboard.press("Escape")
+            wall.check(items == ["Interrupt", "End session…"], "a working null-distro card offers Interrupt and End" + at, items)
+        else:
+            wall.check(not any(menus.values()), "through wsl.exe a session with no distro gets no actions menu" + at, menus)
+            wall.check(not any(jumps.values()) and kinds["demo-1-am_michael"] == "off" and kinds["demo-5-bf_isabella"] == "off",
+                       "through wsl.exe an unnamed session with no distro cannot be jumped to" + at, [jumps, kinds])
+        page.click("#wrapup-open")
+        page.wait_for_function("document.getElementById('end-dialog').open")
+        groups = page.evaluate(DIALOG)["groups"]
+        page.get_by_role("button", name="Cancel").click()
+        page.wait_for_function("!document.getElementById('end-dialog').open")
+        typed = [["Typed now", [names["demo-5-bf_isabella"]]]] if native else []
+        by_hand = [] if native else [[BY_HAND, [names["demo-5-bf_isabella"]]]]
+        want = typed + [["At the end of its turn", [names["demo-2-af_bella"]]], ["After you answer", [names["demo-1-am_michael"]]]] + by_hand
+        wall.check(groups == want, "the Wrap up confirm types into an idle null-distro session only with the flag" + at, groups)
+        wall.check(not page.evaluate(STARTS), "looking asks no one" + at, page.evaluate(STARTS))
     page.close()
 
 
@@ -5144,6 +5272,26 @@ def theme_renames_the_queue_keeper(wall):
     page.close()
 
 
+def refused_saves_say_so(wall):
+    """A density prefs.json refused says so in the bar, as a refused theme
+    does, and the next save that takes clears it (#484: a corrupt prefs.json
+    reads as the defaults, so silence looked saved)."""
+    page = open_app(wall)
+    density = "prefs.json could not be saved, so the density is not kept."
+    page.evaluate("(m) => { window.__fails = { set_wall_density: m }; }", density)
+    open_gear(page)
+    pick(page, ".density label:has([value=compact])")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
+    wall.check(got == [f"Not saved: {density}", True], "a refused density save says why in the bar", got)
+    page.evaluate("window.__fails = null")
+    pick(page, ".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
+    wall.check(got == ["", False], "the next density save that takes clears the note", got)
+    page.close()
+
+
 def theme_save_flushes_and_says_when_refused(wall):
     """A choice still waiting to be saved is saved at once when the picker
     loses focus (a click on the tray's Quit takes it away), and only once; a
@@ -5160,19 +5308,19 @@ def theme_save_flushes_and_says_when_refused(wall):
     page.wait_for_timeout(SAVE_MS + 200)
     late = page.evaluate("window.__calls")[before:]
     wall.check(early == [["set_theme", {"theme": "professions"}]] and late == early, "a blur saves the waiting choice at once, and once", [early, late])
-    page.evaluate("window.__setThemeFails = 'prefs.json could not be saved, so the theme is still kourai, not dicebear.'")
+    page.evaluate("window.__setThemeFails = 'prefs.json could not be written: the theme is still kourai, not dicebear.'")
     open_gear(page)
     page.select_option("#theme", "dicebear")
     page.wait_for_timeout(SAVE_MS + 200)
     page.evaluate("window.__theme.onmessage('kourai')")
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate("[document.getElementById('theme-note').textContent, document.getElementById('theme-note').checkVisibility(), document.documentElement.dataset.theme, document.getElementById('theme').value]")
-    wall.check(got == ["Not saved: prefs.json could not be saved, so the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
+    wall.check(got == ["Not saved: prefs.json could not be written: the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
                "a refused save says why, and the wall wears the theme the app kept", got)
     logs = page.evaluate("window.__logs ?? []")
     want = {
         "level": 5,
-        "message": "set_theme refused theme dicebear: prefs.json could not be saved, so the theme is still kourai, not dicebear.",
+        "message": "set_theme refused theme dicebear: prefs.json could not be written: the theme is still kourai, not dicebear.",
         "location": "fleet/wall.js",
     }
     wall.check([{k: entry.get(k) for k in want} for entry in logs] == [want],
@@ -6164,12 +6312,14 @@ def main() -> int:
             reply_buttons,
             bulk_end_waits_on_ready,
             wrapup_dialogs_close_on_change,
+            native_flag_reaches_the_cards,
             one_click_or_key_never_ends_all,
             empty_state,
             fleet_health,
             gear_closes,
             new_session_menu,
             ended_only,
+            narrow_window_keeps_cards_inside,
             long_folder_fits,
             reveal_density,
             separate_notes,
@@ -6229,6 +6379,7 @@ def main() -> int:
             theme_everywhere,
             theme_renames_the_queue_keeper,
             theme_save_flushes_and_says_when_refused,
+            refused_saves_say_so,
             theme_first_paint,
             strip_first_paint,
             strip_keeper_states,

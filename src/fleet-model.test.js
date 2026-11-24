@@ -351,10 +351,18 @@ test("a card holds what the wall shows", () => {
   assert.deepEqual(card(session({ name: null }), CAST, NOW).jump, { enabled: false, why: "no session name yet" });
   const inTmux = { name: null, tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, claude: { pid: 2231, start: 8717628 }, distro: "Ubuntu" };
   assert.deepEqual(card(session(inTmux), CAST, NOW).jump, { enabled: true, why: null }, "tmux finds an unnamed session by its pane");
-  for (const missing of ["tmux", "claude", "distro"]) {
+  for (const missing of ["tmux", "claude"]) {
     assert.deepEqual(card(session({ ...inTmux, [missing]: null }), CAST, NOW).jump,
       { enabled: false, why: "no session name yet" }, `without ${missing}`);
   }
+  for (const distro of [null, undefined, 1]) {
+    assert.deepEqual(card(session({ ...inTmux, distro }), CAST, NOW).jump, { enabled: false, why: "no session name yet" },
+      `through wsl.exe an unnamed session needs its distro (${distro})`);
+    assert.deepEqual(card(session({ ...inTmux, distro }), CAST, NOW, null, true).jump, { enabled: true, why: null },
+      `a native Linux session records no distro and is found by its pane (${distro})`);
+  }
+  assert.deepEqual(card(session({ ...inTmux, claude: { pid: 0, start: 1 } }), CAST, NOW).jump,
+    { enabled: false, why: "no session name yet" }, "the launcher refuses a zero pid");
   assert.deepEqual(card(session({ ...inTmux, status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.deepEqual(card(session({ status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.equal(card(session({ status: "error", error: "API Error: Rate limit reached" }), CAST, NOW).error,
@@ -405,6 +413,18 @@ test("the Open terminal button: fill only for needs-you, a marker for a characte
   assert.deepEqual(style({ status: "needs_you", voice: "bm_lewis" }), ["needs", null]);
   assert.deepEqual(style({ status: "ended" }), ["off", null], "disabled: no marker, no fill");
   assert.deepEqual(style({ status: "needs_you", name: null }), ["off", null], "disabled needs-you stays quiet");
+  // Native Linux records no distro; the snapshot's flag makes an unnamed session in tmux jumpable, styled like any other.
+  const unnamed = { name: null, tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, claude: { pid: 2231, start: 8717628 }, distro: null };
+  const onLinux = (o, native) => {
+    const k = card(session({ ...unnamed, ...o }), cast, NOW, null, native);
+    return [k.jump.enabled, k.jumpKind, k.jumpMark];
+  };
+  assert.deepEqual(onLinux({ status: "needs_you" }, true), [true, "needs", null], "native: the filled call to action");
+  assert.deepEqual(onLinux({ status: "done" }, true), [true, "accent", { color: "#DA8C20", width: 4 }], "native: the marker");
+  assert.deepEqual(onLinux({ status: "done", voice: "bm_lewis" }, true), [true, "plain", null], "native: a medallion");
+  for (const native of [false, undefined]) {
+    assert.deepEqual(onLinux({ status: "needs_you" }, native), [false, "off", null], `through wsl.exe it needs a distro (${native})`);
+  }
 });
 
 test("only an ended or silent card offers Clear", () => {

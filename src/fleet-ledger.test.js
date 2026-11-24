@@ -4,6 +4,7 @@ import {
   MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
   cardLabels, characterOf, ledgerLine, rowLabels, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
+import { drawerCharacters } from "./fleet/model.js";
 
 test("compactNumber reads at a glance and rounds up into the next unit", () => {
   const cases = [[0, "0"], [999, "999"], [1000, "1k"], [1234, "1.2k"], [34_000, "34k"], [34_400, "34k"], [999_499, "999k"],
@@ -62,6 +63,30 @@ test("a card's ledger line is absent when all zero, and shows a chip with no rec
   assert.equal(both.short, "+1 \u22120 lines \u00b7 2 commits \u00b7 1 PR");
 });
 
+test("#515: the receipt names the last request's context, and warns on it alone at the budget", () => {
+  const normal = ledgerLine({ tokens: { input: 50_000, output: 1_000 } }, false, 50_000);
+  assert.equal(normal.warn, false);
+  assert.equal(normal.why, null);
+  assert.equal(normal.full, "50k context \u00b7 51k tokens (0% cached)");
+
+  const atBudget = ledgerLine({ tokens: { input: 100_000 } }, false, 300_000);
+  assert.equal(atBudget.warn, true);
+  assert.equal(atBudget.full, "300k context \u00b7 100k tokens (0% cached)");
+  assert.match(atBudget.why, /300k tokens of context, past the fleet's 300k budget/);
+  assert.equal(ledgerLine({ tokens: { input: 1 } }, false, 299_999).warn, false, "one under the budget");
+
+  // A session's total grows with every call by design: 211M in one session is the cost, not the alarm.
+  const bigTotal = ledgerLine({ tokens: { input: 211_000_000, cache_read: 200_000_000 } }, false, 10_000);
+  assert.equal(bigTotal.warn, false);
+  assert.equal(ledgerLine({ tokens: { input: 5_000_000 } }).warn, false, "no request size recorded: no warning");
+
+  const busy = { lines_added: 40, lines_removed: 2, commits: 3, pull_requests: 1, tokens: { input: 900_000 } };
+  assert.doesNotMatch(ledgerLine(busy, false, 120_000).short, /context/, "under the budget a compact card keeps its usual parts");
+  const over = ledgerLine(busy, false, 420_000);
+  assert.match(over.short, /420k context/, "past it a compact card keeps the request size");
+  assert.equal(over.short.split(" \u00b7 ").length, 3);
+});
+
 test("the drawer's totals add every session", () => {
   const day = {
     sessions: {
@@ -94,7 +119,51 @@ test("active time, counts and the cost line print plainly", () => {
   assert.equal(costText(0), "none");
 });
 
-const CAST = { characters: { af_heart: { name: "Cupid", accent: "#D55E00" }, am_puck: { name: "Puck", accent: "#009E73" } } };
+const CAST = {
+  faces: "kourai",
+  characters: {
+    af_heart: { name: "Cupid", accent: "#D55E00", face: "cupid" },
+    am_puck: { name: "Puck", accent: "#009E73", face: "puck" },
+  },
+};
+
+test("#536: drawerCharacters maps picked sessions and day.picks to cast: true for tokensByCharacter", () => {
+  const t = (input) => ({ tokens: { input } });
+  // 1. Session on the wall with a picked character (e.g. voice outside cast, pick in theme)
+  const onWall = { session_id: "s1", voice: "bm_george", pick: "af_heart" };
+  const namesOnWall = drawerCharacters([onWall], CAST, {});
+  assert.equal(namesOnWall.get("s1").name, "Cupid");
+  assert.equal(namesOnWall.get("s1").cast, true);
+
+  // 2. Session gone from the wall, but recorded in day.picks
+  const namesGone = drawerCharacters([], CAST, { picks: { s2: "af_heart" } });
+  assert.equal(namesGone.get("s2").name, "Cupid");
+  assert.equal(namesGone.get("s2").cast, true);
+
+  // 3. A session wearing its own cast voice has cast: false (drawer attributes it by own voice)
+  const ownVoice = { session_id: "s3", voice: "af_heart" };
+  const namesOwn = drawerCharacters([ownVoice], CAST, {});
+  assert.equal(namesOwn.get("s3").cast, false);
+  // A card still on the wall keeps its own character, even when today's file recorded a pick for it.
+  const both = drawerCharacters([{ ...ownVoice, name: "docs" }], CAST, { picks: { s3: "am_puck" } }).get("s3");
+  assert.deepEqual([both.name, both.cast, both.label], ["Cupid", false, "docs"]);
+  // A recorded pick with no face in this cast (a theme changed since) is no character row.
+  assert.equal(drawerCharacters([], CAST, { picks: { g: "am_onyx" } }).has("g"), false);
+  // A pick the card does not wear is not the wall's cast: an unknown pick, or one under a cast voice of its own.
+  assert.equal(drawerCharacters([{ session_id: "w", voice: "bm_george", pick: "am_onyx" }], CAST, {}).get("w").cast, false);
+  assert.equal(drawerCharacters([{ session_id: "o", voice: "af_heart", pick: "am_puck" }], CAST, {}).get("o").cast, false);
+
+  // 4. Verify tokensByCharacter attributes both picked sessions to Cupid, not Other sessions
+  const wall = drawerCharacters([onWall], CAST, { picks: { s2: "af_heart" } });
+  const rows = tokensByCharacter(
+    [["s1", t(10)], ["s2", t(20)], ["other", t(5)]],
+    { s1: "bm_george" },
+    CAST,
+    { wall },
+  );
+  assert.deepEqual(rows.map((r) => [r.name, r.tokens]), [["Cupid", 30], ["Other sessions", 5]]);
+  assert.equal(rows[1].label, "Other sessions: 1 (with no voice)");
+});
 
 test("tokens by character group by the recorded voice, largest first, with Other sessions last", () => {
   const t = (input) => ({ tokens: { input } });
