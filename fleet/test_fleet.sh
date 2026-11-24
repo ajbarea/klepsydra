@@ -1248,6 +1248,9 @@ done
 check "#484: a prefs.json that does not read warns that settings are not kept" \
   "$(DOC_PREFS='{"theme":' doctor | grep -c '^warn prefs: prefs.json does not read as one JSON object: theme, density')" "1"
 check "#484: a prefs.json that reads gives no prefs line" "$(DOC_PREFS='{"theme":"kourai"}' doctor | grep -c '^[a-zA-Z]* *prefs:')" "0"
+check "#484: no prefs.json at all gives no prefs line (the app's defaults)" "$(DOC_PREFS=none doctor | grep -c '^[a-zA-Z]* *prefs:')" "0"
+check "#484: a prefs.json opening with a UTF-8 BOM warns, as the app refuses it" \
+  "$(DOC_PREFS=$'\xef\xbb\xbf{"theme":"kourai"}' doctor | grep -c '^warn prefs:')" "1"
 check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
 printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
 check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
@@ -4538,6 +4541,9 @@ check "#273 review: --check names a saved mode not yet applied" "$(fv --check; e
 printf '{"theme":' >"$KLEPSYDRA_DIR/prefs.json"
 check "#484: fleet voices MODE leaves a prefs.json that does not read as it is, and fails" \
   "$(fv off; echo "rc=$?") $(cat "$KLEPSYDRA_DIR/prefs.json")" 'rc=1 {"theme":'
+printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
+check "#484: fleet voices MODE over a file that reads keeps its other keys" \
+  "$(fv off >/dev/null; jq -c '[.voices, .theme]' "$KLEPSYDRA_DIR/prefs.json")" '["off","kourai"]'
 printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
 check "#273: a changed mode the tray saved applies at the next pass, other prefs kept" \
   "$(fv --if-changed) | $(jq -c '[.enabled, .speak_only]' "$kc") $(jq -r .theme "$KLEPSYDRA_DIR/prefs.json")" "voices: heph (changed: enabled speak_only) | [true,[\"$orch_rec\"]] kourai"
