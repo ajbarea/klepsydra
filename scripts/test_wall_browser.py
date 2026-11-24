@@ -1607,10 +1607,10 @@ NARROW = """() => {
   // A label wider than its button spills out though the button's own box fits.
   const cut = cards.flatMap((c) => [...c.querySelectorAll('button')])
     .filter((b) => b.checkVisibility() && b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent.trim().slice(0, 30));
-  // No two header controls overlap (a pill running under Open terminal, #505).
+  // No two header controls overlap (a pill running under Open terminal, #505; name and pill/menu, #535).
   const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
   const overlap = cards.flatMap((c) => {
-    const els = ['.pill', '.jump', '.clear'].map((q) => c.querySelector(q)).filter((e) => e && e.checkVisibility());
+    const els = ['.name', '.pill', '.jump', '.clear', 'button.menu'].map((q) => c.querySelector(q)).filter((e) => e && e.checkVisibility());
     return els.flatMap((a, i) => els.slice(i + 1).filter((b) => hit(r(a), r(b))).map((b) => `${a.className}/${b.className}`));
   });
   // A name keeps its whole width, or 90 px before it ellipsizes: never squeezed to a letter.
@@ -1618,19 +1618,23 @@ NARROW = """() => {
       && n.clientWidth < Math.min(n.scrollWidth, 90)).map((n) => `${n.textContent} ${n.clientWidth}px`);
   const jumps = cards.map((c) => c.querySelector('.jump')).filter((b) => b && b.checkVisibility())
     .map((b) => b.textContent.trim());
+  const whens = cards.filter((c) => {
+    const w = c.querySelector('.pill .when');
+    return w && w.checkVisibility();
+  }).length;
   return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut, squeezed, overlap,
-           density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)] };
+           density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)], whens };
 }"""
 
 
 def narrow_window_keeps_cards_inside(wall):
-    """#505: a desktop wall window narrower than a card's 420 px minimum keeps
+    """#505/#535: a desktop wall window narrower than a card's 420 px minimum keeps
     every card inside the window and every button and link inside its card,
     with no sideways scroll, in both densities and with a queue tab's padding;
-    no name is squeezed (a narrow compact card gives the name its own line) and
-    Open terminal reads whole; at full width the columns are as before."""
+    no name is squeezed in either density and Open terminal reads whole; at
+    full width the columns are as before."""
     for density in ("compact", "comfortable"):
-        for width, tabbed in ((360, False), (390, False), (390, True), (420, True), (450, False), (470, False), (520, False), (530, False), (880, False), (1920, False)):
+        for width, tabbed in ((360, False), (390, False), (390, True), (420, True), (450, False), (470, False), (520, False), (530, False), (880, False), (1280, False), (1920, False)):
             page = open_app(wall, width=width, height=900 if width < 1000 else 1000)
             pick(page, f".density label:has([value={density}])")
             if tabbed:
@@ -1638,11 +1642,12 @@ def narrow_window_keeps_cards_inside(wall):
             page.wait_for_timeout(1500)  # past an arrival's spring over the frame
             got = page.evaluate(NARROW)
             tab = " with a queue tab" if tabbed else ""
-            # Left for #535: a two-column compact wall, and a comfortable one under 400 px.
-            names = "" if (density == "compact" and width == 880) or (density == "comfortable" and width < 400) else ", no name squeezed"
+            # At 1280 and 1920 px every compact pill whose card has room still shows its time (#535).
+            whens_ok = not (density == "compact" and width in (1280, 1920)) or got["whens"] == got["cards"]
             wall.check(got["density"] == density and got["cards"] > 0 and not got["wide"] and not got["out"]
-                       and not got["cut"] and not got["overlap"] and (not names or not got["squeezed"]) and got["jumps"] in ([], ["Open terminal"]),
-                       f"{density} at {width} px{tab}: cards in the window, controls in their card and apart{names}, Open terminal whole", got)
+                       and not got["cut"] and not got["overlap"] and not got["squeezed"] and got["jumps"] in ([], ["Open terminal"])
+                       and whens_ok,
+                       f"{density} at {width} px{tab}: cards in the window, controls in their card and apart, no name squeezed, Open terminal whole", got)
             page.close()
     page = open_app(wall, width=1920, height=1000)
     cols = page.evaluate("getComputedStyle(document.getElementById('wall')).gridTemplateColumns.split(' ').length")

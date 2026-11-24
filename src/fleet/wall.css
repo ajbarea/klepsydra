@@ -526,6 +526,20 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .pill { margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8)); }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) :is(.epithet, .marks) { display: none; }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .stage { background: var(--grain); }
+/* Narrow comfortable cards (#535): when a card is narrow, putting name and pill on
+   one row squeezes the name down to a few pixels. Move the pill to the task row so
+   the name has the full row width before ellipsizing. */
+@container wall (max-width: 419.98px) {
+  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header {
+    grid-template-areas: "name name" "task pill";
+  }
+  .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .name {
+    margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8));
+  }
+  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill {
+    margin-right: 0;
+  }
+}
 
 /* The actions menu button: three dots in the band's top right corner, a 24 px
    target on the pill's row, so it adds no height. The pill steps left of it. */
@@ -997,7 +1011,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 .wall[data-density="compact"] { grid-auto-rows: 1fr; }
 .wall[data-density="compact"] .card {
   display: grid;
-  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto auto auto;
+  grid-template-columns: var(--wall-face) minmax(min(calc(90px + var(--head-gap)), 100%), 1fr) minmax(0, auto) auto auto;
   grid-template-rows: auto auto auto auto 1fr auto;
   grid-template-areas:
     "face name pill clear jump"
@@ -1031,9 +1045,11 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 [data-density="compact"] .herald-name { font-size: 19px; /* large text (WCAG: 14 pt bold), so the character's 3:1 tone reads */ color: var(--on-card, var(--text)); text-shadow: none; }
 [data-density="compact"] .herald-cry { font-size: 12px; color: var(--text); }
 [data-density="compact"] .herald-epithet { flex-basis: 100%; margin-top: 2px; }
-[data-density="compact"] .pill { position: static; grid-area: pill; align-self: center; margin-left: var(--space-3); gap: 6px; padding: 3px 8px 3px 6px; font-size: 12px; }
+[data-density="compact"] .pill { position: static; grid-area: pill; align-self: center; margin-left: var(--space-3); gap: 6px; padding: 3px 8px 3px 6px; font-size: 12px; min-width: 0; }
+[data-density="compact"] .pill :is(.mark, .label) { flex-shrink: 0; }
 [data-density="compact"] .pill .badge { width: 14px; height: 14px; }
 [data-density="compact"] .pill .age { display: none; }
+[data-density="compact"] .pill .when { display: inline; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A compact card too narrow for name, pill and Open terminal on one line (#505)
    gives the name its own: the pill and the buttons take a line under the task,
    beside the portrait, so an arrival's herald still covers just name and task.
@@ -1060,7 +1076,6 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   :root:not(.served) [data-density="compact"] .pill :is(.mark, .label) { flex-shrink: 0; }
   :root:not(.served) [data-density="compact"] .pill .when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
-[data-density="compact"] .pill .when { display: inline; }
 [data-density="compact"] .jump,
 [data-density="compact"] .clear {
   grid-area: jump;
