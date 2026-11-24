@@ -8,7 +8,9 @@
 # whose need is over the least room in this process's cgroups and MemAvailable (or
 # when that room cannot be read) is checked without dataflow (--extended-analysis=false),
 # with a note: every check but the dataflow ones (SC2030, SC2031 and the like) still
-# runs, and CI runs them all. Full analysis always on CI (CI or GITHUB_ACTIONS set) or
+# runs, and CI runs them all. SC2086 is left out of those runs too: it reads values
+# through dataflow (ShellCheck 0.9.0 changelog), and without it flagged 73 safe
+# expansions in this tree (11-24), all of which the full check clears. Full analysis always on CI (CI or GITHUB_ACTIONS set) or
 # with FLEET_SHELLCHECK_ALL=1. Exits with shellcheck's status: no file is skipped.
 set -uo pipefail
 
@@ -75,9 +77,9 @@ check() { # NEED FILE...: in full when the room covers NEED, else without datafl
   if (( full_room )) || { [[ $room =~ ^[0-9]+$ ]] && (( room >= need )); }; then
     "${sc[@]}" "${opts[@]}" "$@"
   else
-    printf 'note: %s checked without dataflow analysis: %s MiB of room, under the %s MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)\n' \
+    printf 'note: %s checked without dataflow analysis or SC2086: %s MiB of room, under the %s MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)\n' \
       "$what" "$room" "$need" >&2
-    "${sc[@]}" "${opts[@]}" --extended-analysis=false "$@"
+    "${sc[@]}" "${opts[@]}" --extended-analysis=false --exclude=SC2086 "$@"
   fi
 }
 

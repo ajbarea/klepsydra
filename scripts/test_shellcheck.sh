@@ -54,14 +54,14 @@ check "small files are checked together, in full, when the room covers their nee
 rc=0"
 out=$(run FLEET_SHELLCHECK_SMALL_NEED_MIB=1000 -- -x "$small" "$small" "$small" "$small")
 check "small files over the room are checked without dataflow too, and the note counts them" \
-  "$(grep -c '^checked: -x --extended-analysis=false ' <<<"$out") $(grep -c '^note: 4 files checked without dataflow analysis: 556 MiB of room, under the 1000 MiB it needs' <<<"$out")" "1 1"
+  "$(grep -c '^checked: -x --extended-analysis=false ' <<<"$out") $(grep -c '^note: 4 files checked without dataflow analysis or SC2086: 556 MiB of room, under the 1000 MiB it needs' <<<"$out")" "1 1"
 check "a big file with room is checked in full" "$(run FLEET_CGROUP_ROOT="$open" -- -x "$big")" "checked: -x $big
 rc=0"
 out=$(run -- -x "$big")
 check "the slice above the scope sets the room: a big file is checked without dataflow, not skipped" \
   "$(grep -c '^checked: -x --extended-analysis=false .*big.sh$' <<<"$out") $(tail -1 <<<"$out")" "1 rc=0"
 check "and a note says so, with the room it found and how to run it all" \
-  "$(grep -c '^note: .*big.sh checked without dataflow analysis: 556 MiB of room, under the 4000 MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)$' <<<"$out")" "1"
+  "$(grep -c '^note: .*big.sh checked without dataflow analysis or SC2086: 556 MiB of room, under the 4000 MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)$' <<<"$out")" "1"
 out=$(run FLEET_CGROUP_ROOT="$open" FLEET_MEMINFO="$work/meminfo-low" -- -x "$big")
 check "with no cgroup limit, a machine short of memory does the same" \
   "$(grep -c 'extended-analysis=false' <<<"$out") $(grep -c '1953 MiB of room' <<<"$out")" "1 1"
@@ -75,6 +75,8 @@ check "a finding fails the run, whichever file has it" "$(run -- -x "$work/bad.s
 seq 1 3500 | sed 's/^/: /' >"$work/bad-big.sh"
 check "including a big file checked without dataflow" "$(run -- -x "$small" "$work/bad-big.sh" | tail -1)" "rc=1"
 
+check "a run without dataflow leaves out SC2086, which reads values through it" \
+  "$(run -- -x "$big" | grep -c '^checked: -x --extended-analysis=false --exclude=SC2086 ')" "1"
 check "an option's value word stays with it, not read as a file" \
   "$(run FLEET_CGROUP_ROOT="$open" -- -x -s bash -e SC2034 "$big")" "checked: -x -s bash -e SC2034 $big
 rc=0"
