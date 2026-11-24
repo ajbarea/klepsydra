@@ -990,7 +990,7 @@ check "#531: heph_note with custom FLEET_BRIEFING" \
   "$(FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; heph_note why sid heph doing' | grep -c "$work/custom-briefing/queue.md")" "1"
 mkdir -p "$work/home/fleet-briefing"
 check "#531: fallback to ~/fleet-briefing when /mnt/c does not exist" \
-  "$(HOME="$work/home" FLEET_WSL_BRIEFING=/nonexistent/wsl bash -c '. "'"$here"'/lib.sh"; echo "$FLEET_BRIEFING"')" "$work/home/fleet-briefing"
+  "$(HOME="$work/home" FLEET_BRIEFING= FLEET_WSL_BRIEFING=/nonexistent/wsl bash -c '. "'"$here"'/lib.sh"; echo "$FLEET_BRIEFING"')" "$work/home/fleet-briefing"
 check "#531: fleet_briefing helper matches FLEET_BRIEFING" \
   "$(FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; fleet_briefing')" "$work/custom-briefing"
 check "--check passes a current brief" "$(bash "$here/brief.sh" --check "$out" 2>/dev/null; echo $?)" "0"
