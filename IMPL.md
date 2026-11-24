@@ -1,27 +1,41 @@
-# IMPL: #484 a prefs.json that cannot take a save says so (PR #522)
+# IMPL: klepsydra#492, perf class (a): one process per batch in the fleet's shell loops
 
-Branch fix/theme-save-corrupt-prefs-484 (agy's, reviewed and fixed by Opus agy-review-k 11-23).
-Push: `git push origin fix/theme-save-corrupt-prefs-484:fix/theme-save-corrupt-prefs-484`. Never push to main.
+Branch perf/shell-forks (worktree .claude/worktrees/perf-shell-forks), cut `--no-track` from origin/main 958dbb2.
+Push only: `git push -u origin perf/shell-forks:perf/shell-forks`. Never push to main.
+Role (Athena 11-19): perf-k measures and specifies; agy workers implement slices from the specs; perf-k
+verifies each PR against before.md. perf-k codes a slice only when it is too subtle for Flash.
+
+## Slices (specs in ~/.local/state/fleet-orchestrator/briefs-free/perf-shell-forks-N-*.md)
+1. sessions: one jq for every session file (hook's fleet_rows block shared into lib.sh). agy, first.
+2. panes: live_panes_load once + pane_live. agy, after 1.
+3. lib-load: lib.sh load 16-19 -> 1 fork, flog +8 -> +5, hook mkdir. agy, after 1.
+4. screen parse (THIS BRANCH, perf-k): one awk per capture; armed_at; stopped_at via printf.
+5. paths: basename/dirname -> parameter expansion + lint. agy, after 1 and 3.
 
 ## Done
-- agy: write_pref/write_pref_at return whether the save took; set_theme, set_wall_density and
-  the Voices menu check it.
-- Opus r1:
-  - set_new_session_default (same class) returned Ok on a refused save: now an error the
-    wall's + New session note already shows.
-  - set_wall_density's error was swallowed by the wall (`.catch(() => {})`): a density-note
-    in the bar now says "Not saved: ..." and clears on the next save that takes.
-  - theme::confirm: a refused save of the default read "still kourai, not kourai"; it now says
-    the choice is not kept.
-  - opacity: agy's extra branch repeated what opacity::confirm already reports; removed.
-- Tests: theme confirm, saved_or_say, browser case refused_saves_say_so.
-
-- Opus r1 reader fixes: the browser case clicked `.density input` (a span takes the click: it
-  failed every run) -> the label; theme::confirm now reads prefs.json back as opacity::confirm does
-  ("still X, not Y" when the wall wears another theme, "X is not kept" when it wears the asked one
-  unsaved, Ok when the value is already stored); set_split_mode says "not kept after a restart"
-  when the split worked but the save did not (with_save_note, tested).
+- Baseline 06df2c2: docs/perf/2026-11-19-shell-forks/before.md, harness scripts/perf/forks/.
+- Slice 4 7662892: resume pass 772 -> 472, watch tick (3 panes) 152 -> 39, doctor 1645 -> 1479.
+  Differential test 22227 checks (368 screens x gawk+mawk, both orders) + stopped_at DST; Opus review
+  round 1: no divergence; should-fix (failed parse cached, cache transitions untested, 4 helpers
+  missing) fixed. Mutations: 7 of 9 killed and confirmed, keep-failed + no-idle-order rerunning.
+- Specs 1-3, 5 written, SOTA guard policy folded in (gate on counts, wall time reported only).
+- Reported to Athena 16:42 (fleet send).
 
 ## Next
-- CI (cargo clippy/test --workspace: the app crate needs glib, so CI only), browser case locally,
-  fresh-reader verify, merge.
+1. #500: round 2 (fresh Opus) CLEAN; its nits (armed_at takes its own screen, harness hook rows run with the read-only
+   tmux shim) committed with this IMPL. test_forks_screen.sh 26069 passed (strace 6.8). Report to Athena; do not merge.
+2. #510 (perf/readers, Closes #501): verify pass CLEAN; should-fix (ctime part of the change marker untested) fixed
+   on that branch. Do not merge.
+3. #497 (agy slice 1): re-verified 11-20 01:50 on 96777d2, both should-fix fixed (PR comment). #497 and #500 conflict
+   (test-forks target, CI step, lib.sh): second to merge rebases.
+4. Slices 2, 3, 5 (specs in briefs-free) start after #497 merges; agy implements unless Athena hands them to perf-k.
+5. Class c (frontend P1-P3, P12, A1) after the gauge header PR (feat/gauge-header-421) merges.
+- Checked and left: statusLine 6 processes / 2 jq per 30 s refresh per session (fixture run, strace).
+- Lesson: while a PR's CI runs, commit IMPL locally and push it with the next code change (a lone IMPL push cancels the run).
+
+## Verify
+- `bash fleet/test_forks_screen.sh` (STRACE=, mawk on PATH; ~2.5 min); `make test-forks`. strace here: `apt-get download strace && dpkg -x strace_*.deb root`, then STRACE=root/usr/bin/strace.
+- BEFORE/AFTER: detached worktree at origin/main + `SANDBOX_SEED=<copy> bash scripts/perf/forks/run.sh OUT %59 %60 %63`
+  for each checkout, under `flock -o /tmp/fleet-heavy.lock`.
+- strace/hyperfine/mawk without root: `apt-get download X && dpkg -x X_*.deb root`.
+- Never pkill -f a pattern that appears in your own command line (it kills your shell: exit 144).
