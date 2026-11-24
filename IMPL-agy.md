@@ -15,7 +15,7 @@ ajbarea/klepsydra#533: Shared Playwright browser: show when an agent is using it
 - Suites verified:
   - `node --test src/*.test.js` (592 tests passed)
   - `bash hooks/test_browser.sh` (43 tests passed)
-  - `bash fleet/test_fleet.sh` / `make test-fleet` (1047 tests passed)
+  - `make test-fleet` (1047 tests passed)
   - `bash statusline/test_statusline.sh` (143 passed)
   - `bash hooks/test_fleet.sh` (125 passed)
   - `bash scripts/test_measure_memory.sh`
