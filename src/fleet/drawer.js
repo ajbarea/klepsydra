@@ -2,10 +2,10 @@
 // guardrail log and errors, on the shared side panel (sidepanel.js: shut to
 // a tab, docked, or full). Every figure is set as text; the only markup is
 // built here from constants.
-import { accentLight } from "./model.js";
+import { accentLight, drawerCharacters } from "./model.js";
 import { createSidePanel } from "./sidepanel.js";
 import {
-  activeTime, cacheShare, characterOf, costLine, costText, drawerCharacters, fullNumber, modelName, plural, rowLabels, sumTotals, todaySessions, tokensByCharacter,
+  activeTime, cacheShare, characterOf, costLine, costText, fullNumber, modelName, plural, rowLabels, sumTotals, todaySessions, tokensByCharacter,
   tokensByModel, topAttribution, totalTokens,
 } from "./ledger.js";
 

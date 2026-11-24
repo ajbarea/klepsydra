@@ -140,6 +140,29 @@ export function identity(s, cast) {
   return { name, voice: null, voiceKey: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null, motif: "burst" };
 }
 
+/**
+ * The drawer's character per session: each card on the wall by `identity`, then
+ * each session gone from it that today's file records a crate pick for (`day.picks`).
+ * A card wearing a character the wall cast (crate picks), not its own voice's,
+ * has cast: true so tokensByCharacter attributes its tokens to the character row (#148, #536).
+ */
+export function drawerCharacters(sessions, cast, day) {
+  const map = new Map();
+  for (const s of sessions) {
+    const id = identity(s, cast);
+    // What tells two cards of one character apart: the session's name, else its repo.
+    // A card wearing the character the wall cast (crate picks), not its own voice's: the Ledger names the card's.
+    map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voiceKey === s.pick });
+  }
+  // A session gone from the wall keeps the character the crate recorded in today's file.
+  for (const [sid, pick] of Object.entries(day?.picks ?? {})) {
+    if (map.has(sid)) continue;
+    const id = identity({ session_id: sid, pick }, cast);
+    if (id.full) map.set(sid, { name: id.name, accent: id.accent, label: null, cast: true });
+  }
+  return map;
+}
+
 /** The voice keys of the orchestrator's faces, Hephaestus and Athena (src-tauri/fleet/src/picks.rs ORCHESTRATORS). */
 export const ORCHESTRATOR_VOICES = ["am_michael", "bf_emma"];
 

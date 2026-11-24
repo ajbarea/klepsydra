@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, drawerCharacters, fullNumber,
+  MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
   cardLabels, characterOf, ledgerLine, rowLabels, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
+import { drawerCharacters } from "./fleet/model.js";
 
 test("compactNumber reads at a glance and rounds up into the next unit", () => {
   const cases = [[0, "0"], [999, "999"], [1000, "1k"], [1234, "1.2k"], [34_000, "34k"], [34_400, "34k"], [999_499, "999k"],
@@ -143,6 +144,9 @@ test("#536: drawerCharacters maps picked sessions and day.picks to cast: true fo
   const ownVoice = { session_id: "s3", voice: "af_heart", pick: null };
   const namesOwn = drawerCharacters([ownVoice], CAST, {});
   assert.equal(namesOwn.get("s3").cast, false);
+  // A card still on the wall keeps its own character, even when today's file recorded a pick for it.
+  const both = drawerCharacters([{ ...ownVoice, name: "docs" }], CAST, { picks: { s3: "am_puck" } }).get("s3");
+  assert.deepEqual([both.name, both.cast, both.label], ["Cupid", false, "docs"]);
 
   // 4. Verify tokensByCharacter attributes both picked sessions to Cupid, not Other sessions
   const wall = drawerCharacters([onWall], CAST, { picks: { s2: "af_heart" } });
