@@ -3294,6 +3294,8 @@ ctx_file "$p" 900000 t1
 mover "$noon"
 check "#515: a session no brief registered (AJ's own) is never asked" "$(grep -c '^SUBMIT' "$work/ctxun.log") $(wc -c <"$work/moved")" "0 0"
 t kill-window -t "$p" 2>/dev/null; rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"
+# Back to the one logged-out account the cases after this one start from.
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"; rm -f "$FLEET_STATE/resume-state"
 refused() { # RC: move_tries and move_failed set after a move refused with RC, from the service's own helpers
   bash -c 'declare -A move_tries move_failed last asked fresh_failed due seen_on note; NOW=100
     eval "$(sed -n "/^moved() {/,/^}/p;/^forget() {/p;/^move_refused() {/,/^}/p" "$1")"
