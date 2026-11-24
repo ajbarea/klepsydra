@@ -152,6 +152,17 @@ pane() { # NAME STATE-JSON
 state() { printf '%s' "$2" >"$work/$1.json"; sleep 0.4; } # NAME STATE-JSON
 events() { cat "$work/$1.log"; }
 settle() { sleep 0.6; }
+# A mock launcher reports only once its new pane drew TEXT, as launch.sh does before it
+# reports NOT-DELIVERED (#532); a pane that never draws it is written to drawn.timeouts.
+cat >"$work/drawn.sh" <<EOF
+#!/usr/bin/env bash
+for _ in \$(seq 100); do
+  tmux -L "$FLEET_SOCK" capture-pane -p -t "\$1" 2>/dev/null | grep -qF -- "\$2" && exit 0
+  sleep 0.05
+done
+echo "\$1 never drew: \$2" >>"$work/drawn.timeouts"
+EOF
+chmod +x "$work/drawn.sh"
 reading() { # DIR LABEL FIVE_HOUR_PCT MTIME: a usage reading for account DIR
   # A case that sets an account's reading starts with no limit seen on it (#319).
   rm -f -- "$FLEET_STATE/limited/${1:?}".five "$FLEET_STATE/limited/${1:?}".seven
@@ -2915,6 +2926,7 @@ printf '%s' '{"above":["Claude Code"],"input":"the brief, pasted and never sent"
 cat >"$work/launch-stuck.sh" <<EOF
 #!/usr/bin/env bash
 new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/stucknew.json $work/stucknew.log")
+"$work/drawn.sh" "\$new" 'the brief, pasted and never sent'
 sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
 echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
 EOF
@@ -3110,16 +3122,14 @@ printf '%s' '{"above":["Claude Code"],"input":"the brief, never sent","exit_on_e
 cat >"$work/launch-rel.sh" <<EOF
 #!/usr/bin/env bash
 new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/relnew.json $work/relnew.log")
-for _ in \$(seq 100); do
-  tmux -L "$FLEET_SOCK" capture-pane -p -t "\$new" 2>/dev/null | grep -q 'the brief, never sent' && break
-  sleep 0.05
-done
+"$work/drawn.sh" "\$new" 'the brief, never sent'
 sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
 echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
 EOF
 LAUNCH="$work/launch-rel.sh" bash "$here/relaunch-fresh.sh" "$p" rel "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
 check "review 3: a relaunch whose brief never started keeps the old pane, points the row back and exits the new one" \
   "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
+check "#532: each mock pane drew its unsent brief before the launcher reported" "$(cat "$work/drawn.timeouts" 2>/dev/null)" ""
 t kill-window -t "$p"; : >"$REGISTRY"
 # #229 review: a relaunch whose old pane AJ was watching puts the new one in view.
 p=$(pane relview '{"above":["idle"],"exit_on_exit":true}'); settle
