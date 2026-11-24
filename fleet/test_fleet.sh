@@ -4815,6 +4815,12 @@ check "#380 review 2: a git archive that fails partway is no copy: nothing is up
   "$(PATH="$work/gitcut:$PATH" FLEET_BRIEFING_DRIVE=$D msync) $(nsync) $(lastlog "could not copy the commit")" "0 4 WARN"
 check "#380 review 2: a new Drive target mirrors the same commit again" \
   "$(FLEET_BRIEFING_DRIVE=$D msync) $(FLEET_BRIEFING_DRIVE=gdrive:other msync) $(nsync)" "0 0 6"
+git -C "$work/brief-phone" pull -q 2>/dev/null; printf 'edited on another host\n' >"$work/brief-phone/README.md"
+git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -qam other-host && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
+check "#531 review: a clone behind origin with nothing to push mirrors nothing (it would roll Drive back)" \
+  "$(FLEET_BRIEFING_DRIVE=$D msync) $(nsync) $(lastlog "not at origin's commit")" "0 6 INFO"
+git -C "$work/brief" pull -q --ff-only 2>/dev/null
+check "#531 review: once it holds origin's commit, it mirrors" "$(FLEET_BRIEFING_DRIVE=$D msync) $(nsync)" "0 7"
 
 echo "fleet send: a message is submitted, never left in the box (#320)"
 fsend() { bash "$here/send.sh" "$@" 2>/dev/null; }

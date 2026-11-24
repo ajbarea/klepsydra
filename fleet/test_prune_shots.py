@@ -50,6 +50,13 @@ class Briefing(unittest.TestCase):
         )
         self.assertEqual(fresh({"FLEET_BRIEFING": "/b"}, "REPO"), "/b")
         self.assertEqual(fresh({}, "REPO"), "/mnt/c/Users/ajbar/fleet-briefing")
+        # An empty value (fleet shots when lib.sh fails to source) is no folder: never ".".
+        self.assertEqual(
+            fresh({"FLEET_BRIEFING": ""}, "REPO"), "/mnt/c/Users/ajbar/fleet-briefing"
+        )
+        self.assertEqual(
+            fresh({"BRIEFING_DIR": "", "FLEET_BRIEFING": "/b"}, "REPO"), "/b"
+        )
 
 
 class PruneShots(unittest.TestCase):
