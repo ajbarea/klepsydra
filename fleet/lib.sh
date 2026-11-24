@@ -1150,9 +1150,9 @@ wrapup_pending() { # SID
 # (klepsydra's) says done, or stopped with only background work, and lists no
 # background work still running, and no wrap-up answer is owed. Prints the session's stamp from the same
 # read, for prompt_stamp comparisons.
-turn_done() { # PANE
-  local sid
-  sid=$(live_session "$1") || return 1
+turn_done() { # PANE [SID]: SID when the caller already has PANE's live session
+  local sid=${2:-}
+  [[ -n $sid ]] || sid=$(live_session "$1") || return 1
   ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
     and ((.background // []) | length) == 0) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
@@ -1834,3 +1834,8 @@ heph_note() { # WHY SID HEPH DOING
   printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$4"
   printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
 }
+
+# Tokens one request may carry (a session's whole context, re-sent with each
+# call) before the resume service asks the worker to checkpoint and start
+# fresh (#515). The wall's ledger.js CONTEXT_BUDGET holds the same number.
+FLEET_CONTEXT_BUDGET=${FLEET_CONTEXT_BUDGET:-300000}

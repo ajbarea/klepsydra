@@ -62,6 +62,30 @@ test("a card's ledger line is absent when all zero, and shows a chip with no rec
   assert.equal(both.short, "+1 \u22120 lines \u00b7 2 commits \u00b7 1 PR");
 });
 
+test("#515: the receipt names the last request's context, and warns on it alone at the budget", () => {
+  const normal = ledgerLine({ tokens: { input: 50_000, output: 1_000 } }, false, 50_000);
+  assert.equal(normal.warn, false);
+  assert.equal(normal.why, null);
+  assert.equal(normal.full, "50k context \u00b7 51k tokens (0% cached)");
+
+  const atBudget = ledgerLine({ tokens: { input: 100_000 } }, false, 300_000);
+  assert.equal(atBudget.warn, true);
+  assert.equal(atBudget.full, "300k context \u00b7 100k tokens (0% cached)");
+  assert.match(atBudget.why, /300k tokens of context, past the fleet's 300k budget/);
+  assert.equal(ledgerLine({ tokens: { input: 1 } }, false, 299_999).warn, false, "one under the budget");
+
+  // A session's total grows with every call by design: 211M in one session is the cost, not the alarm.
+  const bigTotal = ledgerLine({ tokens: { input: 211_000_000, cache_read: 200_000_000 } }, false, 10_000);
+  assert.equal(bigTotal.warn, false);
+  assert.equal(ledgerLine({ tokens: { input: 5_000_000 } }).warn, false, "no request size recorded: no warning");
+
+  const busy = { lines_added: 40, lines_removed: 2, commits: 3, pull_requests: 1, tokens: { input: 900_000 } };
+  assert.doesNotMatch(ledgerLine(busy, false, 120_000).short, /context/, "under the budget a compact card keeps its usual parts");
+  const over = ledgerLine(busy, false, 420_000);
+  assert.match(over.short, /420k context/, "past it a compact card keeps the request size");
+  assert.equal(over.short.split(" \u00b7 ").length, 3);
+});
+
 test("the drawer's totals add every session", () => {
   const day = {
     sessions: {
