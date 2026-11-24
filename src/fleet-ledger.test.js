@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, fullNumber,
+  MODEL_CAP, NAME_CAP, OTHER, PARTIAL_LABEL, costText, modelName, tokensByModel, activeTime, attributionName, cacheShare, chipLabel, compactNumber, compactPick, costLine, drawerCharacters, fullNumber,
   cardLabels, characterOf, ledgerLine, rowLabels, receiptParts, receiptText, sumTotals, todaySessions, tokensByCharacter, topAttribution, totalTokens,
 } from "./fleet/ledger.js";
 
@@ -118,7 +118,43 @@ test("active time, counts and the cost line print plainly", () => {
   assert.equal(costText(0), "none");
 });
 
-const CAST = { characters: { af_heart: { name: "Cupid", accent: "#D55E00" }, am_puck: { name: "Puck", accent: "#009E73" } } };
+const CAST = {
+  faces: "kourai",
+  characters: {
+    af_heart: { name: "Cupid", accent: "#D55E00", face: "cupid" },
+    am_puck: { name: "Puck", accent: "#009E73", face: "puck" },
+  },
+};
+
+test("#536: drawerCharacters maps picked sessions and day.picks to cast: true for tokensByCharacter", () => {
+  const t = (input) => ({ tokens: { input } });
+  // 1. Session on the wall with a picked character (e.g. voice outside cast, pick in theme)
+  const onWall = { session_id: "s1", voice: "bm_george", pick: "af_heart" };
+  const namesOnWall = drawerCharacters([onWall], CAST, {});
+  assert.equal(namesOnWall.get("s1").name, "Cupid");
+  assert.equal(namesOnWall.get("s1").cast, true);
+
+  // 2. Session gone from the wall, but recorded in day.picks
+  const namesGone = drawerCharacters([], CAST, { picks: { s2: "af_heart" } });
+  assert.equal(namesGone.get("s2").name, "Cupid");
+  assert.equal(namesGone.get("s2").cast, true);
+
+  // 3. A session wearing its own cast voice has cast: false (drawer attributes it by own voice)
+  const ownVoice = { session_id: "s3", voice: "af_heart", pick: null };
+  const namesOwn = drawerCharacters([ownVoice], CAST, {});
+  assert.equal(namesOwn.get("s3").cast, false);
+
+  // 4. Verify tokensByCharacter attributes both picked sessions to Cupid, not Other sessions
+  const wall = drawerCharacters([onWall], CAST, { picks: { s2: "af_heart" } });
+  const rows = tokensByCharacter(
+    [["s1", t(10)], ["s2", t(20)], ["other", t(5)]],
+    { s1: "bm_george" },
+    CAST,
+    { wall },
+  );
+  assert.deepEqual(rows.map((r) => [r.name, r.tokens]), [["Cupid", 30], ["Other sessions", 5]]);
+  assert.equal(rows[1].label, "Other sessions: 1 (with no voice)");
+});
 
 test("tokens by character group by the recorded voice, largest first, with Other sessions last", () => {
   const t = (input) => ({ tokens: { input } });

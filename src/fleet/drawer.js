@@ -2,10 +2,10 @@
 // guardrail log and errors, on the shared side panel (sidepanel.js: shut to
 // a tab, docked, or full). Every figure is set as text; the only markup is
 // built here from constants.
-import { accentLight, identity } from "./model.js";
+import { accentLight } from "./model.js";
 import { createSidePanel } from "./sidepanel.js";
 import {
-  activeTime, cacheShare, characterOf, costLine, costText, fullNumber, modelName, plural, rowLabels, sumTotals, todaySessions, tokensByCharacter,
+  activeTime, cacheShare, characterOf, costLine, costText, drawerCharacters, fullNumber, modelName, plural, rowLabels, sumTotals, todaySessions, tokensByCharacter,
   tokensByModel, topAttribution, totalTokens,
 } from "./ledger.js";
 
@@ -108,27 +108,10 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   let readDay = ""; // the local date the latest read started on
   let painted = ""; // what the body shows, so an unchanged snapshot leaves it (and focus) alone
 
-  const who = (day) => {
-    const map = new Map();
-    for (const s of sessions()) {
-      const id = identity(s, cast());
-      // What tells two cards of one character apart: the session's name, else its repo.
-      // A card wearing the character the wall cast (crate picks), not its own voice's: the Ledger names the card's.
-      map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voiceKey === s.pick });
-    }
-    // A session gone from the wall keeps the character the crate recorded in today's file.
-    for (const [sid, pick] of Object.entries(day?.picks ?? {})) {
-      if (map.has(sid)) continue;
-      const id = identity({ session_id: sid, pick }, cast());
-      if (id.full) map.set(sid, { name: id.name, accent: id.accent, label: null, cast: true });
-    }
-    return map;
-  };
-
   function paint() {
     // A fetch can land after the drawer shut: a shut drawer neither paints nor takes focus.
     if (!view || !panel.isOpen) return;
-    const names = who(view.day);
+    const names = drawerCharacters(sessions(), cast(), view.day);
     // The theme too: a voice the wall no longer shows is still named by it.
     const key = JSON.stringify([view, filter, [...names], cast().label]);
     if (key === painted) return;

@@ -4,6 +4,7 @@
 // export; the drawer's `day` is today's file (see ledger.rs).
 
 import { castAccent, castCharacter, ownValue, voiceName } from "./cast.js";
+import { identity } from "./model.js";
 
 const MINUS = "−";
 const n = (v) => (Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
@@ -200,6 +201,28 @@ export function rowLabels(cards, recorded) {
   const kept = recorded && typeof recorded === "object" ? Object.entries(recorded) : [];
   for (const [id, label] of kept) if (typeof label === "string" && label && !merged.get(id)) merged.set(id, label);
   return cardLabels([...merged]);
+}
+
+/**
+ * Maps live sessions and recorded day picks to character identity for the drawer.
+ * A card wearing a character the wall cast (crate picks), not its own voice's,
+ * has cast: true so tokensByCharacter attributes its tokens to the character row (#148, #536).
+ */
+export function drawerCharacters(sessions, cast, day) {
+  const map = new Map();
+  for (const s of sessions) {
+    const id = identity(s, cast);
+    // What tells two cards of one character apart: the session's name, else its repo.
+    // A card wearing the character the wall cast (crate picks), not its own voice's: the Ledger names the card's.
+    map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voiceKey === s.pick });
+  }
+  // A session gone from the wall keeps the character the crate recorded in today's file.
+  for (const [sid, pick] of Object.entries(day?.picks ?? {})) {
+    if (map.has(sid)) continue;
+    const id = identity({ session_id: sid, pick }, cast);
+    if (id.full) map.set(sid, { name: id.name, accent: id.accent, label: null, cast: true });
+  }
+  return map;
 }
 
 /**
