@@ -49,8 +49,12 @@ run() { # [VAR=VALUE...] -- ARGS...: the runner's output (stdout and stderr), th
 open="$work/open" # a cgroup tree with no limit anywhere
 mkdir -p "$open/$scope"; echo max >"$open/$scope/memory.max"
 
-check "small files are checked together, in full" "$(run -- -x "$small" "$small")" "checked: -x $small $small
+check "small files are checked together, in full, when the room covers their need" \
+  "$(run FLEET_SHELLCHECK_SMALL_NEED_MIB=500 -- -x "$small" "$small")" "checked: -x $small $small
 rc=0"
+out=$(run FLEET_SHELLCHECK_SMALL_NEED_MIB=1000 -- -x "$small" "$small" "$small" "$small")
+check "small files over the room are checked without dataflow too, and the note counts them" \
+  "$(grep -c '^checked: -x --extended-analysis=false ' <<<"$out") $(grep -c '^note: 4 files checked without dataflow analysis: 556 MiB of room, under the 1000 MiB it needs' <<<"$out")" "1 1"
 check "a big file with room is checked in full" "$(run FLEET_CGROUP_ROOT="$open" -- -x "$big")" "checked: -x $big
 rc=0"
 out=$(run -- -x "$big")
@@ -70,6 +74,17 @@ cp "$small" "$work/bad.sh"
 check "a finding fails the run, whichever file has it" "$(run -- -x "$work/bad.sh" "$big" | tail -1)" "rc=1"
 seq 1 3500 | sed 's/^/: /' >"$work/bad-big.sh"
 check "including a big file checked without dataflow" "$(run -- -x "$small" "$work/bad-big.sh" | tail -1)" "rc=1"
+
+check "an option's value word stays with it, not read as a file" \
+  "$(run FLEET_CGROUP_ROOT="$open" -- -x -s bash -e SC2034 "$big")" "checked: -x -s bash -e SC2034 $big
+rc=0"
+odd="$work/odd" # a limit partway up that cannot be read as a number
+mkdir -p "$odd/$scope"; echo max >"$odd/$scope/memory.max"; echo '?' >"$odd/user.slice/memory.max"
+out=$(run FLEET_CGROUP_ROOT="$odd" FLEET_SHELLCHECK_SMALL_NEED_MIB=1 -- -x "$small")
+check "an unreadable limit is unknown room: checked without dataflow, not in full" \
+  "$(grep -c 'extended-analysis=false' <<<"$out") $(grep -c 'unknown MiB of room' <<<"$out")" "1 1"
+check "no file at all goes to shellcheck, which reports it" "$(run -- -x)" "checked: -x
+rc=0"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 (( fail == 0 ))

@@ -2,23 +2,32 @@
 # scripts/shellcheck.sh [OPTION...] FILE...: `make shellcheck`'s runner (#503).
 # ShellCheck's dataflow analysis of fleet/test_fleet.sh alone peaks at 3.4 GB, past
 # the room a worker has on WSL, where the kernel kills it (exit 137). Without that
-# analysis the same file takes about 240 MB and a few seconds, so a file over
-# FLEET_SHELLCHECK_BIG_LINES is checked without it (--extended-analysis=false)
-# when the least room over this process's cgroups, and MemAvailable, is under
-# FLEET_SHELLCHECK_NEED_MIB, with a note: every check but the dataflow ones
-# (SC2030, SC2031 and the like) still runs, and CI runs them all. Full analysis
-# always on CI (CI or GITHUB_ACTIONS set) or with FLEET_SHELLCHECK_ALL=1.
-# Exits with shellcheck's status: a file checked is never reported as skipped.
+# analysis the same file takes about 240 MB and a few seconds. Files over
+# FLEET_SHELLCHECK_BIG_LINES run together and need FLEET_SHELLCHECK_NEED_MIB for the
+# full check; the rest run together and need FLEET_SHELLCHECK_SMALL_NEED_MIB. A run
+# whose need is over the least room in this process's cgroups and MemAvailable (or
+# when that room cannot be read) is checked without dataflow (--extended-analysis=false),
+# with a note: every check but the dataflow ones (SC2030, SC2031 and the like) still
+# runs, and CI runs them all. Full analysis always on CI (CI or GITHUB_ACTIONS set) or
+# with FLEET_SHELLCHECK_ALL=1. Exits with shellcheck's status: no file is skipped.
 set -uo pipefail
 
 read -r -a sc <<<"${SHELLCHECK_BIN:-uvx --from shellcheck-py shellcheck}"
 need_mib=${FLEET_SHELLCHECK_NEED_MIB:-4000}
+# The rest of the tree (57 files, 11-24) peaked at 1456 MiB in full: that and a tenth.
+small_need_mib=${FLEET_SHELLCHECK_SMALL_NEED_MIB:-1600}
 big_lines=${FLEET_SHELLCHECK_BIG_LINES:-3000}
 
 opts=() small=() big=()
-for f in "$@"; do
+while (( $# )); do
+  f=$1; shift
   if [[ $f == -* ]]; then
     opts+=("$f")
+    # ShellCheck's options that take their value as the next word.
+    case $f in
+      -[eifsSoPW] | --exclude | --include | --format | --shell | --severity | --enable | --source-path | --wiki-link-count)
+        (( $# )) && { opts+=("$1"); shift; } ;;
+    esac
   elif (( $(wc -l <"$f" 2>/dev/null || echo 0) > big_lines )); then
     big+=("$f")
   else
@@ -39,6 +48,9 @@ room_mib() {
         [[ $cur =~ ^[0-9]+$ ]] || cur=0
         (( max - cur < 0 )) && cur=$max
         (( ${#least} == 0 || (max - cur) / 1048576 < least )) && least=$(( (max - cur) / 1048576 ))
+      elif [[ -e $d/memory.max && $max != max ]]; then
+        printf unknown # a limit that cannot be read may be the tightest
+        return
       fi
       [[ $d == "$root" ]] && break
       d=${d%/*}
@@ -50,22 +62,27 @@ room_mib() {
   printf '%s' "${least:-unknown}"
 }
 
-rc=0
-(( ${#small[@]} )) && { "${sc[@]}" "${opts[@]}" "${small[@]}" || rc=$?; }
-if (( ${#big[@]} )); then
-  full=0 room=""
-  if [[ ${FLEET_SHELLCHECK_ALL:-} == 1 || -n ${CI:-} || -n ${GITHUB_ACTIONS:-} ]]; then
-    full=1
-  else
-    room=$(room_mib)
-    [[ $room =~ ^[0-9]+$ ]] && (( room >= need_mib )) && full=1
-  fi
-  if (( full )); then
-    "${sc[@]}" "${opts[@]}" "${big[@]}" || rc=$?
+full_room=0 room=""
+if [[ ${FLEET_SHELLCHECK_ALL:-} == 1 || -n ${CI:-} || -n ${GITHUB_ACTIONS:-} ]]; then
+  full_room=1
+elif (( ${#small[@]} + ${#big[@]} )); then
+  room=$(room_mib) # read once: the two runs follow one another
+fi
+
+check() { # NEED FILE...: in full when the room covers NEED, else without dataflow
+  local need=$1 what; shift
+  what=$*; (( $# > 3 )) && what="$# files"
+  if (( full_room )) || { [[ $room =~ ^[0-9]+$ ]] && (( room >= need )); }; then
+    "${sc[@]}" "${opts[@]}" "$@"
   else
     printf 'note: %s checked without dataflow analysis: %s MiB of room, under the %s MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)\n' \
-      "${big[*]}" "$room" "$need_mib" >&2
-    "${sc[@]}" "${opts[@]}" --extended-analysis=false "${big[@]}" || rc=$?
+      "$what" "$room" "$need" >&2
+    "${sc[@]}" "${opts[@]}" --extended-analysis=false "$@"
   fi
-fi
+}
+
+rc=0
+(( ${#small[@]} + ${#big[@]} )) || { "${sc[@]}" "${opts[@]}"; exit; } # no file: the checker reports its own usage error
+(( ${#small[@]} )) && { check "$small_need_mib" "${small[@]}" || rc=$?; }
+(( ${#big[@]} )) && { check "$need_mib" "${big[@]}" || rc=$?; }
 exit "$rc"
