@@ -1648,6 +1648,19 @@ def narrow_window_keeps_cards_inside(wall):
     cols = page.evaluate("getComputedStyle(document.getElementById('wall')).gridTemplateColumns.split(' ').length")
     wall.check(cols == 4, "at 1920 px the wall still has four columns", cols)
     page.close()
+    # The phone wall (.served) keeps its own one-line compact header: none of the stacking reaches it.
+    page = open_app(wall, width=390, height=900)
+    pick(page, ".density label:has([value=compact])")
+    page.evaluate("document.documentElement.classList.add('served')")
+    page.wait_for_timeout(1500)
+    phone = page.evaluate("""() => {
+      const c = [...document.getElementById('wall').children].find((e) => e.checkVisibility() && e.querySelector('.pill'));
+      const p = c.querySelector('.pill'), n = c.querySelector('.name');
+      const mid = (e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; };
+      return { margin: getComputedStyle(p).marginLeft, sameLine: Math.abs(mid(p) - mid(n)) < 12 };
+    }""")
+    wall.check(phone["margin"] == "8px" and phone["sameLine"], "the phone wall at 390 px keeps the pill beside the name, as before", phone)
+    page.close()
 
 
 def ended_only(wall):
