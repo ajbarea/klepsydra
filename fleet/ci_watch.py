@@ -56,20 +56,9 @@ KLEPSYDRA_DIR = Path(
     )
 )
 TECHNE_TOML = Path(os.environ.get("TECHNE_TOML", HOME / ".claude/techne.toml"))
-def fleet_briefing() -> Path:
-    val = os.environ.get("FLEET_BRIEFING")
-    if val:
-        return Path(val)
-    wsl = Path("/mnt/c/Users/ajbar/fleet-briefing")
-    if wsl.is_dir():
-        return wsl
-    debian = Path.home() / "fleet-briefing"
-    if debian.is_dir():
-        return debian
-    return wsl
-
-
-BRIEFING = fleet_briefing()
+# The briefing folder lib.sh resolves (#531), passed in by the unit install.sh writes;
+# the WSL clone for a bare run.
+BRIEFING = Path(os.environ.get("FLEET_BRIEFING") or "/mnt/c/Users/ajbar/fleet-briefing")
 QUEUE = Path(os.environ.get("FLEET_QUEUE", BRIEFING / "needs-you.md"))
 SWEEP_HOUR = int(os.environ.get("CI_SWEEP_HOUR", "6"))
 ESCALATE_S = int(os.environ.get("CI_ESCALATE_S", "1800"))

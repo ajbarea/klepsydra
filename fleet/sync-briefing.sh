@@ -11,7 +11,7 @@ FLEET_TARGET=fleet::sync-briefing
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
-R=${BRIEFING_DIR:-$(fleet_briefing)}
+R=${BRIEFING_DIR:-$FLEET_BRIEFING}
 GITLEAKS=${FLEET_GITLEAKS:-gitleaks}
 # Google Drive mirror (#380): AJ's phone swipes screenshots and plays video in Drive, which the
 # GitHub app cannot. Off unless FLEET_BRIEFING_DRIVE names an rclone remote and a folder in it;

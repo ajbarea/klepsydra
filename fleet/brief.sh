@@ -27,13 +27,8 @@ fi
 archive() { # FILE NAME
   mkdir -p -- "$FLEET_STATE/archive/briefs" && cp -- "$1" "$FLEET_STATE/archive/briefs/$2"
 }
-# Print the shared rules with the machine's briefing folder filled in (#531).
-render_tail() {
-  local target
-  target=$(fleet_briefing)
-  target=${target//&/\\&}
-  sed "s|/mnt/c/Users/ajbar/fleet-briefing|$target|g" "$TAIL"
-}
+# The shared rules with this machine's briefing folder filled in (#531).
+render_tail() { briefing_paths <"$TAIL"; }
 # A unique archive stamp: two writes in one second never share a name.
 stamp() { printf '%s-%s' "$(date +%Y%m%d-%H%M%S.%N)" "$$"; }
 # A brief's shared rules: from its "Resources:" line on.
@@ -41,15 +36,12 @@ rules() { sed -n '/^Resources: /,$p' "$1"; }
 # Every line of the current tail and of each committed version of it (from
 # this checkout's history; without one, the current tail alone).
 tail_lines() {
-  local root target
-  target=$(fleet_briefing)
-  target=${target//&/\\&}
-  render_tail
+  local root
+  render_tail | grep .
   root=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null) || return 0
   git -C "$root" log --format='commit %H' --name-only --follow -- fleet/brief-tail.md 2>/dev/null |
     awk '/^commit / { h = $2; next } NF { print h, $0 }' |
-    while read -r h path; do git -C "$root" show "$h:$path" 2>/dev/null; done |
-    sed "s|/mnt/c/Users/ajbar/fleet-briefing|$target|g" | grep .
+    while read -r h path; do git -C "$root" show "$h:$path" 2>/dev/null; done | briefing_paths | grep .
 }
 
 # BRIEF as the current tail would have it: its body, the tail, then the lines

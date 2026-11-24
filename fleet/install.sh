@@ -247,7 +247,7 @@ unit fleet-ci-watch.service "[Unit]
 Description=klepsydra fleet: watch the sisters' CI for red runs
 
 [Service]
-Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"TECHNE_CI_REPORT=${TECHNE_CI_REPORT:-$HOME/ajsoftworks/techne/plugins/techne/skills/ci-audit/scripts/report.sh}\" \"CI_SWEEP_HOUR=${CI_SWEEP_HOUR:-99}\"
+Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"TECHNE_CI_REPORT=${TECHNE_CI_REPORT:-$HOME/ajsoftworks/techne/plugins/techne/skills/ci-audit/scripts/report.sh}\" \"CI_SWEEP_HOUR=${CI_SWEEP_HOUR:-99}\" \"FLEET_BRIEFING=$FLEET_BRIEFING\"
 ExecStart=/usr/bin/python3 -I $FLEET_STATE/ci_watch.py
 Restart=always
 RestartSec=60

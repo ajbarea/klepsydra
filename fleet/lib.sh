@@ -31,20 +31,21 @@ prefs_get() { # KEY
 # there): "repo path, installed name" per entry. install.sh copies them, and
 # doctor checks the copies still match the checkout.
 FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
-# The briefing repository (queue, needs-you, screenshots).
-fleet_briefing() {
-  if [[ -n ${FLEET_BRIEFING:-} ]]; then
-    printf '%s' "$FLEET_BRIEFING"
-  elif [[ -d ${FLEET_WSL_BRIEFING:-/mnt/c/Users/ajbar/fleet-briefing} ]]; then
-    printf '%s' "${FLEET_WSL_BRIEFING:-/mnt/c/Users/ajbar/fleet-briefing}"
-  elif [[ -d $HOME/fleet-briefing ]]; then
-    printf '%s' "$HOME/fleet-briefing"
-  else
-    printf '%s' "${FLEET_WSL_BRIEFING:-/mnt/c/Users/ajbar/fleet-briefing}"
-  fi
-}
-FLEET_BRIEFING=${FLEET_BRIEFING:-$(fleet_briefing)}
+# The briefing repository (queue, needs-you, screenshots), resolved here only:
+# FLEET_BRIEFING when set, else the WSL clone, else ~/fleet-briefing (Debian),
+# else the WSL path. Exported, so the Python scripts and children read it.
+# BRIEFING_WSL_DEFAULT is the path the committed brief tail names.
+BRIEFING_WSL_DEFAULT=/mnt/c/Users/ajbar/fleet-briefing
+if [[ -z ${FLEET_BRIEFING:-} ]]; then
+  FLEET_BRIEFING=${FLEET_WSL_BRIEFING:-$BRIEFING_WSL_DEFAULT}
+  [[ ! -d $FLEET_BRIEFING && -d $HOME/fleet-briefing ]] && FLEET_BRIEFING=$HOME/fleet-briefing
+fi
 export FLEET_BRIEFING
+# STDIN with the tail's briefing path replaced by FLEET_BRIEFING, as literal text.
+briefing_paths() {
+  OLD=$BRIEFING_WSL_DEFAULT NEW=$FLEET_BRIEFING awk 'BEGIN { o = ENVIRON["OLD"]; n = ENVIRON["NEW"] }
+    { s = $0; out = ""; while ((i = index(s, o)) > 0) { out = out substr(s, 1, i - 1) n; s = substr(s, i + length(o)) } print out s }'
+}
 # shellcheck disable=SC2034 # read by install.sh and doctor.sh
 HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
