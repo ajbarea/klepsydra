@@ -10,8 +10,9 @@
 # with a note: every check but the dataflow ones (SC2030, SC2031 and the like) still
 # runs, and CI runs them all. SC2086 is left out of those runs too: it reads values
 # through dataflow (ShellCheck 0.9.0 changelog), and without it flagged 73 safe
-# expansions in this tree (11-24), all of which the full check clears. Full analysis always on CI (CI or GITHUB_ACTIONS set) or
-# with FLEET_SHELLCHECK_ALL=1. Exits with shellcheck's status: no file is skipped.
+# expansions in this tree (11-24), all of which the full check clears. Full analysis
+# always on CI (CI or GITHUB_ACTIONS set) or with FLEET_SHELLCHECK_ALL=1. The exit
+# status is the checker's own: no file is skipped.
 set -uo pipefail
 
 read -r -a sc <<<"${SHELLCHECK_BIN:-uvx --from shellcheck-py shellcheck}"
@@ -20,17 +21,30 @@ need_mib=${FLEET_SHELLCHECK_NEED_MIB:-4000}
 small_need_mib=${FLEET_SHELLCHECK_SMALL_NEED_MIB:-1600}
 big_lines=${FLEET_SHELLCHECK_BIG_LINES:-3000}
 
-opts=() small=() big=()
+# Whether a short-option group (-x, -s, -xs) takes its value from the next word:
+# its first value-taking letter is its last (-sbash carries its own value).
+short_takes_next() { # GROUP
+  local g=${1#-} i
+  for (( i = 0; i < ${#g}; i++ )); do
+    case ${g:i:1} in [iefoPsSW]) (( i == ${#g} - 1 )); return ;; esac
+  done
+  return 1
+}
+
+opts=() small=() big=() ends=0
 while (( $# )); do
   f=$1; shift
-  if [[ $f == -* ]]; then
+  if (( !ends )) && [[ $f == -- ]]; then
+    ends=1
+  elif (( !ends )) && [[ $f == -?* ]]; then
     opts+=("$f")
-    # ShellCheck's options that take their value as the next word.
     case $f in
-      -[eifsSoPW] | --exclude | --include | --format | --shell | --severity | --enable | --source-path | --wiki-link-count)
+      --include | --exclude | --extended-analysis | --format | --rcfile | --enable | --source-path | --shell | --severity | --wiki-link-count)
         (( $# )) && { opts+=("$1"); shift; } ;;
+      --*) ;;
+      *) short_takes_next "$f" && (( $# )) && { opts+=("$1"); shift; } ;;
     esac
-  elif (( $(wc -l <"$f" 2>/dev/null || echo 0) > big_lines )); then
+  elif (( $( { wc -l <"$f"; } 2>/dev/null || echo 0) > big_lines )); then
     big+=("$f")
   else
     small+=("$f")
@@ -75,11 +89,14 @@ check() { # NEED FILE...: in full when the room covers NEED, else without datafl
   local need=$1 what; shift
   what=$*; (( $# > 3 )) && what="$# files"
   if (( full_room )) || { [[ $room =~ ^[0-9]+$ ]] && (( room >= need )); }; then
-    "${sc[@]}" "${opts[@]}" "$@"
+    "${sc[@]}" "${opts[@]}" -- "$@"
   else
-    printf 'note: %s checked without dataflow analysis or SC2086: %s MiB of room, under the %s MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)\n' \
-      "$what" "$room" "$need" >&2
-    "${sc[@]}" "${opts[@]}" --extended-analysis=false --exclude=SC2086 "$@"
+    local left="room unknown"
+    [[ $room =~ ^[0-9]+$ ]] && left="$room MiB of room"
+    printf 'note: %s checked without dataflow analysis or SC2086: %s, under the %s MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)\n' \
+      "$what" "$left" "$need" >&2
+    # Before the caller's options, so an explicit --extended-analysis of theirs wins.
+    "${sc[@]}" --extended-analysis=false --exclude=SC2086 "${opts[@]}" -- "$@"
   fi
 }
 

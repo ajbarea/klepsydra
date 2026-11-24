@@ -46,28 +46,29 @@ run() { # [VAR=VALUE...] -- ARGS...: the runner's output (stdout and stderr), th
     FLEET_MEMINFO="$work/meminfo-roomy" "${env[@]}" bash "$runner" "$@" 2>&1
   echo "rc=$?"
 }
+R='--extended-analysis=false --exclude=SC2086' # a reduced run's flags
 open="$work/open" # a cgroup tree with no limit anywhere
 mkdir -p "$open/$scope"; echo max >"$open/$scope/memory.max"
 
 check "small files are checked together, in full, when the room covers their need" \
-  "$(run FLEET_SHELLCHECK_SMALL_NEED_MIB=500 -- -x "$small" "$small")" "checked: -x $small $small
+  "$(run FLEET_SHELLCHECK_SMALL_NEED_MIB=500 -- -x "$small" "$small")" "checked: -x -- $small $small
 rc=0"
 out=$(run FLEET_SHELLCHECK_SMALL_NEED_MIB=1000 -- -x "$small" "$small" "$small" "$small")
 check "small files over the room are checked without dataflow too, and the note counts them" \
-  "$(grep -c '^checked: -x --extended-analysis=false ' <<<"$out") $(grep -c '^note: 4 files checked without dataflow analysis or SC2086: 556 MiB of room, under the 1000 MiB it needs' <<<"$out")" "1 1"
-check "a big file with room is checked in full" "$(run FLEET_CGROUP_ROOT="$open" -- -x "$big")" "checked: -x $big
+  "$(grep -c "^checked: $R -x -- " <<<"$out") $(grep -c '^note: 4 files checked without dataflow analysis or SC2086: 556 MiB of room, under the 1000 MiB it needs' <<<"$out")" "1 1"
+check "a big file with room is checked in full" "$(run FLEET_CGROUP_ROOT="$open" -- -x "$big")" "checked: -x -- $big
 rc=0"
 out=$(run -- -x "$big")
 check "the slice above the scope sets the room: a big file is checked without dataflow, not skipped" \
-  "$(grep -c '^checked: -x --extended-analysis=false .*big.sh$' <<<"$out") $(tail -1 <<<"$out")" "1 rc=0"
+  "$(grep -c "^checked: $R -x -- .*big.sh\$" <<<"$out") $(tail -1 <<<"$out")" "1 rc=0"
 check "and a note says so, with the room it found and how to run it all" \
   "$(grep -c '^note: .*big.sh checked without dataflow analysis or SC2086: 556 MiB of room, under the 4000 MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)$' <<<"$out")" "1"
 out=$(run FLEET_CGROUP_ROOT="$open" FLEET_MEMINFO="$work/meminfo-low" -- -x "$big")
 check "with no cgroup limit, a machine short of memory does the same" \
   "$(grep -c 'extended-analysis=false' <<<"$out") $(grep -c '1953 MiB of room' <<<"$out")" "1 1"
-check "FLEET_SHELLCHECK_ALL=1 runs it in full regardless" "$(run FLEET_SHELLCHECK_ALL=1 -- -x "$big")" "checked: -x $big
+check "FLEET_SHELLCHECK_ALL=1 runs it in full regardless" "$(run FLEET_SHELLCHECK_ALL=1 -- -x "$big")" "checked: -x -- $big
 rc=0"
-check "so does CI" "$(run CI=true -- -x "$big")" "checked: -x $big
+check "so does CI" "$(run CI=true -- -x "$big")" "checked: -x -- $big
 rc=0"
 check "small and big files each go to their own run" "$(run -- -x "$small" "$big" | grep -c '^checked:')" "2"
 cp "$small" "$work/bad.sh"
@@ -76,15 +77,23 @@ seq 1 3500 | sed 's/^/: /' >"$work/bad-big.sh"
 check "including a big file checked without dataflow" "$(run -- -x "$small" "$work/bad-big.sh" | tail -1)" "rc=1"
 
 check "a run without dataflow leaves out SC2086, which reads values through it" \
-  "$(run -- -x "$big" | grep -c '^checked: -x --extended-analysis=false --exclude=SC2086 ')" "1"
+  "$(run -- -x "$big" | grep -c "^checked: $R -x -- ")" "1"
 check "an option's value word stays with it, not read as a file" \
-  "$(run FLEET_CGROUP_ROOT="$open" -- -x -s bash -e SC2034 "$big")" "checked: -x -s bash -e SC2034 $big
+  "$(run FLEET_CGROUP_ROOT="$open" -- -x -s bash -e SC2034 "$big")" "checked: -x -s bash -e SC2034 -- $big
 rc=0"
 odd="$work/odd" # a limit partway up that cannot be read as a number
 mkdir -p "$odd/$scope"; echo max >"$odd/$scope/memory.max"; echo '?' >"$odd/user.slice/memory.max"
 out=$(run FLEET_CGROUP_ROOT="$odd" FLEET_SHELLCHECK_SMALL_NEED_MIB=1 -- -x "$small")
 check "an unreadable limit is unknown room: checked without dataflow, not in full" \
-  "$(grep -c 'extended-analysis=false' <<<"$out") $(grep -c 'unknown MiB of room' <<<"$out")" "1 1"
+  "$(grep -c 'extended-analysis=false' <<<"$out") $(grep -c 'room unknown, under' <<<"$out")" "1 1"
+check "a grouped short option takes its value word too (-xs bash)" \
+  "$(run FLEET_CGROUP_ROOT="$open" -- -xs bash "$big")" "checked: -xs bash -- $big
+rc=0"
+check "a long option's value word stays with it (--rcfile)" \
+  "$(run FLEET_CGROUP_ROOT="$open" -- --rcfile my.rc "$big")" "checked: --rcfile my.rc -- $big
+rc=0"
+check "after --, every word is a file, and the reduced flags stay before it" \
+  "$(run -- -x -- "$big" | grep -c "^checked: $R -x -- $big\$")" "1"
 check "no file at all goes to shellcheck, which reports it" "$(run -- -x)" "checked: -x
 rc=0"
 
