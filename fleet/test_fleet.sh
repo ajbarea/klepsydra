@@ -996,6 +996,7 @@ check "#531: a brief rendered for another folder is still current there (--check
 check "#531: fresh_preamble and heph_note each name FLEET_BRIEFING's queue" \
   "$(for f in 'fresh_preamble why' 'heph_note why sid heph doing'; do FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; '"$f" | grep -cF "$work/custom-briefing/queue.md"; done | paste -sd' ')" "1 1"
 # The resolver's matrix: FLEET_BRIEFING unset, the WSL clone and ~/fleet-briefing each there or not.
+# shellcheck disable=SC2016  # Inner bash -c command: $FLEET_BRIEFING expands inside the subshell.
 resolve() { env -u FLEET_BRIEFING HOME="$work/rh$2" FLEET_WSL_BRIEFING="$work/rw$1" bash -c '. "'"$here"'/lib.sh"; printf %s "$FLEET_BRIEFING"'; }
 mkdir -p "$work/rw1" "$work/rh1/fleet-briefing" "$work/rh0" 
 check "#531: unset, the WSL clone wins over ~/fleet-briefing; without it ~/fleet-briefing; with neither the WSL path" \
@@ -1003,6 +1004,7 @@ check "#531: unset, the WSL clone wins over ~/fleet-briefing; without it ~/fleet
 check "#531: a set FLEET_BRIEFING wins, even over an existing WSL clone" \
   "$(FLEET_BRIEFING=/elsewhere FLEET_WSL_BRIEFING="$work/rw1" bash -c '. "'"$here"'/lib.sh"; printf %s "$FLEET_BRIEFING"')" "/elsewhere"
 mkdir -p "$work/pybin"
+# shellcheck disable=SC2016  # Script written literally: $FLEET_BRIEFING expands at run time.
 printf '#!/bin/sh\nprintf "%%s" "$FLEET_BRIEFING"\n' >"$work/pybin/python3"; chmod +x "$work/pybin/python3"
 check "#531: fleet shots hands prune_shots.py the folder lib.sh resolves" \
   "$(env -u FLEET_BRIEFING HOME="$work/rh1" FLEET_WSL_BRIEFING="$work/rw0" PATH="$work/pybin:$PATH" bash "$here/fleet" shots)" "$work/rh1/fleet-briefing"
