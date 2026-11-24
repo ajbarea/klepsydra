@@ -40,7 +40,9 @@ case $cmd in
   send) exec bash "$here/send.sh" "$@" ;;
   voices) exec bash "$here/voices.sh" "$@" ;;
   pause | unpause) exec bash "$here/pause.sh" "$cmd" "$@" ;;
-  shots) exec python3 -I "$here/prune_shots.py" "$@" ;;
+  shots)
+    # shellcheck source=fleet/lib.sh
+    FLEET_BRIEFING=$(. "$here/lib.sh" && printf %s "$FLEET_BRIEFING") exec python3 -I "$here/prune_shots.py" "$@" ;;
   accounts)
     if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
     # shellcheck source=fleet/lib.sh
