@@ -17,7 +17,8 @@ export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_BROWSERS=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
 # The hooks' lock folder is the suite's, and recover waits for no real user
 # manager unless a case says so (#517).
-export KLEPSYDRA_STATE="$work/klepsydra-state" FLEET_SYSTEMD_BOOTED="$work/no-systemd"
+printf 'testhost\n' >"$work/hostname"
+export KLEPSYDRA_STATE="$work/klepsydra-state" KLEPSYDRA_HOSTNAME="$work/hostname" FLEET_SYSTEMD_BOOTED="$work/no-systemd"
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
@@ -1348,7 +1349,7 @@ check "#244: a hook copy older than the checkout fails, and only it is named" \
   "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
 cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 # #518: the lock folder, from the installed hook's own block.
-lkrun="$KLEPSYDRA_STATE/run-$(</proc/sys/kernel/hostname)-$(</proc/sys/kernel/random/boot_id)"
+lkrun="$KLEPSYDRA_STATE/run-testhost-$(</proc/sys/kernel/random/boot_id)"
 check "#518: a lock folder the hooks can use is ok, and named" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"
 ln -s "$KLEPSYDRA_STATE" "$work/lk-link"
 check "#518: one they cannot use fails with the reason" "$(KLEPSYDRA_STATE="$work/lk-link" doctor | grep 'lock folder' | cut -d: -f1-2)" \

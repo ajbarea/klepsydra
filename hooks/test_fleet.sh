@@ -195,11 +195,11 @@ wt="$repos/klepsydra/.claude/worktrees/fleet"
 
 # Fire one fixture event at the hook, edited by an optional jq filter, as
 # Claude Code would from the terminal held by pid 500.
-fire() { # fixture [filter] [VAR=value...]
+fire() { # fixture [filter] [VAR=value...]; FIRE_TIMEOUT=S kills the hook after S seconds
   local fixture=$1 filter=${2:-.}
   shift; (( $# )) && shift
   jq -c --arg cwd "$wt" "if .cwd then .cwd = \$cwd else . end | $filter" "$fixtures/$fixture" |
-    env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
+    ${FIRE_TIMEOUT:+timeout "$FIRE_TIMEOUT"} env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
       KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work/no-runtime" KLEPSYDRA_CAST="$work/test-cast.json" \
       KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" \
       FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= KLEPSYDRA_ASK_WATCH=0 "$@" bash "$hook"
@@ -645,6 +645,7 @@ check "#517: with HOME unset the folder is the password file's home's" \
     grep -c "^$pwhome/.local/state\(/klepsydra/run-testhost-$lb\)\?$\|^rc=1 \[\] cannot make $pwhome/.local/state/klepsydra\(/run-testhost-$lb\)\?$")" "2"
 check "#517: a relative KLEPSYDRA_STATE is refused" "$(ld KLEPSYDRA_STATE=state)" "1 "
 check "#518: and says so" "$(lw KLEPSYDRA_STATE=state)" "1 the state folder 'state' is not an absolute path"
+check "#518 review: / is refused as /" "$(lw KLEPSYDRA_STATE=/); $(lw KLEPSYDRA_STATE=//)" "1 the state folder cannot be /; 1 the state folder cannot be /"
 ln -s "$work/state" "$work/state-link"
 check "#517 N4: a symlinked state folder is refused" "$(ld KLEPSYDRA_STATE="$work/state-link")" "1 "
 check "#518: and says so" "$(lw KLEPSYDRA_STATE="$work/state-link")" "1 $work/state-link is a symlink"
@@ -712,6 +713,13 @@ if (( userns )); then
   check "#518: a read-only HOME is refused, and says so" "$(udisk ro)" "1 cannot make $work/mnt/state: Read-only file system"
   check "#518: a full disk is refused, and says so" "$(udisk nr_inodes=2)" \
     "1 cannot make $work/mnt/state/run-testhost-$lb: No space left on device"
+  # A boot folder that is there, on a file system remounted read-only.
+  mkdir -m 700 "$work/s-rofs" "$work/s-rofs/run-testhost-$lb"
+  # shellcheck disable=SC2016 # the inner shell expands its own variables
+  check "#518: a boot folder on a read-only file system is refused, and says so" \
+    "$(LC_ALL=C KLEPSYDRA_DIR="$work/ld-dir" unshare -rm bash -c 'mount --bind "$2" "$2" && mount -o remount,bind,ro "$2" || exit 9
+      source "$1" </dev/null; KLEPSYDRA_STATE=$2 lock_dir; printf "%s %s" "$?" "$LOCK_WHY"' _ "$hook" "$work/s-rofs")" \
+    "1 $work/s-rofs/run-testhost-$lb cannot be written (a read-only file system, or locked)"
 else echo "skip: no user namespace for a read-only or full tmpfs"; fi
 # Making this boot's folder removes this host's folders of boots that ended
 # (last changed before this boot began), and nothing else: never a look-alike,
@@ -741,8 +749,15 @@ printf 'not a boot id\n' >"$work/boot-bad"
 check "#517: an unreadable boot locks in run-<host>-unknown, and removes no boot's folder" \
   "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_BOOT_ID="$work/boot-bad") $([[ -d $pu/run-testhost-$(lsid 7) ]] && echo kept)" "0 $pu/run-testhost-unknown kept"
 printf 'not a host!\n' >"$work/host-bad"
-check "#518 N1: an unusable hostname locks in run-unknown-<boot>, and removes no folder" \
-  "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_HOSTNAME="$work/host-bad") $([[ -d $pu/run-unknown-$(lsid 7) ]] && echo kept)" "0 $pu/run-unknown-$lb kept"
+mkdir -m 700 "$pu/run-_-$(lsid 7)"; touch -d @1000000000 "$pu/run-_-$(lsid 7)"
+check "#518 N1: an unusable hostname locks in run-_-<boot>, and removes no folder" \
+  "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_HOSTNAME="$work/host-bad") $([[ -d $pu/run-_-$(lsid 7) ]] && echo kept)" "0 $pu/run-_-$lb kept"
+# A host really named unknown prunes its own ended boots, never the folders of
+# hosts whose names were unusable (review r3).
+printf 'unknown\n' >"$work/host-unknown"; cat /proc/sys/kernel/random/uuid >"$work/boot-u"
+check "#518 review: a host named unknown leaves the unusable hosts' folders" \
+  "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_HOSTNAME="$work/host-unknown" KLEPSYDRA_BOOT_ID="$work/boot-u" | cut -c1-2)$([[ -d $pu/run-_-$(lsid 7) ]] && echo kept)$([[ -d $pu/run-unknown-$(lsid 7) ]] || echo ' own pruned')" \
+  "0 kept own pruned"
 mkdir -m 775 "$work/s-gw"
 check "#517 review: a state folder others can write to is refused, and no boot folder made in it" \
   "$(ld KLEPSYDRA_STATE="$work/s-gw")|$(find "$work/s-gw" -mindepth 1 | wc -l)" "1 |0"
@@ -777,6 +792,13 @@ rm -f -- "$dir/lock-refused"
 ln -s "$work/p-target/x" "$dir/lock-refused"
 fire user-prompt.json ".session_id = \"$(lsid 4)\"" KLEPSYDRA_STATE="$work/s-gw" >/dev/null 2>&1
 check "#518: a symlink planted as the trace is not written through" "$(cat "$work/p-target/x")" ""
+rm -f -- "$dir/lock-refused"
+mkfifo "$dir/lock-refused"
+s=$EPOCHREALTIME
+out=$(FIRE_TIMEOUT=5 fire user-prompt.json ".session_id = \"$(lsid 4)\"" KLEPSYDRA_STATE="$work/s-gw" 2>&1); rc=$?
+e=$EPOCHREALTIME
+check "#518 review: a FIFO planted as the trace neither hangs the hook nor is written" \
+  "$rc|$out|$(( (${e/./} - ${s/./}) < 3000000 ))|$([[ -p $dir/lock-refused ]] && echo fifo)" "0||1|fifo"
 rm -f -- "$dir/lock-refused"
 # B3: an installed copy stands alone, with no fleet/lib.sh anywhere to find.
 mkdir -p "$work/solo"; cp "$hook" "$work/solo/klepsydra-fleet.sh"

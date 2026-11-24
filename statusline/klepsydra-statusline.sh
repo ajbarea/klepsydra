@@ -98,27 +98,32 @@ lock_why() { # PATH [w]: fails with LOCK_WHY set when PATH is no folder of ours 
   elif [[ ! -O $1 ]]; then LOCK_WHY="$1 belongs to another user"
   elif [[ -n ${2:-} && ! -w $1 ]]; then
     mode=$(stat -c %A -- "$1" 2>/dev/null)
-    if [[ ${mode:2:1} == w ]]; then LOCK_WHY="$1 is on a read-only file system"
+    if [[ ${mode:2:1} == w ]]; then LOCK_WHY="$1 cannot be written (a read-only file system, or locked)"
     else LOCK_WHY="$1 is not writable (mode ${mode:-unknown})"; fi
   else return 0; fi
   return 1
 }
 # shellcheck disable=SC2034 # LOCK_WHY is for the caller
 lock_dir() {
-  local base=${KLEPSYDRA_STATE:-} boot="" host="" run old name mode key val btime="" m err prune=1
+  local base=${KLEPSYDRA_STATE:-} given boot="" host="" run old name mode key val btime="" m err prune=1
   LOCK_DIR="" LOCK_WHY=""
   if [[ -z $base ]]; then
     if [[ -n ${HOME:-} ]]; then base=$HOME
     else local HOME; unset HOME; base=~; fi # bash reads the password file's home
     base=$base/.local/state/klepsydra
   fi
+  given=$base
   while [[ $base == */ ]]; do base=${base%/}; done
-  [[ $base == /* ]] || { LOCK_WHY="the state folder '$base' is not an absolute path"; return 1; }
+  if [[ $base != /* ]]; then
+    if [[ $given == /* ]]; then LOCK_WHY="the state folder cannot be /"
+    else LOCK_WHY="the state folder '$given' is not an absolute path"; fi
+    return 1
+  fi
   # builtin reads: no process
   { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null
   [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown prune=0
   { read -r host <"${KLEPSYDRA_HOSTNAME:-/proc/sys/kernel/hostname}"; } 2>/dev/null
-  [[ $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || host=unknown prune=0
+  [[ $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || host=_ prune=0 # no hostname has a _, so no host's prune reaches it
   run=$base/run-$host-$boot
   if [[ ! -e $run && ! -L $run ]]; then
     if [[ ! -e $base && ! -L $base ]]; then
