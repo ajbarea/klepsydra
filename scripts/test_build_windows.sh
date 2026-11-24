@@ -33,5 +33,11 @@ check "refuses a non-empty foreign folder" "$(verdict klepsydra-build "$work/oth
 check "accepts an existing stage" "$(verdict klepsydra-build "$work/stage")" 0
 check "accepts an empty folder" "$(verdict klepsydra-build "$work/empty")" 0
 
+# The stage copy must skip agent worktrees: 11-24 it copied 455 MB of them and failed.
+excludes=$(sed -n '/^rsync -a --delete/,/"\$repo"/p' "$(dirname "$0")/build-windows.sh")
+for path in .claude/ .git/ node_modules/ src-tauri/target/; do
+  check "stage copy excludes $path" "$(grep -cF -- "--exclude '$path'" <<<"$excludes")" 1
+done
+
 printf '%d passed, %d failed\n' "$pass" "$fail"
 ((fail == 0))
