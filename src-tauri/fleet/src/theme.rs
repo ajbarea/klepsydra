@@ -43,21 +43,25 @@ static CAST_WRITE: Mutex<()> = Mutex::new(());
 /// Whether prefs.json (`prefs`, read back after the save) holds the theme
 /// `asked` for, as opacity::confirm does: else why not, for the wall to say.
 /// The wall wears what prefs.json yields (`of`), so a refused save names that
-/// theme; a corrupt file yields the default, so asking for the default wears
-/// it but does not keep it (#484).
+/// theme. Asking for the theme the file already yields without holding it
+/// (the default, from a corrupt file) is still a refusal (#484): nothing was
+/// written, and the wall says why.
 pub fn confirm(asked: &str, prefs: Option<&Map<String, Value>>) -> Result<(), String> {
     if prefs.and_then(|p| p.get(KEY)).and_then(Value::as_str) == Some(asked) {
         return Ok(());
     }
     let worn = of(prefs);
+    let why = if prefs.is_none() {
+        "prefs.json does not read as one JSON object, so nothing is saved until it is fixed or removed"
+    } else {
+        "prefs.json could not be written"
+    };
     if worn == asked {
         Err(format!(
-            "prefs.json could not be saved, so {asked} is not kept after a restart."
+            "{why}: {asked} shows because it is the default, not because it is saved."
         ))
     } else {
-        Err(format!(
-            "prefs.json could not be saved, so the theme is still {worn}, not {asked}."
-        ))
+        Err(format!("{why}: the theme is still {worn}, not {asked}."))
     }
 }
 
@@ -176,16 +180,24 @@ mod tests {
         assert_eq!(confirm("dicebear", Some(&prefs(json!("dicebear")))), Ok(()));
         // A write that failed while prefs.json already held the choice: kept, so no error.
         assert_eq!(confirm("kourai", Some(&prefs(json!("kourai")))), Ok(()));
-        // A corrupt prefs.json (None) reads as the default kourai.
+        // A corrupt prefs.json (None) reads as the default kourai: still a refusal, saying why.
         let err = confirm("kourai", None).unwrap_err();
-        assert!(err.contains("kourai is not kept"), "{err}");
+        assert!(err.contains("does not read as one JSON object"), "{err}");
+        assert!(
+            err.contains("kourai shows because it is the default"),
+            "{err}"
+        );
         let err = confirm("dicebear", None).unwrap_err();
         assert!(err.contains("still kourai, not dicebear"), "{err}");
         // A write that failed over another saved theme names the one still worn.
         let err = confirm("dicebear", Some(&prefs(json!("professions")))).unwrap_err();
         assert!(err.contains("still professions, not dicebear"), "{err}");
+        // A readable file that the write could not change.
         let err = confirm("kourai", Some(&Map::new())).unwrap_err();
-        assert!(err.contains("kourai is not kept"), "{err}");
+        assert!(
+            err.contains("could not be written: kourai shows because it is the default"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -5175,19 +5175,19 @@ def theme_save_flushes_and_says_when_refused(wall):
     page.wait_for_timeout(SAVE_MS + 200)
     late = page.evaluate("window.__calls")[before:]
     wall.check(early == [["set_theme", {"theme": "professions"}]] and late == early, "a blur saves the waiting choice at once, and once", [early, late])
-    page.evaluate("window.__setThemeFails = 'prefs.json could not be saved, so the theme is still kourai, not dicebear.'")
+    page.evaluate("window.__setThemeFails = 'prefs.json could not be written: the theme is still kourai, not dicebear.'")
     open_gear(page)
     page.select_option("#theme", "dicebear")
     page.wait_for_timeout(SAVE_MS + 200)
     page.evaluate("window.__theme.onmessage('kourai')")
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate("[document.getElementById('theme-note').textContent, document.getElementById('theme-note').checkVisibility(), document.documentElement.dataset.theme, document.getElementById('theme').value]")
-    wall.check(got == ["Not saved: prefs.json could not be saved, so the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
+    wall.check(got == ["Not saved: prefs.json could not be written: the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
                "a refused save says why, and the wall wears the theme the app kept", got)
     logs = page.evaluate("window.__logs ?? []")
     want = {
         "level": 5,
-        "message": "set_theme refused theme dicebear: prefs.json could not be saved, so the theme is still kourai, not dicebear.",
+        "message": "set_theme refused theme dicebear: prefs.json could not be written: the theme is still kourai, not dicebear.",
         "location": "fleet/wall.js",
     }
     wall.check([{k: entry.get(k) for k in want} for entry in logs] == [want],

@@ -1190,6 +1190,9 @@ for pw in '{phone' '{"phone_wall": true} garbage' '{"phone_wall": true}{}' '[tru
   check "#328 review 1: prefs.json $pw does not read: a warning, and neither phone line is tried" \
     "$(DOC_PREFS=$pw doctor | phone_lines)" "warn phone wall"
 done
+check "#484: a prefs.json that does not read warns that settings are not kept" \
+  "$(DOC_PREFS='{"theme":' doctor | grep -c '^warn prefs: prefs.json does not read as one JSON object: theme, density')" "1"
+check "#484: a prefs.json that reads gives no prefs line" "$(DOC_PREFS='{"theme":"kourai"}' doctor | grep -c '^[a-zA-Z]* *prefs:')" "0"
 check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
 printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
 check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
@@ -4317,6 +4320,10 @@ check "#273 review: --if-changed leaves a manual keryx off alone while the mode 
   "$(fv --if-changed; jq -c .enabled "$kc") $(wc -l <"$kcalls")" "false 0"
 printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
 check "#273 review: --check names a saved mode not yet applied" "$(fv --check; echo "rc=$?")" $'heph not applied (last applied: everyone): fleet voices applies it\nrc=1'
+printf '{"theme":' >"$KLEPSYDRA_DIR/prefs.json"
+check "#484: fleet voices MODE leaves a prefs.json that does not read as it is, and fails" \
+  "$(fv off; echo "rc=$?") $(cat "$KLEPSYDRA_DIR/prefs.json")" 'rc=1 {"theme":'
+printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
 check "#273: a changed mode the tray saved applies at the next pass, other prefs kept" \
   "$(fv --if-changed) | $(jq -c '[.enabled, .speak_only]' "$kc") $(jq -r .theme "$KLEPSYDRA_DIR/prefs.json")" "voices: heph (changed: enabled speak_only) | [true,[\"$orch_rec\"]] kourai"
 check "#273: and --check then says so" "$(fv --check; echo "rc=$?")" $'applied heph\nrc=0'
