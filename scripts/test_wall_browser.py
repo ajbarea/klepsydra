@@ -5140,19 +5140,19 @@ def theme_renames_the_queue_keeper(wall):
 
 
 def refused_saves_say_so(wall):
-    """A density or + New session default that prefs.json refused says so in
-    the bar, as a refused theme does, and the next save that takes clears it
-    (#484: a corrupt prefs.json reads as the defaults, so silence looked saved)."""
+    """A density prefs.json refused says so in the bar, as a refused theme
+    does, and the next save that takes clears it (#484: a corrupt prefs.json
+    reads as the defaults, so silence looked saved)."""
     page = open_app(wall)
     density = "prefs.json could not be saved, so the density is not kept."
     page.evaluate("(m) => { window.__fails = { set_wall_density: m }; }", density)
     open_gear(page)
-    pick(page, ".density input[value=compact]")
+    pick(page, ".density label:has([value=compact])")
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
     wall.check(got == [f"Not saved: {density}", True], "a refused density save says why in the bar", got)
     page.evaluate("window.__fails = null")
-    pick(page, ".density input[value=comfortable]")
+    pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
     wall.check(got == ["", False], "the next density save that takes clears the note", got)

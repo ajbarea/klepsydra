@@ -40,20 +40,24 @@ pub const HOOK_CAST: &str = "cast.json";
 /// and renames it, so two at once would share it.
 static CAST_WRITE: Mutex<()> = Mutex::new(());
 
-/// Whether the theme `asked` for is the one prefs.json now holds (`saved`)
-/// and the write succeeded (`saved_ok`): else why not, naming both, for the
-/// wall to say rather than quietly wear the saved one again.
-pub fn confirm(asked: &str, saved: &str, saved_ok: bool) -> Result<(), String> {
-    if !saved_ok {
+/// Whether prefs.json (`prefs`, read back after the save) holds the theme
+/// `asked` for, as opacity::confirm does: else why not, for the wall to say.
+/// The wall wears what prefs.json yields (`of`), so a refused save names that
+/// theme; a corrupt file yields the default, so asking for the default wears
+/// it but does not keep it (#484).
+pub fn confirm(asked: &str, prefs: Option<&Map<String, Value>>) -> Result<(), String> {
+    if prefs.and_then(|p| p.get(KEY)).and_then(Value::as_str) == Some(asked) {
+        return Ok(());
+    }
+    let worn = of(prefs);
+    if worn == asked {
         Err(format!(
             "prefs.json could not be saved, so {asked} is not kept after a restart."
         ))
-    } else if asked != saved {
-        Err(format!(
-            "prefs.json could not be saved, so the theme is still {saved}, not {asked}."
-        ))
     } else {
-        Ok(())
+        Err(format!(
+            "prefs.json could not be saved, so the theme is still {worn}, not {asked}."
+        ))
     }
 }
 
@@ -167,12 +171,21 @@ mod tests {
 
     #[test]
     fn a_choice_not_saved_says_so() {
-        assert_eq!(confirm("dicebear", "dicebear", true), Ok(()));
-        // A corrupt prefs.json reads as the default: asking for the default is still not a save.
-        let err_corrupt = confirm("kourai", "kourai", false).unwrap_err();
-        assert!(err_corrupt.contains("kourai is not kept"), "{err_corrupt}");
-        let err = confirm("dicebear", "kourai", true).unwrap_err();
+        let prefs =
+            |v: Value| -> Map<String, Value> { [(KEY.to_string(), v)].into_iter().collect() };
+        assert_eq!(confirm("dicebear", Some(&prefs(json!("dicebear")))), Ok(()));
+        // A write that failed while prefs.json already held the choice: kept, so no error.
+        assert_eq!(confirm("kourai", Some(&prefs(json!("kourai")))), Ok(()));
+        // A corrupt prefs.json (None) reads as the default kourai.
+        let err = confirm("kourai", None).unwrap_err();
+        assert!(err.contains("kourai is not kept"), "{err}");
+        let err = confirm("dicebear", None).unwrap_err();
         assert!(err.contains("still kourai, not dicebear"), "{err}");
+        // A write that failed over another saved theme names the one still worn.
+        let err = confirm("dicebear", Some(&prefs(json!("professions")))).unwrap_err();
+        assert!(err.contains("still professions, not dicebear"), "{err}");
+        let err = confirm("kourai", Some(&Map::new())).unwrap_err();
+        assert!(err.contains("kourai is not kept"), "{err}");
     }
 
     #[test]

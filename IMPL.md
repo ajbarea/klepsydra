@@ -16,5 +16,12 @@ Push: `git push origin fix/theme-save-corrupt-prefs-484:fix/theme-save-corrupt-p
   - opacity: agy's extra branch repeated what opacity::confirm already reports; removed.
 - Tests: theme confirm, saved_or_say, browser case refused_saves_say_so.
 
+- Opus r1 reader fixes: the browser case clicked `.density input` (a span takes the click: it
+  failed every run) -> the label; theme::confirm now reads prefs.json back as opacity::confirm does
+  ("still X, not Y" when the wall wears another theme, "X is not kept" when it wears the asked one
+  unsaved, Ok when the value is already stored); set_split_mode says "not kept after a restart"
+  when the split worked but the save did not (with_save_note, tested).
+
 ## Next
-- CI (cargo test), wall browser suite locally, fresh-reader verify, merge.
+- CI (cargo clippy/test --workspace: the app crate needs glib, so CI only), browser case locally,
+  fresh-reader verify, merge.

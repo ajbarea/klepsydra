@@ -44,9 +44,9 @@ pub fn theme_subscribe(
 /// theme again. The wall logs the refusal; `write_pref` logs its cause.
 #[tauri::command]
 pub fn set_theme(app: AppHandle, theme: String) -> Result<(), String> {
-    let saved_ok = crate::write_pref(&app, theme::KEY, theme::value(&theme)?);
+    crate::write_pref(&app, theme::KEY, theme::value(&theme)?);
     publish(&app);
-    theme::confirm(&theme, saved(&app), saved_ok)
+    theme::confirm(&theme, crate::read_prefs(&app).as_ref())
 }
 
 /// Write theme `id`'s file to the data folder's `cast.json`, where the fleet
