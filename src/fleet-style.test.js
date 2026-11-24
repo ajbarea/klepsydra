@@ -113,7 +113,8 @@ test("both densities keep Open terminal, Clear and the density choices at 24x24 
   const rule = (sel) => css.match(new RegExp(`${sel.replace(/[.[\]"=]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
   const px = (decl, prop) => parseFloat(decl.match(new RegExp(`(?:^|[\\s;])${prop}:\\s*([\\d.]+)px`))?.[1] ?? "NaN");
   const buttons = rule('[data-density="compact"] .jump,\n[data-density="compact"] .clear');
-  assert.ok(px(buttons, "min-height") >= 24 && px(buttons, "min-width") >= 24, "Open terminal and Clear");
+  // min-width: max-content keeps the whole label (#505), always wider than 24 px.
+  assert.ok(px(buttons, "min-height") >= 24 && /min-width:\s*max-content/.test(buttons), "Open terminal and Clear");
   assert.ok(px(rule(".density label"), "min-height") >= 24, "a density choice");
   assert.ok(px(rule(".actions .jump, .actions .clear, .actions .undo"), "min-height") >= 24, "comfortable Open terminal, Clear and Undo");
   // The needs fill and the accent marker are the base rules', untouched by compact.

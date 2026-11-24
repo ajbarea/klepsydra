@@ -559,7 +559,7 @@ test("the wall has a New session button that calls the launcher", () => {
   assert.ok(html.indexOf("</header>", html.indexOf('<header class="bar"')) < html.indexOf('<section id="wall"'));
 
   assert.match(html, /<div class="tally" role="group" aria-label="Session counts">/);
-  assert.match(html, />Open terminal</);
+  assert.match(html, />Open<span class="jump-more"> terminal<\/span><\/button>/);
 });
 
 test("no code path ends a session except the undo window's expiry", () => {

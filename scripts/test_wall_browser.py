@@ -1591,6 +1591,35 @@ def landmarks(wall):
         page.close()
 
 
+NARROW = """() => {
+  const cw = document.documentElement.clientWidth;
+  const cards = [...document.getElementById('wall').children].filter((c) => c.checkVisibility());
+  const out = cards.flatMap((c) => [c, ...c.querySelectorAll('button, a')])
+    .filter((e) => e.checkVisibility() && e.getBoundingClientRect().right > cw + 0.5)
+    .map((e) => (e.getAttribute('aria-label') || e.className || e.tagName).toString().slice(0, 30));
+  // A label wider than its button spills out though the button's own box fits.
+  const cut = cards.flatMap((c) => [...c.querySelectorAll('button')])
+    .filter((b) => b.checkVisibility() && b.scrollWidth > b.clientWidth + 1).map((b) => b.textContent.trim().slice(0, 30));
+  return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut };
+}"""
+
+
+def narrow_window_keeps_cards_inside(wall):
+    """#505: a desktop wall window narrower than a card's 420 px minimum keeps
+    every card, and every button and link on it, inside the window, with no
+    sideways scroll; at full width the columns are as before."""
+    for width in (360, 390, 420, 450):
+        page = open_app(wall, width=width, height=900)
+        page.wait_for_timeout(1500)  # past an arrival's spring over the frame
+        got = page.evaluate(NARROW)
+        wall.check(got["cards"] > 0 and not got["wide"] and not got["out"] and not got["cut"], f"at {width} px every card, button and label fits, no sideways scroll", got)
+        page.close()
+    page = open_app(wall, width=1920, height=1000)
+    cols = page.evaluate("getComputedStyle(document.getElementById('wall')).gridTemplateColumns.split(' ').length")
+    wall.check(cols == 4, "at 1920 px the wall still has four columns", cols)
+    page.close()
+
+
 def ended_only(wall):
     """Only ended cards, at 1920x1000 and 945x1000: the empty state with a
     link that clears exactly them; a live session brings the wall back, and a
@@ -5749,6 +5778,7 @@ def main() -> int:
             gear_closes,
             new_session_menu,
             ended_only,
+            narrow_window_keeps_cards_inside,
             long_folder_fits,
             reveal_density,
             separate_notes,

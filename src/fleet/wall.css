@@ -1031,12 +1031,16 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 [data-density="compact"] .pill { position: static; grid-area: pill; align-self: center; margin-left: var(--space-3); gap: 6px; padding: 3px 8px 3px 6px; font-size: 12px; }
 [data-density="compact"] .pill .badge { width: 14px; height: 14px; }
 [data-density="compact"] .pill .age { display: none; }
+/* A window too narrow for the compact header's buttons (#505) shows "Open"; the
+   accessible name still says "Open terminal, <name>", which starts with it (WCAG 2.5.3). */
+@media (max-width: 400px) { .jump-more { display: none; } }
 [data-density="compact"] .pill .when { display: inline; }
 [data-density="compact"] .jump,
 [data-density="compact"] .clear {
   grid-area: jump;
   align-self: center;
-  min-width: 24px;
+  /* The whole label (#505): a set minimum lets the auto column shrink a button below its text. */
+  min-width: max-content;
   min-height: 28px; /* over the 24x24 minimum (WCAG 2.2, 2.5.8) */
   margin-left: var(--space-3);
   padding: 0 var(--space-4);
