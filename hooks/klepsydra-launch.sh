@@ -128,7 +128,7 @@ lock_dir() {
 # --- end lock dir ---
 lock_dir
 LOCK=${LOCK_DIR:+$LOCK_DIR/klepsydra-launch-$UID.lock}
-PROC_ROOT=/proc
+PROC_ROOT=${KLEPSYDRA_PROC:-/proc} # tests point this at a fake /proc
 # A tab opened but not yet attached: "EPOCH KEY", KEY its socket args and target.
 PENDING=${LOCK_DIR:+$LOCK_DIR/klepsydra-tab-pending-$UID}
 PENDING_FOR=30
@@ -163,11 +163,53 @@ take_lock() { # [what to say when another holds it for 10 s]
   flock -w "$wait" "$LOCKFD" || fail "${1:-Another launch is still running.}"
 }
 
+# Whether this is WSL (a Windows Terminal tab) rather than a native Linux desktop.
+# Decided once: WSL_DISTRO_NAME, or "microsoft" in the kernel release.
+IS_WSL=""
+is_wsl() {
+  if [[ -z $IS_WSL ]]; then
+    local osrelease=""
+    if [[ -n ${WSL_DISTRO_NAME:-} ]]; then IS_WSL=1
+    elif proc_osrelease && [[ $osrelease == *[Mm]icrosoft* ]]; then IS_WSL=1
+    else IS_WSL=0; fi
+  fi
+  [[ $IS_WSL == 1 ]]
+}
+
+# The terminal for a native Linux tab: KLEPSYDRA_TERMINAL when set (and then
+# only it, so a typo is an error, not a silent other terminal), else the first
+# of the usual emulators on PATH.
+find_linux_terminal() {
+  local term
+  if [[ -n ${KLEPSYDRA_TERMINAL:-} ]]; then
+    command -v "$KLEPSYDRA_TERMINAL" >/dev/null 2>&1 || return 1
+    printf '%s' "$KLEPSYDRA_TERMINAL"
+    return 0
+  fi
+  for term in xfce4-terminal gnome-terminal konsole kitty alacritty x-terminal-emulator xterm; do
+    command -v "$term" >/dev/null 2>&1 && { printf '%s' "$term"; return 0; }
+  done
+  return 1
+}
+
+# Why find_linux_terminal found none: KLEPSYDRA_TERMINAL by name when it is set.
+no_terminal() {
+  if [[ -n ${KLEPSYDRA_TERMINAL:-} ]]; then
+    printf 'KLEPSYDRA_TERMINAL is %s, which is not a command that can be run.' "$KLEPSYDRA_TERMINAL"
+  else
+    printf 'No terminal emulator found (e.g. xfce4-terminal, gnome-terminal, x-terminal-emulator, xterm).'
+  fi
+}
+
 # Check a tab can be opened, before anything is created.
 tab_preflight() {
-  need "$WT" "wt.exe was not found, so no terminal tab could be opened."
-  [[ ${WSL_DISTRO_NAME:-} =~ ^[A-Za-z0-9._-]{1,64}$ ]] ||
-    fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+  if is_wsl; then
+    need "$WT" "wt.exe was not found, so no terminal tab could be opened."
+    [[ ${WSL_DISTRO_NAME:-} =~ ^[A-Za-z0-9._-]{1,64}$ ]] ||
+      fail "WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+  else
+    find_linux_terminal >/dev/null || fail "$(no_terminal)"
+  fi
 }
 
 # Set for the fleet's own tab: its title is fixed, so Jump can find it.
@@ -196,17 +238,35 @@ tab_pending() { # key
 # its client so the next launch sees it; ATTACHED says whether it came. If
 # wt.exe fails, run undo.
 open_tab() { # target tmux-socket-args...
-  local target=$1 key; shift
+  local target=$1 key termpid="" term=""; shift
   key="$* $target"
   ATTACHED=0
   tab_pending "$key" && return 0
-  # The lock fd is closed for wt.exe so a tab never outlives the lock; its
-  # stdin is /dev/null, since WSL interop hands stdin to wt.exe, which drains it (#242).
-  "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
-    </dev/null >/dev/null 2>&1 {LOCKFD}>&- || {
-    undo
-    fail "Windows Terminal did not open a tab."
-  }
+  if is_wsl; then
+    # The lock fd is closed for wt.exe so a tab never outlives the lock; its
+    # stdin is /dev/null, since WSL interop hands stdin to wt.exe, which drains it (#242).
+    "$WT" -w fleet new-tab "${TITLE_ARGS[@]}" wsl.exe -d "$WSL_DISTRO_NAME" -e tmux "$@" attach -t "$target" \
+      </dev/null >/dev/null 2>&1 {LOCKFD}>&- || {
+      undo
+      fail "Windows Terminal did not open a tab."
+    }
+  else
+    # The terminal is started in the background (it stays up as the tab), so a
+    # failed start shows only as its exit: the wait below reads it. Its lock fd is
+    # closed so a tab never outlives the lock.
+    local title="${TITLE_ARGS[1]:-$TAB_TITLE}"
+    local -a termcmd
+    term=$(find_linux_terminal) || { undo; fail "$(no_terminal)"; }
+    case ${term##*/} in
+      xfce4-terminal) termcmd=("$term" --disable-server -T "$title" -x) ;;
+      gnome-terminal) termcmd=("$term" --tab --title="$title" --) ;;
+      konsole) termcmd=("$term" --new-tab -p tabtitle="$title" -e) ;;
+      kitty) termcmd=("$term" -T "$title") ;;
+      *) termcmd=("$term" -T "$title" -e) ;; # alacritty, x-terminal-emulator, xterm
+    esac
+    "${termcmd[@]}" tmux "$@" attach -t "$target" </dev/null >/dev/null 2>&1 {LOCKFD}>&- &
+    termpid=$!
+  fi
   if [[ ! -e $PENDING && ! -L $PENDING ]] || stamp_usable; then
     { printf '%(%s)T %s\n' -1 "$key" >"$PENDING"; } 2>/dev/null
   fi
@@ -216,6 +276,13 @@ open_tab() { # target tmux-socket-args...
       ATTACHED=1
       rm -f -- "$PENDING"
       return 0
+    fi
+    # A terminal that exited non-zero never opened a tab; one that exited 0 handed
+    # the tab to its server (gnome-terminal) and may still attach.
+    if [[ -n $termpid ]] && ! kill -0 "$termpid" 2>/dev/null && ! wait "$termpid"; then
+      rm -f -- "$PENDING"
+      undo
+      fail "$term did not open a tab."
     fi
     sleep 0.1
   done
@@ -562,6 +629,14 @@ proc_is() { # pid start
   [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
   proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
 }
+
+# The kernel's release string ("...microsoft-standard-WSL2" under WSL), into the
+# caller's `osrelease`; fails when it cannot be read.
+proc_osrelease() {
+  osrelease=""
+  { IFS= read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+  [[ -n $osrelease ]]
+}
 # --- end proc stat ---
 
 # Whether PID is alive with start time START and `ancestor` is PID or its ancestor.
@@ -599,6 +674,48 @@ check_pane() { # socket pane pid start
     fail "That session's tmux pane now belongs to another session."
 }
 
+# The top-level window of process `pid` that the window manager manages: the
+# one with WM_STATE, which a minimized window keeps (xfwm4 unmaps it, so a
+# visible-only search misses it, and an unmanaged leader window takes
+# windowactivate with exit 0). Without xprop, or when no window of it reports
+# WM_STATE (a window manager that sets none), the visible window alone.
+managed_window() { # pid
+  local wid
+  if command -v xprop >/dev/null 2>&1; then
+    while read -r wid; do
+      [[ $wid =~ ^[0-9]+$ ]] || continue
+      if xprop -id "$wid" WM_STATE 2>/dev/null | grep -Eq 'window state: (Normal|Iconic)'; then
+        printf '%s' "$wid"
+        return 0
+      fi
+    done < <(xdotool search --pid "$1" 2>/dev/null)
+  fi
+  wid=$(xdotool search --onlyvisible --pid "$1" 2>/dev/null | head -n1)
+  [[ -n $wid ]] && printf '%s' "$wid"
+}
+
+# On a native Linux desktop, raise the terminal window that shows `session`,
+# restoring it when minimized: the window of the first ancestor of its tmux
+# client that owns one (the fleet's tab and a hand-started tmux alike). Best
+# effort: Wayland and a missing xdotool leave the window where it is, as WSL does.
+raise_window() { # session tmux-socket-args...
+  is_wsl && return 0
+  command -v xdotool >/dev/null 2>&1 || return 0
+  local session=$1 cpid pid wid _; shift
+  local -a stat=()
+  while read -r cpid; do
+    pid=$cpid
+    for _ in $(seq 10); do
+      [[ $pid =~ ^[1-9][0-9]*$ ]] || break
+      wid=$(managed_window "$pid")
+      if [[ -n $wid ]]; then xdotool windowactivate "$wid" >/dev/null 2>&1; return 0; fi
+      proc_stat "$pid" || break
+      pid=${stat[1]}
+    done
+  done < <(tmux "$@" list-clients -t "=$session" -F '#{client_pid}' 2>/dev/null)
+  return 0
+}
+
 jump() { # socket pane pid start
   local socket=$1 pane=$2 session
   local -a t=()
@@ -606,7 +723,11 @@ jump() { # socket pane pid start
   { tmux "${t[@]}" select-window -t "$pane" && tmux "${t[@]}" select-pane -t "$pane"; } 2>/dev/null ||
     fail "tmux could not select the window."
   # An attached tab needs no lock; one missing is checked again under it.
-  has_client "=$session" "${t[@]}" && { printf "Selected the session's tmux window.\n"; return 0; }
+  if has_client "=$session" "${t[@]}"; then
+    raise_window "$session" "${t[@]}"
+    printf "Selected the session's tmux window.\n"
+    return 0
+  fi
   no_lock_dir "Selected the session's tmux window" "no terminal tab opened for it"
   take_lock "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
   if ! has_client "=$session" "${t[@]}"; then
@@ -775,6 +896,41 @@ voices() {
   "$fleet" voices || fail "fleet voices failed; see fleet log."
 }
 
+# Hand `target` (a folder or an https GitHub URL) to the desktop. On WSL that is
+# Explorer (it exits 1 even when it opened the target); natively xdg-open, which
+# must exist and, if it fails at once, fails the call. One still running after
+# 2 s is a handler that stays up (a browser) and counts as opened.
+open_on_desktop() { # target
+  if is_wsl; then
+    explorer.exe "$1" 2>/dev/null || true
+    return 0
+  fi
+  need xdg-open "xdg-open was not found, so nothing could be opened."
+  local pid _
+  xdg-open "$1" </dev/null >/dev/null 2>&1 &
+  pid=$!
+  for _ in $(seq 20); do
+    kill -0 "$pid" 2>/dev/null || { wait "$pid" || fail "xdg-open could not open it."; return 0; }
+    sleep 0.1
+  done
+}
+
+folder() { # dir
+  local dir=$1
+  # shellcheck disable=SC2088 # a literal ~/ from the overlay
+  case $dir in
+    "~") dir=$HOME ;;
+    "~/"*) dir=$HOME/${dir#"~/"} ;;
+  esac
+  [[ -d $dir ]] || fail "The folder $dir does not exist."
+  open_on_desktop "$dir"
+}
+
+github() { # url
+  [[ $1 == https://github.com/* ]] || fail "That is not a GitHub URL."
+  open_on_desktop "$1"
+}
+
 case ${1:-} in
   new)
     if (( $# == 4 )) && [[ $3 == agy ]]; then new "$2" agy "$4"
@@ -784,6 +940,8 @@ case ${1:-} in
   models) (( $# == 1 )) || fail "usage: klepsydra-launch.sh models"; models ;;
   engines) (( $# == 1 )) || fail "usage: klepsydra-launch.sh engines"; engines ;;
   voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
+  folder) (( $# == 2 )) || fail "usage: klepsydra-launch.sh folder DIR"; folder "$2" ;;
+  github) (( $# == 2 )) || fail "usage: klepsydra-launch.sh github URL"; github "$2" ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;

@@ -5,15 +5,17 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::Duration;
-#[cfg(any(windows, test))]
 use std::time::Instant;
 
 use serde_json::Value;
 use tauri::Manager;
 
-/// The only program klepsydra starts.
+/// The only program klepsydra starts on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const WSL_EXE: &str = r"C:\Windows\System32\wsl.exe";
+/// The shell used on Linux to run scripts.
+#[cfg_attr(windows, allow(dead_code))]
+pub const LINUX_EXE: &str = "/bin/bash";
 /// The launcher, relative to the WSL home (`--cd ~`).
 const SCRIPT: &str = ".claude/klepsydra-launch.sh";
 /// Longest wait for wsl.exe to finish: a cold WSL start alone can take 20 s.
@@ -27,7 +29,6 @@ const VOICES_TIMEOUT: Duration = Duration::from_secs(300);
 const JUMP_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long the output is still read once wsl.exe exits; a process it left
 /// behind holding the pipe open cannot keep the call running past this.
-#[cfg(windows)]
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Set while a New session runs; another meanwhile is refused.
@@ -57,12 +58,12 @@ pub const FLEET_TAB: &str = "klepsydra sessions";
 pub const FLEET_SOCKET: &str = "klepsydra";
 
 /// A session's tmux pane, the Claude process that must still be in it, and the
-/// distro they run in. `start` is `/proc/<pid>/stat` field 22.
+/// distro they run in (none on native Linux). `start` is `/proc/<pid>/stat` field 22.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub socket: String,
     pub pane: String,
-    pub distro: String,
+    pub distro: Option<String>,
     pub pid: u32,
     pub start: u64,
 }
@@ -71,6 +72,32 @@ fn distro_ok(d: &str) -> bool {
     (1..=64).contains(&d.len())
         && d.chars()
             .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
+/// Whether this build runs the launcher itself rather than through wsl.exe.
+/// The wall gets it with each snapshot (fleet.rs `for_wall`).
+pub const NATIVE: bool = cfg!(not(windows));
+
+/// Session `s`'s distro as its record has it, on a native Linux build
+/// (`native`) or through wsl.exe: the inner None on native Linux, which has
+/// no WSL_DISTRO_NAME; the outer None through wsl.exe, where a record without
+/// one names no session klepsydra can reach. The wall's `paneKnown` (end.js)
+/// judges the same way.
+pub fn session_distro(s: &Value, native: bool) -> Option<Option<String>> {
+    let distro = s.get("distro").and_then(Value::as_str).map(String::from);
+    (distro.is_some() || native).then_some(distro)
+}
+
+/// wsl.exe's `-d DISTRO` for a session's `distro`, the one check every call
+/// on a session's behalf makes. Through wsl.exe a plain name is required; on
+/// native Linux (`native`) a record has none, and the words are dropped.
+/// None when the distro cannot be used.
+fn distro_words(distro: Option<&str>, native: bool) -> Option<Vec<String>> {
+    match distro {
+        Some(d) if distro_ok(d) => Some(vec!["-d".into(), d.into()]),
+        None if native => Some(Vec::new()),
+        _ => None,
+    }
 }
 
 /// An agy model id as `agy models` names them (#323): the launcher checks it
@@ -172,29 +199,31 @@ impl PaneVerb {
 /// wsl.exe's arguments to do `verb` to `t`'s tmux pane. Only Jump reaches a
 /// tmux started by hand; klepsydra types into its own server's panes alone.
 pub fn pane_args(t: &Target, verb: PaneVerb) -> Result<Vec<String>, String> {
-    if !(distro_ok(&t.distro) && socket_ok(&t.socket) && pane_ok(&t.pane) && t.pid != 0) {
+    let distro = distro_words(t.distro.as_deref(), NATIVE);
+    let Some(mut args) = distro.filter(|_| socket_ok(&t.socket) && pane_ok(&t.pane) && t.pid != 0)
+    else {
         return Err("This session's tmux pane cannot be named safely.".into());
-    }
+    };
     if verb != PaneVerb::Jump && !is_fleet(t) {
         return Err(NOT_FLEET.into());
     }
     let (pid, start) = (t.pid.to_string(), t.start.to_string());
-    Ok([
-        "-d",
-        &t.distro,
-        "--cd",
-        "~",
-        "-e",
-        "bash",
-        SCRIPT,
-        verb.word(),
-        &t.socket,
-        &t.pane,
-        &pid,
-        &start,
-    ]
-    .map(String::from)
-    .to_vec())
+    args.extend(
+        [
+            "--cd",
+            "~",
+            "-e",
+            "bash",
+            SCRIPT,
+            verb.word(),
+            &t.socket,
+            &t.pane,
+            &pid,
+            &start,
+        ]
+        .map(String::from),
+    );
+    Ok(args)
 }
 
 /// Why End and Interrupt refuse a session outside the launcher's tmux; the
@@ -210,13 +239,21 @@ pub fn is_fleet(t: &Target) -> bool {
 
 /// Session `id`'s tmux pane, Claude process and distro from a published snapshot.
 pub fn target(snapshot: &Value, id: &str) -> Option<Target> {
+    target_on(snapshot, id, NATIVE)
+}
+
+/// `target` on a native Linux build (`native`) or through wsl.exe, where a
+/// session without its distro has no pane klepsydra can reach and is found by
+/// its tab instead.
+fn target_on(snapshot: &Value, id: &str, native: bool) -> Option<Target> {
     let s = klepsydra_fleet::lookup::session(snapshot, id)?;
     let tmux = s.get("tmux")?;
     let claude = s.get("claude")?;
+    let distro = session_distro(s, native)?;
     Some(Target {
         socket: tmux.get("socket")?.as_str()?.into(),
         pane: tmux.get("pane")?.as_str()?.into(),
-        distro: s.get("distro")?.as_str()?.into(),
+        distro,
         pid: u32::try_from(claude.get("pid")?.as_u64()?).ok()?,
         start: claude.get("start")?.as_u64()?,
     })
@@ -294,7 +331,6 @@ const PANE_BUSY: &str = "That session is already being ended or interrupted.";
 pub const JUMP_BUSY: &str = "That session is already being brought forward.";
 
 /// wsl.exe writes its own messages as UTF-16LE and the Linux side's as UTF-8.
-#[cfg(any(windows, test))]
 fn decode(b: &[u8]) -> String {
     let utf16 =
         b.len() >= 2 && b.len().is_multiple_of(2) && b.iter().skip(1).step_by(2).all(|&x| x == 0);
@@ -312,7 +348,6 @@ fn decode(b: &[u8]) -> String {
 }
 
 /// The last non-blank line of `text`.
-#[cfg(any(windows, test))]
 fn last_line(text: &str) -> String {
     text.lines()
         .map(str::trim)
@@ -322,23 +357,19 @@ fn last_line(text: &str) -> String {
 }
 
 /// The last non-blank line, capped at 200 characters for error messages.
-#[cfg(any(windows, test))]
 fn error_line(text: &str) -> String {
     last_line(text).chars().take(200).collect()
 }
 
 /// Most output kept from each stream.
-#[cfg(any(windows, test))]
 const KEEP: usize = 64 * 1024;
 
 /// A stream being read on its own thread.
-#[cfg(any(windows, test))]
 struct Drain {
     kept: std::sync::Arc<Mutex<Vec<u8>>>,
     done: std::sync::mpsc::Receiver<()>,
 }
 
-#[cfg(any(windows, test))]
 impl Drain {
     /// What was read, once the stream ends or at `deadline`, whichever is
     /// first; a stream still open then is left to its thread.
@@ -353,7 +384,6 @@ impl Drain {
 
 /// Read `r` to its end on a thread, keeping the last `KEEP` bytes, so a full
 /// pipe never stalls the child.
-#[cfg(any(windows, test))]
 fn drain<R: std::io::Read + Send + 'static>(mut r: R) -> Drain {
     let kept = std::sync::Arc::new(Mutex::new(Vec::new()));
     let (tx, done) = std::sync::mpsc::channel();
@@ -460,7 +490,7 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let mut child = Command::new(WSL_EXE)
+    let child = Command::new(WSL_EXE)
         .args(args)
         .env("WSL_UTF8", "1")
         .creation_flags(CREATE_NO_WINDOW)
@@ -469,8 +499,29 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Could not start {WSL_EXE}: {e}"))?;
-    let out = drain(child.stdout.take().ok_or("wsl.exe gave no stdout.")?);
-    let err = drain(child.stderr.take().ok_or("wsl.exe gave no stderr.")?);
+    wait_child(child, "wsl.exe", wait, timed_out)
+}
+
+/// Wait for `child`, started with piped output, at most `wait`; its last
+/// stdout line, or on failure its last stderr line, in the card's words.
+fn wait_child(
+    mut child: std::process::Child,
+    name: &str,
+    wait: Duration,
+    timed_out: fn() -> String,
+) -> Result<String, String> {
+    let out = drain(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("{name} gave no stdout."))?,
+    );
+    let err = drain(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| format!("{name} gave no stderr."))?,
+    );
     let deadline = Instant::now() + wait;
     let status = loop {
         match child.try_wait() {
@@ -491,7 +542,7 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
     } else if stderr.is_empty() {
         let err = error_line(&stdout_raw);
         Err(if err.is_empty() {
-            format!("wsl.exe exited with {status}.")
+            format!("{name} exited with {status}.")
         } else {
             err
         })
@@ -500,9 +551,83 @@ fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<Str
     }
 }
 
+/// The launcher's path on Linux: `$HOME/.claude/klepsydra-launch.sh`. An unset,
+/// empty or relative HOME is refused, so the script is never looked up from
+/// the working directory.
+#[cfg(any(not(windows), test))]
+fn linux_script(home: Option<&str>) -> Result<String, String> {
+    match home {
+        Some(h) if h.starts_with('/') => Ok(format!("{}/{SCRIPT}", h.trim_end_matches('/'))),
+        _ => Err("HOME is not set to a folder, so the launcher cannot be found.".into()),
+    }
+}
+
+/// bash's arguments on Linux for a launcher call given as wsl.exe's: the
+/// words after the script are the launcher's own (`new DIR`, `jump ...`), and
+/// `-l` stays where wsl.exe's `bash -l` had it.
+#[cfg(any(not(windows), test))]
+fn linux_argv(home: Option<&str>, args: &[String]) -> Result<Vec<String>, String> {
+    let script = linux_script(home)?;
+    let at = args
+        .iter()
+        .position(|a| a == SCRIPT)
+        .ok_or("That is not a launcher call.")?;
+    let mut argv: Vec<String> = Vec::new();
+    if at > 0 && args[at - 1] == "-l" {
+        argv.push("-l".into());
+    }
+    argv.push(script);
+    argv.extend(args[at + 1..].iter().cloned());
+    Ok(argv)
+}
+
+/// bash's arguments on Linux to hand `target` (a folder or a GitHub URL) to
+/// the desktop through the launcher's `folder` or `github` verb.
+#[cfg(any(not(windows), test))]
+fn linux_open_argv(home: Option<&str>, verb: &str, target: &str) -> Result<Vec<String>, String> {
+    Ok(vec![linux_script(home)?, verb.into(), target.into()])
+}
+
 #[cfg(not(windows))]
-fn run(_args: &[String], _wait: Duration, _timed_out: fn() -> String) -> Result<String, String> {
-    Err("Starting a session works on Windows only.".into())
+fn run_linux(argv: &[String], wait: Duration, timed_out: fn() -> String) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+    let child = Command::new(LINUX_EXE)
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not start {LINUX_EXE}: {e}"))?;
+    wait_child(child, "The launcher", wait, timed_out)
+}
+
+#[cfg(not(windows))]
+fn run(args: &[String], wait: Duration, timed_out: fn() -> String) -> Result<String, String> {
+    let argv = linux_argv(std::env::var("HOME").ok().as_deref(), args)?;
+    run_linux(&argv, wait, timed_out)
+}
+
+/// Show `target` on the desktop: a folder (`verb` "folder") or a GitHub page
+/// ("github"). `wsl` is the same call as wsl.exe's arguments, which end in
+/// explorer.exe; that exits 1 even when it opened the target.
+fn run_open(
+    verb: &str,
+    target: &str,
+    wsl: &[String],
+    wait: Duration,
+    timed_out: fn() -> String,
+) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let _ = (verb, target);
+        explorer_opened(run(wsl, wait, timed_out))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = wsl;
+        let argv = linux_open_argv(std::env::var("HOME").ok().as_deref(), verb, target)?;
+        run_linux(&argv, wait, timed_out)
+    }
 }
 
 /// Bring session `id`'s tmux window, `t`, to the front of its tmux session.
@@ -547,28 +672,18 @@ async fn to_pane(app: tauri::AppHandle, id: String, verb: PaneVerb) -> Result<St
 /// the login PATH (wsl.exe -e looks only on its relay's, without /mnt/c) and
 /// fails (125) on a folder that is gone, where --cd would fall back to /.
 /// Only the folder, one argument, comes from the session's record.
-pub fn folder_args(dir: &str, distro: &str) -> Result<Vec<String>, String> {
-    if !(distro_ok(distro) && crate::folder::plain_dir(dir)) {
+pub fn folder_args(dir: &str, distro: Option<&str>) -> Result<Vec<String>, String> {
+    let Some(mut args) = distro_words(distro, NATIVE).filter(|_| crate::folder::plain_dir(dir))
+    else {
         return Err("This session's folder cannot be named safely.".into());
-    }
-    Ok([
-        "-d",
-        distro,
-        "--cd",
-        "/",
-        "-e",
-        "env",
-        "-C",
-        dir,
-        "explorer.exe",
-        ".",
-    ]
-    .map(String::from)
-    .to_vec())
+    };
+    args.extend(["--cd", "/", "-e", "env", "-C", dir, "explorer.exe", "."].map(String::from));
+    Ok(args)
 }
 
 /// explorer.exe exits 1 even when it opened the folder: that status, with
 /// nothing on stderr, is its success.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn explorer_opened(said: Result<String, String>) -> Result<String, String> {
     match said {
         Err(e) if e == "wsl.exe exited with exit code: 1." => Ok(String::new()),
@@ -576,19 +691,40 @@ fn explorer_opened(said: Result<String, String>) -> Result<String, String> {
     }
 }
 
+const NO_FOLDER: &str = "klepsydra does not know this session's folder.";
+const NO_PAGE: &str = "klepsydra does not know this session's GitHub page.";
+
+/// Session `id`'s folder in `snapshot` and the arguments that open it, as
+/// this build reaches it.
+fn folder_request(snapshot: &Value, id: &str) -> Result<(String, Vec<String>), String> {
+    let (dir, distro) = crate::folder::folder_of(snapshot, id, NATIVE).ok_or(NO_FOLDER)?;
+    let args = folder_args(&dir, distro.as_deref())?;
+    Ok((dir, args))
+}
+
+/// Session `id`'s GitHub page in `snapshot`, or with `branch` its branch's,
+/// and the arguments that open it, as this build reaches it.
+fn github_request(
+    snapshot: &Value,
+    id: &str,
+    branch: bool,
+) -> Result<(String, Vec<String>), String> {
+    let (url, distro) = crate::folder::github_of(snapshot, id, branch, NATIVE).ok_or(NO_PAGE)?;
+    let args = github_args(&url, distro.as_deref())?;
+    Ok((url, args))
+}
+
 /// Show session `id`'s work folder in the file manager (#149).
 #[tauri::command]
 pub async fn open_folder(app: tauri::AppHandle, id: String) -> Result<String, String> {
-    let (dir, distro) = app
+    let (dir, args) = app
         .state::<crate::fleet::Fleet>()
-        .with_latest(|v| crate::folder::folder_of(v, &id))
-        .flatten()
-        .ok_or("klepsydra does not know this session's folder.")?;
-    let args = folder_args(&dir, &distro)?;
+        .with_latest(|v| folder_request(v, &id))
+        .unwrap_or_else(|| Err(NO_FOLDER.into()))?;
     let shown = dir.rsplit('/').next().unwrap_or(&dir).to_string();
     tauri::async_runtime::spawn_blocking(move || {
         logged("open folder", Some(&id), || {
-            explorer_opened(run(&args, JUMP_TIMEOUT, jump_timed_out))
+            run_open("folder", &dir, &args, JUMP_TIMEOUT, jump_timed_out)
         })
     })
     .await
@@ -599,7 +735,7 @@ pub async fn open_folder(app: tauri::AppHandle, id: String) -> Result<String, St
 /// wsl.exe's arguments that hand GitHub page `url` to Windows, whose
 /// explorer.exe opens a URL in the default browser. Only an https
 /// github.com address of plain and percent-encoded characters is passed.
-pub fn github_args(url: &str, distro: &str) -> Result<Vec<String>, String> {
+pub fn github_args(url: &str, distro: Option<&str>) -> Result<Vec<String>, String> {
     let plain = url.len() <= 600
         && url.strip_prefix("https://github.com/").is_some_and(|rest| {
             !rest.is_empty()
@@ -607,14 +743,11 @@ pub fn github_args(url: &str, distro: &str) -> Result<Vec<String>, String> {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"-._~%/!*'()".contains(&b))
         });
-    if !(distro_ok(distro) && plain) {
+    let Some(mut args) = distro_words(distro, NATIVE).filter(|_| plain) else {
         return Err("This session's GitHub page cannot be named safely.".into());
-    }
-    Ok(
-        ["-d", distro, "--cd", "/", "-e", "env", "explorer.exe", url]
-            .map(String::from)
-            .to_vec(),
-    )
+    };
+    args.extend(["--cd", "/", "-e", "env", "explorer.exe", url].map(String::from));
+    Ok(args)
 }
 
 /// Open session `id`'s GitHub page, or with `branch` its branch's page, in
@@ -625,15 +758,13 @@ pub async fn open_github(
     id: String,
     branch: bool,
 ) -> Result<String, String> {
-    let (url, distro) = app
+    let (url, args) = app
         .state::<crate::fleet::Fleet>()
-        .with_latest(|v| crate::folder::github_of(v, &id, branch))
-        .flatten()
-        .ok_or("klepsydra does not know this session's GitHub page.")?;
-    let args = github_args(&url, &distro)?;
+        .with_latest(|v| github_request(v, &id, branch))
+        .unwrap_or_else(|| Err(NO_PAGE.into()))?;
     tauri::async_runtime::spawn_blocking(move || {
         logged("open github", Some(&id), || {
-            explorer_opened(run(&args, JUMP_TIMEOUT, jump_timed_out))
+            run_open("github", &url, &args, JUMP_TIMEOUT, jump_timed_out)
         })
     })
     .await
@@ -1118,6 +1249,101 @@ mod tests {
     use serde_json::json;
     use std::time::Instant;
 
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn linux_runs_the_launcher_by_the_home_path_with_its_own_words() {
+        let home = Some("/home/aj");
+        let new = new_args("~/my repos;x", Some("Ubuntu")).unwrap();
+        assert_eq!(
+            linux_argv(home, &new).unwrap(),
+            s(&[
+                "-l",
+                "/home/aj/.claude/klepsydra-launch.sh",
+                "new",
+                "~/my repos;x"
+            ])
+        );
+        assert_eq!(
+            linux_argv(home, &voices_args()).unwrap(),
+            s(&["-l", "/home/aj/.claude/klepsydra-launch.sh", "voices"])
+        );
+        let ok = Target {
+            distro: Some("Ubuntu".into()),
+            socket: "/tmp/tmux-1001/klepsydra".into(),
+            pane: "%3".into(),
+            pid: 42,
+            start: 7,
+        };
+        assert_eq!(
+            linux_argv(home, &pane_args(&ok, PaneVerb::Jump).unwrap()).unwrap(),
+            s(&[
+                "/home/aj/.claude/klepsydra-launch.sh",
+                "jump",
+                "/tmp/tmux-1001/klepsydra",
+                "%3",
+                "42",
+                "7"
+            ])
+        );
+        assert_eq!(
+            linux_argv(Some("/home/aj/"), &models_args(None)).unwrap(),
+            s(&["-l", "/home/aj/.claude/klepsydra-launch.sh", "models"])
+        );
+    }
+
+    #[test]
+    fn linux_refuses_a_home_it_cannot_trust_and_a_call_that_is_not_the_launcher() {
+        let args = voices_args();
+        for home in [None, Some(""), Some("."), Some("home/aj")] {
+            assert!(linux_argv(home, &args).is_err(), "{home:?}");
+            assert!(linux_open_argv(home, "folder", "/x").is_err(), "{home:?}");
+        }
+        assert!(linux_argv(Some("/home/aj"), &s(&["-e", "explorer.exe", "."])).is_err());
+    }
+
+    #[test]
+    fn linux_hands_a_folder_or_a_page_to_the_launcher_as_one_argument() {
+        assert_eq!(
+            linux_open_argv(Some("/home/aj"), "folder", "/home/aj/my repos").unwrap(),
+            s(&[
+                "/home/aj/.claude/klepsydra-launch.sh",
+                "folder",
+                "/home/aj/my repos"
+            ])
+        );
+        assert_eq!(
+            linux_open_argv(Some("/home/aj"), "github", "https://github.com/a/b").unwrap(),
+            s(&[
+                "/home/aj/.claude/klepsydra-launch.sh",
+                "github",
+                "https://github.com/a/b"
+            ])
+        );
+    }
+
+    /// The Linux spawn itself (wait_child under /bin/bash): its last stdout
+    /// line on success, its stderr on failure, the timeout line past `wait`.
+    #[cfg(unix)]
+    #[test]
+    fn linux_run_reports_the_launchers_line_its_failure_and_a_timeout() {
+        let dir = std::env::temp_dir().join(format!("klepsydra-run-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("l.sh");
+        let body = "case $1 in ok) echo noise; echo fine;; bad) echo why >&2; exit 1;; slow) sleep 5;; esac\n";
+        std::fs::write(&script, body).unwrap();
+        let go = |word: &str, wait: u64| {
+            let argv = [script.display().to_string(), word.to_string()];
+            run_linux(&argv, Duration::from_secs(wait), timed_out)
+        };
+        assert_eq!(go("ok", 5), Ok("fine".to_string()));
+        assert_eq!(go("bad", 5), Err("why".to_string()));
+        assert_eq!(go("slow", 1), Err(timed_out()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn new_args_pass_the_folder_as_one_argument() {
         let a = new_args("~/my repos;x", None).unwrap();
@@ -1396,7 +1622,7 @@ mod tests {
         let ok = Target {
             socket: "/tmp/tmux-1001/klepsydra".into(),
             pane: "%3".into(),
-            distro: "Ubuntu".into(),
+            distro: Some("Ubuntu".into()),
             pid: 2231,
             start: 8_717_628,
         };
@@ -1429,7 +1655,11 @@ mod tests {
                 ..ok.clone()
             },
             Target {
-                distro: "a;b".into(),
+                distro: Some("a;b".into()),
+                ..ok.clone()
+            },
+            Target {
+                distro: Some("".into()),
                 ..ok.clone()
             },
             Target {
@@ -1448,7 +1678,7 @@ mod tests {
         let fleet = Target {
             socket: "/tmp/tmux-1001/klepsydra".into(),
             pane: "%3".into(),
-            distro: "Ubuntu".into(),
+            distro: Some("Ubuntu".into()),
             pid: 2231,
             start: 8_717_628,
         };
@@ -1479,7 +1709,7 @@ mod tests {
         let t = |socket: &str| Target {
             socket: socket.into(),
             pane: "%1".into(),
-            distro: "Ubuntu".into(),
+            distro: Some("Ubuntu".into()),
             pid: 1,
             start: 1,
         };
@@ -1492,7 +1722,7 @@ mod tests {
     #[test]
     fn a_folder_opens_through_wsl_with_only_its_path_from_the_record() {
         assert_eq!(
-            folder_args("/home/aj/ajsoftworks/cv", "Ubuntu").unwrap(),
+            folder_args("/home/aj/ajsoftworks/cv", Some("Ubuntu")).unwrap(),
             [
                 "-d",
                 "Ubuntu",
@@ -1519,8 +1749,9 @@ mod tests {
         );
         assert!(explorer_opened(Err("wsl.exe exited with exit code: 2.".into())).is_err());
         assert!(explorer_opened(Err("Could not start wsl.exe".into())).is_err());
-        assert!(folder_args("/home/aj/../x", "Ubuntu").is_err());
-        assert!(folder_args("/home/aj", "Ubuntu;rm").is_err());
+        assert!(folder_args("/home/aj/../x", Some("Ubuntu")).is_err());
+        assert!(folder_args("/home/aj", Some("Ubuntu;rm")).is_err());
+        assert!(folder_args("/home/aj/../x", None).is_err());
     }
 
     #[test]
@@ -1535,7 +1766,7 @@ mod tests {
     fn a_github_page_opens_through_wsl_and_only_a_plain_github_address() {
         let page = "https://github.com/ajbarea/klepsydra/tree/feat/a%20b%231";
         assert_eq!(
-            github_args(page, "Ubuntu").unwrap(),
+            github_args(page, Some("Ubuntu")).unwrap(),
             [
                 "-d",
                 "Ubuntu",
@@ -1556,13 +1787,14 @@ mod tests {
             "https://github.com/a/b\"&calc",
             "file:///C:/Windows",
         ] {
-            assert!(github_args(bad, "Ubuntu").is_err(), "{bad}");
+            assert!(github_args(bad, Some("Ubuntu")).is_err(), "{bad}");
+            assert!(github_args(bad, None).is_err(), "{bad}");
         }
-        assert!(github_args("https://github.com/a/b", "Ubuntu;rm").is_err());
+        assert!(github_args("https://github.com/a/b", Some("Ubuntu;rm")).is_err());
     }
 
     #[test]
-    fn target_needs_tmux_distro_and_claude() {
+    fn target_needs_tmux_and_claude_and_keeps_the_distro_on_record() {
         let c = json!({"pid": 7, "start": 99});
         let s = json!({"sessions": [
             {"session_id": "a", "tmux": {"socket": "/s", "pane": "%1"}, "distro": "Ubuntu", "claude": c},
@@ -1572,9 +1804,107 @@ mod tests {
             {"session_id": "e", "tmux": {"socket": "/s", "pane": "%1"}, "distro": "Ubuntu"}]});
         let t = target(&s, "a").unwrap();
         assert_eq!((t.pane.as_str(), t.pid, t.start), ("%1", 7, 99));
-        for id in ["b", "c", "d", "e"] {
+        assert_eq!(t.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(
+            target_on(&s, "b", true).unwrap().distro,
+            None,
+            "native Linux records none"
+        );
+        assert_eq!(
+            target_on(&s, "b", false),
+            None,
+            "through wsl.exe it is found by its tab instead"
+        );
+        for id in ["c", "d", "e"] {
             assert!(target(&s, id).is_none(), "{id}");
         }
+    }
+
+    #[test]
+    fn the_distro_is_required_through_wsl_and_dropped_on_native_linux() {
+        for native in [false, true] {
+            assert_eq!(
+                distro_words(Some("Ubuntu"), native),
+                Some(vec!["-d".to_string(), "Ubuntu".to_string()])
+            );
+            for bad in ["", "a;b", "Ubuntu 24.04", "a/b"] {
+                assert_eq!(distro_words(Some(bad), native), None, "{bad:?} {native}");
+            }
+        }
+        assert_eq!(distro_words(None, false), None, "wsl.exe needs a distro");
+        assert_eq!(distro_words(None, true), Some(Vec::new()));
+    }
+
+    /// A session on native Linux as its hook writes it (#460), with no
+    /// distro: every card action reaches the launcher there, and each is
+    /// refused through wsl.exe, which needs one.
+    #[test]
+    fn a_native_linux_session_reaches_every_card_action() {
+        let snap = json!({"sessions": [{
+            "session_id": "n",
+            "distro": null,
+            "tmux": {"socket": "/tmp/tmux-1001/klepsydra", "pane": "%1"},
+            "claude": {"pid": 68991, "start": 127674},
+            "where": {"repo": "klepsydra", "dir": "/home/aj/ajsoftworks/klepsydra",
+                      "github": "https://github.com/ajbarea/klepsydra", "branch": "main"}}]});
+        let t = target_on(&snap, "n", true).expect("a native session has a tmux target");
+        for verb in [PaneVerb::Jump, PaneVerb::End, PaneVerb::Interrupt] {
+            let args = pane_args(&t, verb);
+            assert_eq!(args.is_ok(), NATIVE, "{verb:?}");
+            if let Ok(args) = args {
+                assert_eq!(
+                    linux_argv(Some("/home/aj"), &args).unwrap(),
+                    [
+                        "/home/aj/.claude/klepsydra-launch.sh",
+                        verb.word(),
+                        "/tmp/tmux-1001/klepsydra",
+                        "%1",
+                        "68991",
+                        "127674"
+                    ]
+                );
+            }
+        }
+        let (dir, distro) = crate::folder::folder_of(&snap, "n", true).expect("its folder");
+        assert_eq!(folder_args(&dir, distro.as_deref()).is_ok(), NATIVE);
+        for branch in [false, true] {
+            let (url, distro) =
+                crate::folder::github_of(&snap, "n", branch, true).expect("its page");
+            assert_eq!(
+                github_args(&url, distro.as_deref()).is_ok(),
+                NATIVE,
+                "{branch}"
+            );
+        }
+    }
+
+    /// What Folder and GitHub answer for a session with no distro, as this
+    /// build reads the snapshot: opened on native Linux, not known through
+    /// wsl.exe.
+    #[test]
+    fn folder_and_github_read_the_snapshot_as_this_build_reaches_it() {
+        let snap = json!({"sessions": [{
+            "session_id": "n",
+            "distro": null,
+            "where": {"repo": "klepsydra", "dir": "/home/aj/ajsoftworks/klepsydra",
+                      "github": "https://github.com/ajbarea/klepsydra", "branch": "main"}}]});
+        let folder = folder_request(&snap, "n").map(|(dir, _)| dir);
+        let page = github_request(&snap, "n", false).map(|(url, _)| url);
+        let branch = github_request(&snap, "n", true).map(|(url, _)| url);
+        if NATIVE {
+            assert_eq!(folder, Ok("/home/aj/ajsoftworks/klepsydra".into()));
+            assert_eq!(page, Ok("https://github.com/ajbarea/klepsydra".into()));
+            assert_eq!(
+                branch,
+                Ok("https://github.com/ajbarea/klepsydra/tree/main".into())
+            );
+        } else {
+            assert_eq!(folder, Err(NO_FOLDER.into()));
+            assert_eq!(page, Err(NO_PAGE.into()));
+            assert_eq!(branch, Err(NO_PAGE.into()));
+        }
+        assert_eq!(folder_request(&snap, "gone"), Err(NO_FOLDER.into()));
+        assert_eq!(github_request(&snap, "gone", false), Err(NO_PAGE.into()));
     }
 
     #[test]

@@ -50,6 +50,14 @@ proc_is() { # pid start
   [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
   proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
 }
+
+# The kernel's release string ("...microsoft-standard-WSL2" under WSL), into the
+# caller's `osrelease`; fails when it cannot be read.
+proc_osrelease() {
+  osrelease=""
+  { IFS= read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+  [[ -n $osrelease ]]
+}
 # --- end proc stat ---
 
 # Whether `pid` is Claude Code: by name, or an npm install's
