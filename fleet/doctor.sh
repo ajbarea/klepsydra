@@ -772,7 +772,9 @@ lock_check() {
     if lock_dir; then printf "%s" "$LOCK_DIR"; else printf "%s" "$LOCK_WHY"; exit 1; fi' _ "$src" 2>/dev/null </dev/null)
   rc=$?
   [[ -n ${KLEPSYDRA_DIR:-} && -f $trace && ! -L $trace ]] && { read -r t why <"$trace"; } 2>/dev/null
-  { while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done </proc/stat; } 2>/dev/null
+  local proc_stat=${FLEET_PROC:-/proc}/stat
+  [[ -e $proc_stat ]] || proc_stat=/proc/stat
+  { while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done <"$proc_stat"; } 2>/dev/null
   if (( rc )); then
     report FAIL "lock folder" "${live:-lock_dir did not run}: until it is fixed the fleet hook records no session and the launcher refuses clicks" why="$live"
   elif [[ $t =~ ^[0-9]{1,12}$ && $btime =~ ^[0-9]+$ ]] && (( t >= btime && t <= now && now - t < 3600 )); then

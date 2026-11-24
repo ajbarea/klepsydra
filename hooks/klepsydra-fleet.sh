@@ -42,6 +42,37 @@ fi
 CAST=${KLEPSYDRA_CAST:-}
 if [[ -z $CAST && -n ${KLEPSYDRA_DIR:-} && -f $KLEPSYDRA_DIR/cast.json ]]; then CAST=$KLEPSYDRA_DIR/cast.json
 elif [[ -z $CAST && -n ${HOME:-} ]]; then CAST=$HOME/.claude/klepsydra-cast.json; fi
+
+# --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
+# Whether `dir` is the overlay's own data dir, the only place a prune deletes
+# from: absolute, without "..", named for the bundle identifier, and not a
+# symlink. Trailing slashes do not count.
+own_data_dir() { # dir
+  local dir=$1
+  while [[ $dir == */ ]]; do dir=${dir%/}; done
+  [[ -n $dir && $dir == /* ]] || return 1
+  [[ $dir == */../* || $dir == */.. ]] && return 1
+  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
+  [[ ! -L $dir ]]
+}
+
+# A prune runs at most once an hour, refused or not; `stamp` holds the time of
+# the last run, and a clock that went back runs it again.
+PRUNE_EVERY=3600
+prune_due() { # stamp now
+  local last=""
+  { IFS= read -r last <"$1"; } 2>/dev/null
+  [[ $2 =~ ^[0-9]+$ ]] || return 1
+  ! [[ $last =~ ^[0-9]+$ ]] || (( 10#$2 - 10#$last >= PRUNE_EVERY || 10#$2 < 10#$last ))
+}
+prune_hourly() { # stamp prune dir now
+  prune_due "$1" "$4" || return 0
+  "$2" "$3" "$4"
+  { printf '%s\n' "$4" >"$1"; } 2>/dev/null
+  return 0
+}
+# --- end prune helpers ---
+
 # --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
 # The folder for the locks and stamps every caller must share: one per host and
 # boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
@@ -51,9 +82,11 @@ elif [[ -z $CAST && -n ${HOME:-} ]]; then CAST=$HOME/.claude/klepsydra-cast.json
 # XDG_RUNTIME_DIR: a WSL boot sets it before logind makes it, and the overlay's
 # shells may lack it, so callers would split between two locks (#517). Making
 # this boot's folder removes this host's folders last changed before this boot
-# began (btime), which only ended boots can be. Another host's are never
-# touched, so a HOME two machines share (NFS) keeps each one's live folder.
-# The host is the kernel's hostname, so renaming a host mid-boot moves its lock.
+# began (btime), which only ended boots can be. Another host's are untouched
+# while hostnames differ (same-name hosts on one shared HOME still prune each
+# other). An unusable hostname never prunes, so run-_-* accumulates one small
+# folder per boot. The host is the kernel's hostname, so renaming a host
+# mid-boot moves its lock.
 lock_why() { # PATH [w]: fails with LOCK_WHY set when PATH is no folder of ours (w: or not writable)
   local mode
   if [[ -L $1 ]]; then LOCK_WHY="$1 is a symlink"
@@ -120,16 +153,22 @@ lock_dir() {
 # Every session's hooks run as separate processes, so writes take one lock.
 # Without its folder (lock_dir) the hook writes nothing, but leaves one line,
 # "<epoch> <why>", in <KLEPSYDRA_DIR>/lock-refused at most every LOCK_TRACE_S
-# seconds, which fleet doctor shows (#518). Builtins only: no process.
+# seconds, which fleet doctor shows (#518).
 LOCK_TRACE_S=600
 lock_trace() { # WHY
-  local file=${KLEPSYDRA_DIR:-}/lock-refused now t=""
-  [[ -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR && ! -L $file && ( ! -e $file || -f $file ) ]] || return 0
+  local file=${KLEPSYDRA_DIR:-}/lock-refused now t="" tmp
+  [[ -n ${KLEPSYDRA_DIR:-} ]] && own_data_dir "$KLEPSYDRA_DIR" || return 0
+  [[ -d $KLEPSYDRA_DIR && ! -L $file && ( ! -e $file || -f $file ) ]] || return 0
   now=${KLEPSYDRA_NOW:-}
   [[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
   { read -r t _ <"$file"; } 2>/dev/null
   [[ $t =~ ^[0-9]{1,12}$ ]] && (( t <= now && now - t < LOCK_TRACE_S )) && return 0
-  { printf '%s %s\n' "$now" "$1" >"$file"; } 2>/dev/null
+  tmp=$file.$$.tmp
+  if printf '%s %s\n' "$now" "$1" >"$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
   return 0
 }
 lock_dir || lock_trace "$LOCK_WHY"
@@ -536,35 +575,6 @@ mark_gone() { # dir now self
       ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]')
 }
 
-# --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
-# Whether `dir` is the overlay's own data dir, the only place a prune deletes
-# from: absolute, without "..", named for the bundle identifier, and not a
-# symlink. Trailing slashes do not count.
-own_data_dir() { # dir
-  local dir=$1
-  while [[ $dir == */ ]]; do dir=${dir%/}; done
-  [[ -n $dir && $dir == /* ]] || return 1
-  [[ $dir == */../* || $dir == */.. ]] && return 1
-  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
-  [[ ! -L $dir ]]
-}
-
-# A prune runs at most once an hour, refused or not; `stamp` holds the time of
-# the last run, and a clock that went back runs it again.
-PRUNE_EVERY=3600
-prune_due() { # stamp now
-  local last=""
-  { IFS= read -r last <"$1"; } 2>/dev/null
-  [[ $2 =~ ^[0-9]+$ ]] || return 1
-  ! [[ $last =~ ^[0-9]+$ ]] || (( 10#$2 - 10#$last >= PRUNE_EVERY || 10#$2 < 10#$last ))
-}
-prune_hourly() { # stamp prune dir now
-  prune_due "$1" "$4" || return 0
-  "$2" "$3" "$4"
-  { printf '%s\n' "$4" >"$1"; } 2>/dev/null
-  return 0
-}
-# --- end prune helpers ---
 
 # The transcript's last few lines that turn Remote Control on or off, one per
 # line: `/remote-control` connecting (system bridge_status, with the session

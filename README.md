@@ -858,9 +858,10 @@ Enter closes it, since tmux 3.4 crashes on a focus event to a dead pane (#290);
 once. The `fleet-tmux-watch.timer` runs `fleet recover` when the fleet's server
 dies with a crash record (WSL's crash dump or journal line), also on the next
 boot when WSL shut down after the crash (the watchdog is a systemd timer, not
-the overlay). At a boot, `fleet recover` first waits up to `FLEET_RUNTIME_WAIT`
-seconds (180) for `XDG_RUNTIME_DIR`, which WSL names before logind makes it,
-timed by `/proc/uptime`, which a WSL clock step does not move.
+the overlay). At a boot, `fleet recover` first waits up to `FLEET_RUNTIME_WAIT` seconds (180)
+for `XDG_RUNTIME_DIR` and, where systemd booted, the user manager's socket,
+which WSL names before logind makes them, timed by `/proc/uptime`, which a WSL
+clock step does not move.
 The overlay itself starts a process only as `wsl.exe`: one launch at a time,
 and one Jump, End or Interrupt per card at a time. Each comes from a click,
 except one call that lists agy's models when the wall first opens. Those locks,
