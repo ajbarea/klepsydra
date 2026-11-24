@@ -510,14 +510,19 @@ fi
 paused=$(awk -F'\t' '$1 != "" && $1 !~ /^#/ { printf "%s, ", $1 }' "${FLEET_PAUSED:-$FLEET_STATE/paused.tsv}" 2>/dev/null)
 [[ -n $paused ]] && report ok "paused agents" "${paused%, }: fleet unpause NAME brings one back" paused="${paused%, }"
 # Reports `fleet done` could not deliver, and finished panes left open and
-# unread (done-reports.tsv; `fleet close NAME` clears a row), #445.
+# unread (done-reports.tsv; `fleet close NAME` clears a row), #445, and
+# undelivered reports in the durable inbox (#367).
 undelivered="" unread="" panes_now=$(fleet_panes)
 while IFS=$'\t' read -r at rname rpane rresult; do
   [[ $at =~ ^[0-9]+$ ]] || continue
   if [[ $rresult == pending ]] && (( now - at <= 300 )); then
     : # its send is still running
-  elif [[ $rresult != sent && $rresult != queued ]]; then
-    undelivered+="$rname ($rresult), "
+  elif [[ $rresult != sent && $rresult != queued && $rresult != acked ]]; then
+    if [[ -f $FLEET_INBOX ]] && jq -e --arg name "$rname" 'select(.name == $name and (.status == "acked" or .status == "delivered"))' "$FLEET_INBOX" >/dev/null 2>&1; then
+      : # acked or delivered in inbox
+    else
+      undelivered+="$rname ($rresult), "
+    fi
   elif (( now - at > ${FLEET_UNREAD_S:-1800} )) && grep -qx -- "$rpane" <<<"$panes_now"; then
     unread+="$rname ($rpane, $(( (now - at) / 60 )) min), "
   fi

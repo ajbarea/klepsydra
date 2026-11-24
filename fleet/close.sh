@@ -212,3 +212,4 @@ else
   esac
 fi
 with_registry dr_drop "$name" || { err "done-reports.tsv could not be updated"; exit 1; }
+with_inbox inbox_ack "$name" >/dev/null 2>&1 || true

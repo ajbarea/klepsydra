@@ -585,6 +585,92 @@ dr_drop() { # NAME: forget its reports
     return 1
   fi
 }
+dr_ack() { # TARGET [--all or NAME]
+  local target=$1 tmp
+  [[ -f $DONE_REPORTS ]] || return 0
+  tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
+  if [[ $target == --all ]]; then
+    awk -F'\t' -v OFS='\t' '$4 != "sent" && $4 != "queued" { $4 = "acked" } { print }' "$DONE_REPORTS" >"$tmp"
+  else
+    awk -F'\t' -v OFS='\t' -v n="$target" '$2 "" == n "" && $4 != "sent" && $4 != "queued" { $4 = "acked" } { print }' "$DONE_REPORTS" >"$tmp"
+  fi
+  if mv -f -- "$tmp" "$DONE_REPORTS"; then
+    return 0
+  else
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
+}
+
+# The orchestrator's inbox for undelivered reports (#367): one JSON line per
+# report, mode 0600. Every write goes under the inbox lock (with_inbox).
+FLEET_INBOX=${FLEET_INBOX:-$FLEET_STATE/inbox.jsonl}
+with_inbox() {
+  mkdir -p -- "$FLEET_STATE"
+  ( flock -w "${FLEET_INBOX_WAIT:-30}" 9 || exit 1; "$@" ) 9>>"$FLEET_STATE/.inbox.lock"
+}
+inbox_append() { # NAME PANE REPORT RESULT AT
+  local name=$1 pane=$2 report=$3 result=$4 at=${5:-$(date +%s)}
+  local iso id line
+  iso=$(date -d @"$at" -Is 2>/dev/null || date -Is)
+  id="${at}-${name:-${pane//%/}}"
+  line=$(jq -nc \
+    --arg id "$id" \
+    --argjson at "$at" \
+    --arg iso "$iso" \
+    --arg name "$name" \
+    --arg pane "$pane" \
+    --arg report "$report" \
+    --arg result "$result" \
+    --arg status "pending" \
+    '{id: $id, at: $at, iso: $iso, name: $name, pane: $pane, report: $report, result: $result, status: $status}') || return 1
+  if [[ ! -e $FLEET_INBOX ]]; then
+    ( umask 077 && touch "$FLEET_INBOX" )
+  fi
+  chmod 0600 "$FLEET_INBOX" 2>/dev/null || true
+  printf '%s\n' "$line" >>"$FLEET_INBOX"
+}
+inbox_mark_delivered() { # NAME [REPORT]
+  local name=$1 report=${2:-}
+  [[ -f $FLEET_INBOX ]] || return 0
+  local tmp now
+  now=$(date +%s)
+  tmp=$(mktemp "$FLEET_INBOX.XXXXXX") || return 1
+  if jq -s -c --arg name "$name" --arg rep "$report" --argjson now "$now" '
+    (map(.name == $name and .status == "pending" and ($rep == "" or .report == $rep)) | index(true)) as $idx |
+    if $idx != null then
+      .[$idx].status = "delivered" | .[$idx].delivered_at = $now
+    else . end | .[]
+  ' "$FLEET_INBOX" >"$tmp" 2>/dev/null; then
+    chmod 0600 "$tmp" 2>/dev/null || true
+    mv -f -- "$tmp" "$FLEET_INBOX"
+  else
+    rm -f -- "${tmp:?}"
+    return 1
+  fi
+}
+inbox_ack() { # TARGET [--all or NAME]
+  local target=$1 tmp now count
+  [[ -f $FLEET_INBOX ]] || return 1
+  now=$(date +%s)
+  tmp=$(mktemp "$FLEET_INBOX.XXXXXX") || return 1
+  if [[ $target == --all ]]; then
+    count=$(jq -s '[.[] | select(.status == "pending")] | length' "$FLEET_INBOX" 2>/dev/null)
+    (( count > 0 )) || { rm -f -- "${tmp:?}"; return 1; }
+    jq -c --argjson now "$now" '
+      if .status == "pending" then .status = "acked" | .acked_at = $now else . end
+    ' "$FLEET_INBOX" >"$tmp" 2>/dev/null || { rm -f -- "${tmp:?}"; return 1; }
+  else
+    count=$(jq -s --arg name "$target" '[.[] | select(.name == $name and .status == "pending")] | length' "$FLEET_INBOX" 2>/dev/null)
+    (( count > 0 )) || { rm -f -- "${tmp:?}"; return 1; }
+    jq -c --arg name "$target" --argjson now "$now" '
+      if .name == $name and .status == "pending" then .status = "acked" | .acked_at = $now else . end
+    ' "$FLEET_INBOX" >"$tmp" 2>/dev/null || { rm -f -- "${tmp:?}"; return 1; }
+  fi
+  chmod 0600 "$tmp" 2>/dev/null || true
+  mv -f -- "$tmp" "$FLEET_INBOX" || { rm -f -- "${tmp:?}"; return 1; }
+  echo "$count"
+}
 # The briefing's queue file (not FLEET_QUEUE: ci_watch.py reads that name as needs-you.md).
 FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-/mnt/c/Users/ajbar/fleet-briefing/queue.md}
 # Put a line for an agent's undelivered report in the queue file, at the end of

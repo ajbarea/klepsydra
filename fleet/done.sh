@@ -130,9 +130,11 @@ deliver_report() {
   if [[ $got == sent || $got == queued ]]; then
     flog INFO "done: report delivered to the orchestrator" name="$label" result="$got"
     [[ $orch == "${TMUX_PANE:-}" ]] || echo "report: $got"
+    with_inbox inbox_mark_delivered "$label" "$report" || flog ERROR "done: inbox file cannot be updated" file="$FLEET_INBOX"
     return 0
   fi
   flog WARN "done: report not delivered; written to the queue file" name="$label" result="$got"
+  with_inbox inbox_append "$label" "$rpane" "$report" "$got" "$at" || flog ERROR "done: inbox file cannot be written" file="$FLEET_INBOX"
   if queue_note "$label" "$got" "$report"; then
     echo "report: $got; written to the queue file's Running now"
   else

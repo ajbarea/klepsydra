@@ -2405,7 +2405,105 @@ check "#445: the doctor flags a finished pane left open and unread for over 30 m
 check "#445: with nothing waiting it is ok" "$(doctor | grep -c '^ok  *done reports')" "1"
 t kill-window -t "$h" 2>/dev/null; t kill-window -t "$w2" 2>/dev/null; t kill-window -t "$w3" 2>/dev/null
 t kill-window -t "$w4" 2>/dev/null; t kill-window -t "$w5" 2>/dev/null
-: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$KLEPSYDRA_DIR/fleet/$SID.json"
+: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$FLEET_INBOX" "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+echo "fleet done reports must reach the orchestrator (durable inbox: #367)"
+rm -f "$FLEET_INBOX" "$DONE_REPORTS" "$FLEET_STATE/finished.tsv"
+: >"$REGISTRY"
+h367=$(pane hph367 '{"above":["idle"],"on_submit":"none"}')
+printf '%s\n' "$h367" >"$FLEET_STATE/orchestrator.pane"
+
+# 1. busy pane: orchestrator pane busy (AJ typing in box), fleet done cannot paste -> writes to durable inbox (mode 0600, result not-pasted, status pending)
+w_busy=$(dpane wrk_busy)
+t send-keys -t "$h367" -l "AJ: busy working"; settle
+out=$(fdone "$w_busy" "PR #301 open, CI green" 2>&1); rc=$?
+check "#367: fleet done into busy orchestrator pane reports not-pasted" \
+  "$rc $(tail -1 <<<"$out" | cut -c1-40)" "0 report: not-pasted; written to the queue"
+check "#367: undelivered report is written to inbox.jsonl (mode 0600, status pending, result not-pasted)" \
+  "$(stat -c %a "$FLEET_INBOX") $(jq -r 'select(.name == "wrk_busy") | "\(.status) \(.result) \(.report)"' "$FLEET_INBOX")" \
+  "600 pending not-pasted PR #301 open, CI green"
+check "#367: fleet inbox lists the unread report" \
+  "$(bash "$here/fleet" inbox | grep -c 'wrk_busy .*not-pasted.*: PR #301 open, CI green')" "1"
+check "#367: doctor flags the undelivered report" \
+  "$(doctor | grep '^warn  *done reports' | sed -E 's/.*not delivered to the orchestrator: ([^:]*):.*/\1/')" "wrk_busy (not-pasted)"
+
+# 2. limited pane: orchestrator pane at usage limit
+w_lim=$(dpane wrk_lim)
+t send-keys -t "$h367" C-u; settle
+state hph367 "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"none\"}"; settle
+out=$(fdone "$w_lim" "PR #302 open" 2>&1); rc=$?
+check "#367: fleet done into limited orchestrator pane reports limited" \
+  "$rc $(tail -1 <<<"$out" | cut -c1-40)" "0 report: limited; written to the queue fi"
+check "#367: limited report written to inbox.jsonl as pending" \
+  "$(jq -r 'select(.name == "wrk_lim") | "\(.status) \(.result)"' "$FLEET_INBOX")" "pending limited"
+
+# 3. gone pane: orchestrator pane is gone / dead
+w_gone=$(dpane wrk_gone)
+rm -f "$FLEET_STATE/orchestrator.pane"
+out=$(fdone "$w_gone" "PR #303 open" 2>&1); rc=$?
+check "#367: fleet done with gone orchestrator pane reports no-orchestrator-pane" \
+  "$rc $(tail -1 <<<"$out" | cut -c1-48)" "0 report: no-orchestrator-pane; written to the que"
+check "#367: gone pane report written to inbox.jsonl as pending" \
+  "$(jq -r 'select(.name == "wrk_gone") | "\(.status) \(.result)"' "$FLEET_INBOX")" "pending no-orchestrator-pane"
+
+# Restore orchestrator.pane for subsequent tests
+printf '%s\n' "$h367" >"$FLEET_STATE/orchestrator.pane"
+state hph367 '{"above":["idle"],"on_submit":"none"}'; settle
+: >"$work/hph367.log"
+
+# 4. concurrent reports: six workers call fleet done concurrently while orchestrator cannot paste
+t send-keys -t "$h367" -l "AJ: typing again"; settle
+panes_c=()
+for n in 1 2 3 4 5 6; do
+  pw=$(dpane "wrk_c$n")
+  panes_c+=("$pw")
+  fdone "$pw" "concurrent report $n" >/dev/null 2>&1 &
+done
+wait
+check "#367: concurrent fleet done calls all land atomically in inbox.jsonl (mode 0600)" \
+  "$(stat -c %a "$FLEET_INBOX") $(jq -s '[.[] | select(.name | startswith("wrk_c"))] | length' "$FLEET_INBOX")" "600 6"
+
+# 5. ack: fleet inbox ack acknowledges individual reports and --all
+check "#367: fleet inbox ack NAME acknowledges the report" \
+  "$(bash "$here/fleet" inbox ack wrk_busy)" "acknowledged: wrk_busy"
+check "#367: acked report has status acked in inbox.jsonl and no longer appears in unread list" \
+  "$(jq -r 'select(.name == "wrk_busy") | .status' "$FLEET_INBOX") $(bash "$here/fleet" inbox | grep -c 'wrk_busy')" "acked 0"
+check "#367: fleet inbox ack unknown name fails with exit 1" \
+  "$(bash "$here/fleet" inbox ack wrk_busy >/dev/null 2>&1; echo $?)" "1"
+check "#367: fleet inbox ack --all acknowledges all remaining unread reports" \
+  "$(bash "$here/fleet" inbox ack --all | sed -E 's/[0-9]+/N/g')" "acknowledged: all (N reports)"
+check "#367: fleet inbox shows no unread reports" \
+  "$(bash "$here/fleet" inbox)" "no unread reports"
+check "#367: doctor reports ok once all reports are acked" \
+  "$(doctor | grep -c '^ok  *done reports')" "1"
+
+# 6. a later successful paste of a pending item marks it delivered, never twice
+t send-keys -t "$h367" -l "AJ: busy again"; settle
+w_ret=$(dpane wrk_ret)
+fdone "$w_ret" "PR #304 open" >/dev/null 2>&1
+check "#367: report waiting in inbox as pending" \
+  "$(jq -r 'select(.name == "wrk_ret") | .status' "$FLEET_INBOX")" "pending"
+t send-keys -t "$h367" C-u; settle
+state hph367 '{"above":["idle"],"on_submit":"none"}'; settle
+: >"$work/hph367.log"
+out_ret=$(bash "$here/fleet" "done" wrk_ret "PR #304 open" 2>&1)
+check "#367: successful retry delivers report to orchestrator" \
+  "$(grep -c 'already finished: wrk_ret' <<<"$out_ret") $(grep -c 'report: sent' <<<"$out_ret") $(grep -c '^SUBMIT wrk_ret finished: PR #304 open$' "$work/hph367.log")" \
+  "1 1 1"
+check "#367: pending item in inbox marked delivered with delivered_at" \
+  "$(jq -r 'select(.name == "wrk_ret") | "\(.status) \(.delivered_at != null)"' "$FLEET_INBOX")" "delivered true"
+bash "$here/fleet" "done" wrk_ret "PR #304 open" >/dev/null 2>&1
+check "#367: later call does not mark delivered twice" \
+  "$(jq -s '[.[] | select(.name == "wrk_ret")] | length' "$FLEET_INBOX") $(jq -r 'select(.name == "wrk_ret") | .status' "$FLEET_INBOX")" \
+  "1 delivered"
+check "#367: fleet inbox shows 0 unread reports" \
+  "$(bash "$here/fleet" inbox)" "no unread reports"
+
+t kill-window -t "$h367" 2>/dev/null; t kill-window -t "$w_busy" 2>/dev/null
+t kill-window -t "$w_lim" 2>/dev/null; t kill-window -t "$w_gone" 2>/dev/null
+t kill-window -t "$w_ret" 2>/dev/null
+for cp in "${panes_c[@]}"; do t kill-window -t "$cp" 2>/dev/null; done
+: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$FLEET_INBOX"
 
 : >"$work/moved"
 p=$(backpane bgwork); done_live "$p" working '[{"id": "t1", "kind": "agent"}]'
