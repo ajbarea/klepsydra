@@ -1200,6 +1200,7 @@ window.__TAURI__ = { core: {
     if (cmd === 'new_session_prefs') { window.__calls.push([cmd, args]); return Promise.resolve(window.__nsprefs ?? { default: null, last: null }); }
     if (cmd === 'get_launch_dir') { window.__calls.push([cmd, args]); return window.__dirAnswer ? window.__dirAnswer() : Promise.resolve('/home/aj/ajsoftworks'); }
     if (cmd === 'set_theme' && window.__setThemeFails) { window.__calls.push([cmd, args]); return Promise.reject(window.__setThemeFails); }
+    if (window.__fails && window.__fails[cmd]) { window.__calls.push([cmd, args]); return Promise.reject(window.__fails[cmd]); }
     if (cmd === 'end_session' && window.__hold) { window.__calls.push([cmd, args]); return window.__hold; }
     window.__calls.push([cmd, args]);
     if (cmd === 'start_wrapup') return Promise.resolve(window.__asked ?? []);
@@ -5138,6 +5139,26 @@ def theme_renames_the_queue_keeper(wall):
     page.close()
 
 
+def refused_saves_say_so(wall):
+    """A density prefs.json refused says so in the bar, as a refused theme
+    does, and the next save that takes clears it (#484: a corrupt prefs.json
+    reads as the defaults, so silence looked saved)."""
+    page = open_app(wall)
+    density = "prefs.json could not be saved, so the density is not kept."
+    page.evaluate("(m) => { window.__fails = { set_wall_density: m }; }", density)
+    open_gear(page)
+    pick(page, ".density label:has([value=compact])")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
+    wall.check(got == [f"Not saved: {density}", True], "a refused density save says why in the bar", got)
+    page.evaluate("window.__fails = null")
+    pick(page, ".density label:has([value=comfortable])")
+    page.wait_for_timeout(SETTLE_MS)
+    got = page.evaluate("[document.getElementById('density-note').textContent, document.getElementById('density-note').checkVisibility()]")
+    wall.check(got == ["", False], "the next density save that takes clears the note", got)
+    page.close()
+
+
 def theme_save_flushes_and_says_when_refused(wall):
     """A choice still waiting to be saved is saved at once when the picker
     loses focus (a click on the tray's Quit takes it away), and only once; a
@@ -5154,19 +5175,19 @@ def theme_save_flushes_and_says_when_refused(wall):
     page.wait_for_timeout(SAVE_MS + 200)
     late = page.evaluate("window.__calls")[before:]
     wall.check(early == [["set_theme", {"theme": "professions"}]] and late == early, "a blur saves the waiting choice at once, and once", [early, late])
-    page.evaluate("window.__setThemeFails = 'prefs.json could not be saved, so the theme is still kourai, not dicebear.'")
+    page.evaluate("window.__setThemeFails = 'prefs.json could not be written: the theme is still kourai, not dicebear.'")
     open_gear(page)
     page.select_option("#theme", "dicebear")
     page.wait_for_timeout(SAVE_MS + 200)
     page.evaluate("window.__theme.onmessage('kourai')")
     page.wait_for_timeout(SETTLE_MS)
     got = page.evaluate("[document.getElementById('theme-note').textContent, document.getElementById('theme-note').checkVisibility(), document.documentElement.dataset.theme, document.getElementById('theme').value]")
-    wall.check(got == ["Not saved: prefs.json could not be saved, so the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
+    wall.check(got == ["Not saved: prefs.json could not be written: the theme is still kourai, not dicebear.", True, "kourai", "kourai"],
                "a refused save says why, and the wall wears the theme the app kept", got)
     logs = page.evaluate("window.__logs ?? []")
     want = {
         "level": 5,
-        "message": "set_theme refused theme dicebear: prefs.json could not be saved, so the theme is still kourai, not dicebear.",
+        "message": "set_theme refused theme dicebear: prefs.json could not be written: the theme is still kourai, not dicebear.",
         "location": "fleet/wall.js",
     }
     wall.check([{k: entry.get(k) for k in want} for entry in logs] == [want],
@@ -5808,6 +5829,7 @@ def main() -> int:
             theme_everywhere,
             theme_renames_the_queue_keeper,
             theme_save_flushes_and_says_when_refused,
+            refused_saves_say_so,
             theme_first_paint,
             strip_first_paint,
             strip_keeper_states,

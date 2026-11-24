@@ -480,7 +480,9 @@ pub fn get_wall_density(app: AppHandle) -> String {
 /// Save the density chosen on the wall.
 #[tauri::command]
 pub fn set_wall_density(app: AppHandle, density: String) -> Result<(), String> {
-    crate::write_pref(&app, DENSITY_KEY, density_value(&density)?);
+    if !crate::write_pref(&app, DENSITY_KEY, density_value(&density)?) {
+        return Err("prefs.json could not be saved, so the density is not kept.".to_string());
+    }
     Ok(())
 }
 

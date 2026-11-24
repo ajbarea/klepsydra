@@ -19,8 +19,11 @@ export FLEET_RUN_ID
 # the file: one JSON object and nothing after it. Fails 1 when the file is
 # missing, 2 when it does not read as one object.
 prefs_get() { # KEY
-  local f=$KLEPSYDRA_DIR/prefs.json
+  local f=$KLEPSYDRA_DIR/prefs.json lead=""
   [[ -f $f ]] || return 1
+  # A UTF-8 BOM (PowerShell 5 writes one): jq reads past it, serde_json refuses the file.
+  LC_ALL=C IFS= read -r -n 3 lead <"$f" 2>/dev/null
+  [[ $lead == $'\xef\xbb\xbf' ]] && return 2
   jq -sc --arg k "$1" 'if length == 1 and (.[0] | type) == "object" then .[0][$k] else error("not one object") end' "$f" 2>/dev/null || return 2
 }
 
