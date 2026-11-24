@@ -3663,20 +3663,20 @@ mdoc() { # AGY_MODEL_LIST [VAR=VALUE...]: doctor's "models agy" line
   shift
   env HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" \
     FLEET_MODELS_DIR="$models_dir" FLEET_MODELS_EVERY_S=0 FLEET_AGY_MODELS="$list" "$@" bash "$here/doctor.sh" 2>/dev/null |
-    grep -E '^(ok|warn|FAIL) +models agy:' | sed -E 's/changed [0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/changed WHEN/'
+    grep -E '^(ok|warn|FAIL) +models agy:' | sed -E 's/[0-9]{2}-[0-9]{2} ([+-])/WHEN \1/g; s/asked [0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/asked WHEN/'
 }
 two=$'gemini-3.8-flash-high\nclaude-sonnet-4-6'
 check "doctor: #513 the first run records the list" "$(mdoc "$two")" "ok   models agy: 2 models"
 check "doctor: #513 the record is sorted, one id a line" "$(cat "$models_dir/models-agy.txt")" $'claude-sonnet-4-6\ngemini-3.8-flash-high'
 check "doctor: #513 the same list again is ok" "$(mdoc "$two")" "ok   models agy: 2 models"
 check "doctor: #513 a new model is a warning to review routing" "$(mdoc "$two"$'\ngemini-4-neon')" \
-  "warn models agy: changed WHEN: +gemini-4-neon: review routing in docs/engines.md"
+  "warn models agy: changed WHEN +gemini-4-neon: review routing in docs/engines.md"
 check "doctor: #513 the record takes the new list" "$(cat "$models_dir/models-agy.txt")" $'claude-sonnet-4-6\ngemini-3.8-flash-high\ngemini-4-neon'
 check "doctor: #513 the warning holds on the timer's next run, so it is seen" "$(mdoc "$two"$'\ngemini-4-neon')" \
-  "warn models agy: changed WHEN: +gemini-4-neon: review routing in docs/engines.md"
+  "warn models agy: changed WHEN +gemini-4-neon: review routing in docs/engines.md"
 check "doctor: #513 past FLEET_MODELS_WARN_S it is ok again" "$(mdoc "$two"$'\ngemini-4-neon' FLEET_MODELS_WARN_S=0)" "ok   models agy: 3 models"
-check "doctor: #513 a model gone is a warning too" "$(mdoc $'gemini-3.8-flash-high\ngemini-4-neon')" \
-  "warn models agy: changed WHEN: -claude-sonnet-4-6: review routing in docs/engines.md"
+check "doctor: #513 a model gone is a warning too, after the change before it (both within the warning's days)" "$(mdoc $'gemini-3.8-flash-high\ngemini-4-neon')" \
+  "warn models agy: changed WHEN +gemini-4-neon; WHEN -claude-sonnet-4-6: review routing in docs/engines.md"
 check "doctor: #513 within FLEET_MODELS_EVERY_S the list is not asked again" \
   "$(mdoc $'only-one' FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0; cat "$models_dir/models-agy.txt")" $'ok   models agy: 2 models\ngemini-3.8-flash-high\ngemini-4-neon'
 rm -f -- "$models_dir/models-agy.asked"
@@ -3696,7 +3696,7 @@ check "doctor: #513 a list unread for two intervals says so" \
 rm -rf -- "${models_dir:?}"; mkdir -p "$models_dir"; : >"$work/agy-calls"
 mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 >/dev/null
 check "doctor: #513 with no list yet, a failing lister is not asked on every run" \
-  "$(mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600; wc -l <"$work/agy-calls")" $'ok   models agy: its model list has not been read yet\n1'
+  "$(mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600; wc -l <"$work/agy-calls")" $'warn models agy: its model list could not be read (asked WHEN): changes go unseen\n1'
 # The parsers, on what the engines really print and store (agy `agy models` 11-23; Copilot CLI 1.0 data.db).
 # shellcheck disable=SC2016 # the stub's $1 is its own
 printf '%s\n' '#!/usr/bin/env bash' '[[ $1 == models ]] || exit 2' "printf 'Fetching available models...\\n'" \

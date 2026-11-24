@@ -816,7 +816,7 @@ for e in "${ENGINES[@]}"; do
   login="login not checked"
   case $e in
     agy) [[ -s $HOME/.gemini/antigravity-cli/antigravity-oauth-token ]] && login="signed in" || login="not signed in (run agy once)" ;;
-    copilot) [[ -s $HOME/.copilot/config.json ]] && login="config present" || login="not signed in (copilot login)" ;;
+    copilot) [[ -s ${COPILOT_HOME:-$HOME/.copilot}/config.json ]] && login="config present" || login="not signed in (copilot login)" ;;
   esac
   if [[ ! -r $ENG_LOCK || ! -r $FLEET_HOOK_DIR/klepsydra-engine-rules.md ]]; then
     report warn "engine $e" "$login; lanes OFF: the lock policy or helper rules are missing from $FLEET_HOOK_DIR (fleet install)"
@@ -847,20 +847,21 @@ for e in "${ENGINES[@]}"; do
           detail=""
           [[ -n $added ]] && detail+="+${added// / +} "
           [[ -n $removed ]] && detail+="-${removed// / -} "
-          printf '%s\n' "${detail% }" >"$seen"
-          cp -p -- "$snap" "$snap.prev" 2>/dev/null
+          # A second change within the warning's days adds to it, so the first is not lost.
+          [[ -s $seen ]] && (( now_s - $(stat -c %Y -- "$seen") < models_warn )) || : >"$seen"
+          printf '%s %s\n' "$(date '+%m-%d')" "${detail% }" >>"$seen"
         fi
       fi
       printf '%s\n' "$models" >"$snap.tmp" && mv -f -- "$snap.tmp" "$snap"
     fi
   fi
   if [[ ! -s $snap ]]; then
-    report ok "models $e" "its model list has not been read yet"
+    report warn "models $e" "its model list could not be read (asked $(date -r "$asked" '+%m-%d %H:%M')): changes go unseen"
     continue
   fi
   count=$(grep -c . -- "$snap")
   if [[ -s $seen ]] && (( now_s - $(stat -c %Y -- "$seen") < models_warn )); then
-    report warn "models $e" "changed $(date -r "$seen" '+%m-%d %H:%M'): $(<"$seen"): review routing in docs/engines.md" count="$count"
+    report warn "models $e" "changed $(paste -sd';' - <"$seen" | sed 's/;/; /g'): review routing in docs/engines.md" count="$count"
   elif [[ $asked -nt $snap ]] && (( now_s - $(stat -c %Y -- "$snap") >= 2 * models_every )); then
     report warn "models $e" "not read since $(date -r "$snap" '+%m-%d %H:%M') (its listing failed): changes go unseen" count="$count"
   else

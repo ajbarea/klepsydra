@@ -19,7 +19,10 @@ Push: `git push origin feat/model-watch-513:feat/model-watch-513`. Never push to
   fails whole (awk was last in the pipe, so an error read as models gone); one .asked stamp sets
   the interval for every attempt, so a lister that never succeeded is not asked every run; a list
   unread for two intervals is a warning; COPILOT_HOME (Copilot's own variable); atomic snapshot.
-- 16 cases pass in isolation; doctor.sh and engines.sh shellcheck clean.
+- Opus r3 (verify + fresh pass): a lister that never succeeded read ok forever: now a warning;
+  a second change within the 3 days is appended (the first was lost; .prev dropped, nothing read it);
+  the Copilot login line honours COPILOT_HOME.
+- 16 cases pass in isolation; doctor.sh and engines.sh shellcheck clean; live doctor agy 6, Copilot 7.
 
 ## Next
 - CI green, fresh-reader verify, merge (restore main's IMPL.md first).
