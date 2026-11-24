@@ -3303,6 +3303,7 @@ refused() { # RC: move_tries and move_failed set after a move refused with RC, f
 }
 check "#515 review: a move AJ refused before it started costs nothing; a launch he undid waits as a second failure; any other failure counts once" \
   "$(refused 1) | $(refused 4) | $(refused 3)" "0 none | 2 100 | 1 100"
+# shellcheck disable=SC2016 # literal text to find in the service
 check "#515 review: every kind of move hands its refusals to that one rule" \
   "$(grep -c 'move_refused "$p" "$rc"' "$here/resume-at-reset.sh")" "3"
 check "#515: the wall warns at the same budget the resume service acts on" \
