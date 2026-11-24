@@ -22,8 +22,9 @@ live in one folder that always exists and is ours; only `fleet recover` waits.
   its Should-fix 1-2 and Nits 1, 2, 4, 5 (lock wait), 6 (jump message) fixed in e0c3ccd.
 - Open by choice: no doctor check for an unusable lock folder (Nit 5); old design spec
   keeps its historical XDG_RUNTIME_DIR text.
-- Next: read the chained run (launch3/fleet3/lat3/mut3 in the session scratchpad), fill the
-  PR body (scratchpad pr-body.md), push HEAD:fix/launch-lock-runtime-dir-517, CI green,
-  `fleet done`.
+- Done at 40e38b9: CI green; 30 mutants, 25 killed, 5 survivors by design (PR body);
+  make test-fleet 1007/0; latency table in the PR body.
+- Next: Heph's r2 review and merge; after merge, update the main checkout before
+  `fleet install`.
 - Verify: `bash hooks/test_fleet.sh`, `bash statusline/test_statusline.sh`, `make test-launch`,
   `make test-fleet`; shellcheck per file (whole-tree `make shellcheck` OOMs, klepsydra#503).
