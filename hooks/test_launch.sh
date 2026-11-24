@@ -779,8 +779,11 @@ stop_server; detach_all; : >"$WT_LOG"
 ln -s "$HOME/.local/state/klepsydra" "$work/state-link"
 out=$(KLEPSYDRA_STATE="$work/state-link" bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "#517: no lock folder of its own: new is refused and says why" "$rc|$out|$(windows) $(tabs)" \
-  "1|klepsydra's lock folder ($work/state-link) is missing, a symlink or not yours, so nothing was started.|0 0"
+  "1|klepsydra's lock folder ($work/state-link) is missing, a symlink, not yours or writable by others, so this click went no further.|0 0"
 rm -f -- "$work/state-link"
+# A lock wait that is no number of seconds is the 10 s default, not "another launch".
+out=$(KLEPSYDRA_LOCK_WAIT=abc bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 review: KLEPSYDRA_LOCK_WAIT=abc still launches" "$rc $(windows)" "0 1"
 
 echo "one tab per fleet"
 stop_server; detach_all; : >"$WT_LOG"

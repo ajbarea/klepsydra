@@ -15,6 +15,9 @@ export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 # Never AJ's keryx: the resume service skips voices, and voices.sh finds no keryx
 # and reads a private keryx config, unless a case hands it a stub (#273).
 export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_BROWSERS=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
+# The hooks' lock folder is the suite's, and recover waits for no real user
+# manager unless a case says so (#517).
+export KLEPSYDRA_STATE="$work/klepsydra-state" FLEET_SYSTEMD_BOOTED="$work/no-systemd"
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
@@ -4904,6 +4907,18 @@ wait
 check "#517 N4: one that comes as a symlink ends the wait at once, warned" "${out#*;}" \
   "WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-late-link|now"
 ln -s "$work/wr-own" "$work/wr-link"
+# Where systemd booted, the user manager's socket ends the wait, not the folder.
+mkdir -p "$work/wr-sd" "$work/wr-own/systemd"
+( sleep 0.4; python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$work/wr-own/systemd/private" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_SYSTEMD_BOOTED="$work/wr-sd" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517 review: with systemd, the folder alone is not enough: waits for the user manager" "$out" \
+  "0|INFO waiting for the runtime folder before launching dir=$work/wr-own timeout_s=5 user_manager=$work/wr-own/systemd/private|now"
+rm -f -- "$work/wr-own/systemd/private"
+check "#517 review: and a user manager that never starts is warned about at the timeout" \
+  "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_SYSTEMD_BOOTED="$work/wr-sd" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1)" \
+  "1|INFO waiting for the runtime folder before launching dir=$work/wr-own timeout_s=1 user_manager=$work/wr-own/systemd/private;WARN the user manager did not start; launching anyway dir=$work/wr-own timeout_s=1|1-3s"
+rm -rf -- "${work:?}/wr-own/systemd" "${work:?}/wr-sd"
 check "#517 N4: nor a symlink, even to a folder of ours" "$(wr XDG_RUNTIME_DIR="$work/wr-link" FLEET_RUNTIME_WAIT=5)" \
   "1|WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-link|now"
 for v in abc 1.5 -3 1234567; do

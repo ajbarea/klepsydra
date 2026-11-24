@@ -45,13 +45,14 @@ elif [[ -z $CAST && -n ${HOME:-} ]]; then CAST=$HOME/.claude/klepsydra-cast.json
 # --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
 # The folder for the locks and stamps every caller must share: one per boot in
 # ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and used only
-# while it and the folder above it are ours and not symlinks. Sets LOCK_DIR, or
-# empties it and fails; never waits, never prints. Not XDG_RUNTIME_DIR: a WSL
-# boot sets it before logind makes it, and the overlay's shells may lack it, so
-# callers would split between two locks (#517). Making a known boot's folder
-# removes the earlier boots' ones.
+# while it and the folder above it are ours and not symlinks, and the folder
+# above it is writable by no one else. Sets LOCK_DIR, or empties it and fails;
+# never waits, never prints. Not XDG_RUNTIME_DIR: a WSL boot sets it before
+# logind makes it, and the overlay's shells may lack it, so callers would split
+# between two locks (#517). Making a known boot's folder removes the folders of
+# boots that ended, the only ones last changed before this boot began (btime).
 lock_dir() {
-  local base=${KLEPSYDRA_STATE:-} boot="" run old
+  local base=${KLEPSYDRA_STATE:-} boot="" run old mode key val btime="" m
   LOCK_DIR=""
   if [[ -z $base ]]; then
     if [[ -n ${HOME:-} ]]; then base=$HOME
@@ -66,10 +67,14 @@ lock_dir() {
   if [[ ! -e $run && ! -L $run ]]; then
     [[ -e $base || -L $base ]] || { mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>/dev/null
     [[ -d $base && -O $base && ! -L $base ]] || return 1
+    mode=$(stat -c %a -- "$base" 2>/dev/null) # once a boot: others could plant links
+    [[ $mode =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 8#022) == 0 )) || return 1
     if mkdir -m 700 -- "$run" 2>/dev/null && [[ $boot != unknown ]]; then
+      while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done 2>/dev/null </proc/stat
       for old in "$base"/run-*; do
-        [[ ${old##*/} =~ ^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ && $old != "$run" && -d $old && ! -L $old ]] &&
-          rm -rf -- "${old:?}" 2>/dev/null
+        [[ $btime =~ ^[0-9]+$ && ${old##*/} =~ ^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ &&
+          $old != "$run" && -d $old && ! -L $old ]] || continue
+        m=$(stat -c %Y -- "$old" 2>/dev/null) && [[ $m =~ ^[0-9]+$ ]] && (( m < btime )) && rm -rf -- "${old:?}" 2>/dev/null
       done
     fi
   fi

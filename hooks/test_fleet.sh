@@ -658,17 +658,28 @@ if sudo -n install -d -m 700 -o root "$work/s-foreign/run-0b6e1c5a-1111-4222-833
   check "#517 N4: a foreign boot folder is refused" "$(ld KLEPSYDRA_STATE="$work/s-foreign")" "1 "
   sudo -n rm -rf -- "${work:?}/s-foreign/run-0b6e1c5a-1111-4222-8333-444455556666"
 else echo "skip: no sudo to make a foreign boot folder"; fi
-# Making this boot's folder removes the earlier boots' ones, and nothing else.
-pb="$work/s-prune"; mkdir -m 700 "$pb" && mkdir -m 700 "$pb/run-$(lsid 1)" "$pb/run-notes" "$pb/run-unknown" "$pb/keep" "$work/p-target"
+# Making this boot's folder removes the folders of boots that ended (last
+# changed before this boot began), and nothing else.
+pb="$work/s-prune"; mkdir -m 700 "$pb" && mkdir -m 700 "$pb/run-$(lsid 1)" "$pb/run-$(lsid 6)" "$pb/run-notes" "$pb/run-unknown" "$pb/keep" "$work/p-target"
 : >"$pb/run-$(lsid 1)/klepsydra-fleet-$UID.lock"; : >"$work/p-target/x"
 ln -s "$work/p-target" "$pb/run-$(lsid 2)"
+touch -h -d @1000000000 "$pb/run-$(lsid 1)" "$pb/run-$(lsid 2)" "$pb/run-notes" "$pb/run-unknown" "$pb/keep"
 check "#517: a new boot's folder is made" "$(ld KLEPSYDRA_STATE="$pb")" "0 $pb/run-0b6e1c5a-1111-4222-8333-444455556666"
-check "#517: and an earlier boot's goes, but not a look-alike, a link or its target" \
-  "$(for n in "run-$(lsid 1)" run-notes run-unknown keep "run-$(lsid 2)"; do [[ -e $pb/$n || -L $pb/$n ]] && printf '%s ' kept || printf '%s ' gone; done; [[ -e $work/p-target/x ]] && echo target)" \
-  "gone kept kept kept kept target"
+check "#517: and an ended boot's goes, but not a live one, a look-alike, a link or its target" \
+  "$(for n in "run-$(lsid 1)" "run-$(lsid 6)" run-notes run-unknown keep "run-$(lsid 2)"; do [[ -e $pb/$n || -L $pb/$n ]] && printf '%s ' kept || printf '%s ' gone; done; [[ -e $work/p-target/x ]] && echo target)" \
+  "gone kept kept kept kept kept target"
+# Review: a caller on another boot id (the seam, or a second kernel on this
+# HOME) makes its own folder but never removes the live one.
+cat /proc/sys/kernel/random/uuid >"$work/boot-other"
+check "#517 review: a caller on another boot id leaves this boot's live folder" \
+  "$(ld KLEPSYDRA_STATE="$pb" KLEPSYDRA_BOOT_ID="$work/boot-other" | cut -c1-2)$([[ -d $pb/run-0b6e1c5a-1111-4222-8333-444455556666 ]] && echo kept)" "0 kept"
+pu="$work/s-unknown"; mkdir -m 700 "$pu" "$pu/run-$(lsid 7)"; touch -d @1000000000 "$pu/run-$(lsid 7)"
 printf 'not a boot id\n' >"$work/boot-bad"
 check "#517: an unreadable boot locks in run-unknown, and removes no boot's folder" \
-  "$(ld KLEPSYDRA_STATE="$pb" KLEPSYDRA_BOOT_ID="$work/boot-bad") $([[ -d $pb/run-0b6e1c5a-1111-4222-8333-444455556666 ]] && echo kept)" "0 $pb/run-unknown kept"
+  "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_BOOT_ID="$work/boot-bad") $([[ -d $pu/run-$(lsid 7) ]] && echo kept)" "0 $pu/run-unknown kept"
+mkdir -m 775 "$work/s-gw"
+check "#517 review: a state folder others can write to is refused, and no boot folder made in it" \
+  "$(ld KLEPSYDRA_STATE="$work/s-gw")|$(find "$work/s-gw" -mindepth 1 | wc -l)" "1 |0"
 # The hook: never waits, never prints, and with no folder of its own writes nothing.
 s=$EPOCHREALTIME
 out=$(fire user-prompt.json ".session_id = \"$(lsid 3)\"" XDG_RUNTIME_DIR="$work/not-yet" 2>&1); rc=$?
@@ -1474,8 +1485,8 @@ pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
 check "proc stat block present" "$([[ -n "$(pblock "$hook")" ]] && echo yes)" "yes"
 check "proc stat block identical in the launcher" "$(pblock "$hook")" "$(pblock "$here/klepsydra-launch.sh")"
 # shellcheck disable=SC2016 # a literal $PROC_ROOT, as the scripts spell it
-check "the launcher parses /proc only in the block" \
-  "$(sed '/^# --- proc stat/,/^# --- end proc stat ---$/d' "$here/klepsydra-launch.sh" | grep -cE 'read -r -a stat|<"?(/proc|\$PROC_ROOT)/')" "0"
+check "the launcher parses /proc only in the block (and the lock dir block's boot id and btime)" \
+  "$(sed -e '/^# --- proc stat/,/^# --- end proc stat ---$/d' -e '/^# --- lock dir/,/^# --- end lock dir ---$/d' "$here/klepsydra-launch.sh" | grep -cE 'read -r -a stat|<"?(/proc|\$PROC_ROOT)/')" "0"
 
 # A hook must stay silent and exit 0 even when its environment is bare.
 out=$(env -u USER -u HOME bash "$hook" </dev/null 2>&1); rc=$?

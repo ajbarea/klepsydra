@@ -94,13 +94,20 @@ plain() { sed -E $'s/\e\\][^\a\e]*(\a|\e\\\\)//g; s/\e\\[[0-9;?]*[A-Za-z]//g'; }
 # wait_runtime_dir: what fleet recover does before it launches anyone. A WSL
 # boot sets XDG_RUNTIME_DIR before logind makes the folder and starts the user
 # manager the fleet's scopes run under (#517), so wait up to FLEET_RUNTIME_WAIT
-# seconds (180) for the folder to exist as ours, with one log line while it
-# waits and a warning if it never comes. A folder that is there but not ours,
-# or a symlink, will not change by waiting: warned at once. Unset: no wait.
-# Fails when it gave up; the launches go ahead either way. Polling, since
+# seconds (180) for the folder to exist as ours and, where systemd booted, for
+# the user manager's socket in it, with one log line while it waits and a
+# warning if they never come. A folder that is there but not ours, or a
+# symlink, will not change by waiting: warned at once. Unset: no wait. Fails
+# when it gave up; the launches go ahead either way. Polling, since
 # `systemctl --user is-system-running --wait` has no timeout of its own.
+runtime_state() { # DIR BUS: sets RT_STATE to ready, missing, foreign or nobus
+  if [[ -L $1 || ( -e $1 && ! ( -d $1 && -O $1 ) ) ]]; then RT_STATE=foreign
+  elif [[ ! -e $1 ]]; then RT_STATE=missing
+  elif [[ -n $2 && ! -S $2 ]]; then RT_STATE=nobus
+  else RT_STATE=ready; fi
+}
 wait_runtime_dir() {
-  local d=${XDG_RUNTIME_DIR:-} wait=${FLEET_RUNTIME_WAIT:-180} tick=${FLEET_RUNTIME_TICK:-1} deadline
+  local d=${XDG_RUNTIME_DIR:-} wait=${FLEET_RUNTIME_WAIT:-180} tick=${FLEET_RUNTIME_TICK:-1} deadline bus=""
   [[ $tick =~ ^[0-9]{1,3}(\.[0-9]{1,3})?$ && ! $tick =~ ^0+(\.0+)?$ ]] || tick=1
   while [[ $d == */ ]]; do d=${d%/}; done
   [[ -n $d ]] || return 0
@@ -109,17 +116,22 @@ wait_runtime_dir() {
     wait=180
   fi
   wait=$((10#$wait))
-  if [[ ! -e $d && ! -L $d ]] && (( wait > 0 )); then
-    flog INFO "waiting for the runtime folder before launching" dir="$d" timeout_s="$wait"
+  [[ -d ${FLEET_SYSTEMD_BOOTED:-/run/systemd/system} ]] && bus=$d/systemd/private
+  runtime_state "$d" "$bus"
+  if [[ $RT_STATE == missing || $RT_STATE == nobus ]] && (( wait > 0 )); then
+    flog INFO "waiting for the runtime folder before launching" dir="$d" timeout_s="$wait" ${bus:+user_manager="$bus"}
     deadline=$(( ${EPOCHREALTIME//[!0-9]/} + wait * 1000000 )) # microseconds: SECONDS ticks whole seconds
-    while [[ ! -e $d && ! -L $d ]] && (( ${EPOCHREALTIME//[!0-9]/} < deadline )); do sleep "$tick"; done
+    while [[ $RT_STATE == missing || $RT_STATE == nobus ]] && (( ${EPOCHREALTIME//[!0-9]/} < deadline )); do
+      sleep "$tick"
+      runtime_state "$d" "$bus"
+    done
   fi
-  [[ -d $d && -O $d && ! -L $d ]] && return 0
-  if [[ -e $d || -L $d ]]; then
-    flog WARN "the runtime folder is not this user's own; launching anyway" dir="$d"
-  else
-    flog WARN "the runtime folder did not appear; launching anyway" dir="$d" timeout_s="$wait"
-  fi
+  case $RT_STATE in
+    ready) return 0 ;;
+    foreign) flog WARN "the runtime folder is not this user's own; launching anyway" dir="$d" ;;
+    nobus) flog WARN "the user manager did not start; launching anyway" dir="$d" timeout_s="$wait" ;;
+    *) flog WARN "the runtime folder did not appear; launching anyway" dir="$d" timeout_s="$wait" ;;
+  esac
   return 1
 }
 
