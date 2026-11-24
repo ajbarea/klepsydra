@@ -1,41 +1,28 @@
-# IMPL: klepsydra#492, perf class (a): one process per batch in the fleet's shell loops
+# IMPL: #460 Debian Linux launch parity (PR #458, branch feat/linux-launch-parity)
 
-Branch perf/shell-forks (worktree .claude/worktrees/perf-shell-forks), cut `--no-track` from origin/main 958dbb2.
-Push only: `git push -u origin perf/shell-forks:perf/shell-forks`. Never push to main.
-Role (Athena 11-19): perf-k measures and specifies; agy workers implement slices from the specs; perf-k
-verifies each PR against before.md. perf-k codes a slice only when it is too subtle for Flash.
+Issue: https://github.com/ajbarea/klepsydra/issues/460. The Windows/WSL path must not change.
 
-## Slices (specs in ~/.local/state/fleet-orchestrator/briefs-free/perf-shell-forks-N-*.md)
-1. sessions: one jq for every session file (hook's fleet_rows block shared into lib.sh). agy, first.
-2. panes: live_panes_load once + pane_live. agy, after 1.
-3. lib-load: lib.sh load 16-19 -> 1 fork, flog +8 -> +5, hook mkdir. agy, after 1.
-4. screen parse (THIS BRANCH, perf-k): one awk per capture; armed_at; stopped_at via printf.
-5. paths: basename/dirname -> parameter expansion + lint. agy, after 1 and 3.
+## Slice
+Live check on the Debian 13 / XFCE PC (RIT), and fix what it finds.
 
 ## Done
-- Baseline 06df2c2: docs/perf/2026-11-19-shell-forks/before.md, harness scripts/perf/forks/.
-- Slice 4 7662892: resume pass 772 -> 472, watch tick (3 panes) 152 -> 39, doctor 1645 -> 1479.
-  Differential test 22227 checks (368 screens x gawk+mawk, both orders) + stopped_at DST; Opus review
-  round 1: no divergence; should-fix (failed parse cached, cache transitions untested, 4 helpers
-  missing) fixed. Mutations: 7 of 9 killed and confirmed, keep-failed + no-idle-order rerunning.
-- Specs 1-3, 5 written, SOTA guard policy folded in (gate on counts, wall time reported only).
-- Reported to Athena 16:42 (fleet send).
+- Earlier: review fixes for the Linux launcher, `launch.rs` Linux argv, xdg-open verbs, pane-died on tmux 3.8 (see `git log`).
+- Live check found every card action dead on native Linux: the hook records `"distro": null` there, and five readers (Rust `launch::target`, `folder_of`, `github_of`; JS `jumpable`, `inFleet`) required one. Now one Rust helper, `distro_words(distro, native)`, needs a distro only through wsl.exe; `recorded_distro` is the one reader; JS shares `paneKnown` (end.js). On Windows a record without a distro still gets no pane target (`target_on`), as before.
+- Open terminal did not restore a minimized terminal: xfwm4 unmaps it, so `xdotool search --onlyvisible` missed it. `managed_window` picks the window with WM_STATE (xprop); without xprop, the old visible-only search.
+- A missing `KLEPSYDRA_TERMINAL` is named in the error (`no_terminal`).
+- README Linux: the wall buttons' tools and terminal order.
+- Each fix has a test that fails without it (mutation-checked: 4 Rust, 2 JS, 1 shell, plus the Windows arm).
+- Delta review r1 (Heph, 11-23, `reports/linux-458-delta-r1.md`): S1, the wall lost the platform and offered End/Interrupt, a typed wrap-up and an unnamed Jump to a null-distro session on Windows. The app now adds `native` (launch.rs `NATIVE`) to the wall's snapshot (fleet.rs `for_wall`; the phone gets none), and `paneKnown(s, native)` needs `str(s.distro) || native`. N1: `session_distro(s, native)` is the one reader for `target_on`, `folder_of`, `github_of`, so Folder/GitHub on Windows say again that klepsydra does not know the folder/page. N2: `managed_window` falls back to the visible-only search when no window reports WM_STATE. Six JS mutants killed.
+- Delta review r2 (Heph, 11-23, `reports/linux-458-delta-r2.md`): S1, `jumpStyle` read jumpability again without `native`, so an unnamed native session's Open terminal lost its needs fill and accent marker; it now takes the card's `jump`. S2, the flag's path was unpinned: `hand_out` (fleet.rs) gives the phone the bare snapshot and the windows `for_wall`'s; `folder_request` / `github_request` (launch.rs) read the snapshot for Folder/GitHub as this build does; a browser case feeds a null-distro snapshot with `native: true` and without it. N1: `wrapupLine` takes the flag too.
+
+## Verified
+Live, Debian 13 XFCE X11: + New session (cold and warm), Open terminal (switches tmux window; restores a minimized terminal), `KLEPSYDRA_TERMINAL=nope` (error on + and on Open terminal, nothing created). Suites: cargo fmt/clippy/test workspace, node 508, test-launch 285, test_fleet 599, test-headless 125, statusline, shellcheck, Biome.
+
+Merged main (15 commits) at 1619197; IMPL.md kept as the branch's. On the merged tree: cargo 113+439+7, node 584, test-launch 321, test_fleet 599, test-headless 125, statusline 143, browser 33, shellcheck, Biome; live after a reboot: + New session twice from cold, Open terminal restores a minimized terminal.
 
 ## Next
-1. #500: round 2 (fresh Opus) CLEAN; its nits (armed_at takes its own screen, harness hook rows run with the read-only
-   tmux shim) committed with this IMPL. test_forks_screen.sh 26069 passed (strace 6.8). Report to Athena; do not merge.
-2. #510 (perf/readers, Closes #501): verify pass CLEAN; should-fix (ctime part of the change marker untested) fixed
-   on that branch. Do not merge.
-3. #497 (agy slice 1): re-verified 11-20 01:50 on 96777d2, both should-fix fixed (PR comment). #497 and #500 conflict
-   (test-forks target, CI step, lib.sh): second to merge rebases.
-4. Slices 2, 3, 5 (specs in briefs-free) start after #497 merges; agy implements unless Athena hands them to perf-k.
-5. Class c (frontend P1-P3, P12, A1) after the gauge header PR (feat/gauge-header-421) merges.
-- Checked and left: statusLine 6 processes / 2 jq per 30 s refresh per session (fixture run, strace).
-- Lesson: while a PR's CI runs, commit IMPL locally and push it with the next code change (a lone IMPL push cancels the run).
-
-## Verify
-- `bash fleet/test_forks_screen.sh` (STRACE=, mawk on PATH; ~2.5 min); `make test-forks`. strace here: `apt-get download strace && dpkg -x strace_*.deb root`, then STRACE=root/usr/bin/strace.
-- BEFORE/AFTER: detached worktree at origin/main + `SANDBOX_SEED=<copy> bash scripts/perf/forks/run.sh OUT %59 %60 %63`
-  for each checkout, under `flock -o /tmp/fleet-heavy.lock`.
-- strace/hyperfine/mawk without root: `apt-get download X && dpkg -x X_*.deb root`.
-- Never pkill -f a pattern that appears in your own command line (it kills your shell: exit 144).
+1. ✅ Delta r1 fixes (S1, N1, N2) pushed.
+2. 📋 Delta r2 fixes (S1, S2, N1): suites, mutants, push, CI.
+3. 📋 Heph runs round 3 and merges; do not merge here.
+4. Not done live: End, Interrupt, wrap-up typing, unnamed Jump style, Folder, GitHub on native Linux (tests only; AJ's next Debian session, needs-you).
+5. Follow-ups filed, not in this PR: #527 deb dependencies, #528 "wsl" log lines on Linux, #529 multi-window terminal, #530 xdotool BadWindow, #531 hardcoded fleet-briefing path.

@@ -436,6 +436,7 @@ function updateBackdrop(theme) {
 }
 updateBackdrop(cast);
 let request = null; // the snapshot's wrap-up, while one is shown
+let native = false; // the snapshot's flag for a native Linux app, which reaches tmux itself (launch.rs NATIVE)
 // The Ledger and the Queue share the right edge, one open at a time. Docked,
 // a panel narrows the wall, and Auto measures again (its ResizeObserver).
 const edge = createEdge();
@@ -860,7 +861,7 @@ function render(snapshot) {
   wasState = state;
   paintTally();
   paintLimits(now);
-  const cards = sessions.map((s) => card(s, cast, now, request));
+  const cards = sessions.map((s) => card(s, cast, now, request, native));
   const twoAccounts = accountsDiffer(cards);
   for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);
   cardOf = new Map(cards.map((c) => [c.id, c]));
@@ -1157,6 +1158,7 @@ function take(message) {
     before = statuses(fresh);
     sessions = served ? needsFirst(fresh) : fresh;
     request = message.wrapup ?? null;
+    native = message.native === true;
     latestSnapshot = message;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));

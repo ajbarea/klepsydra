@@ -411,7 +411,7 @@ check "the tray refuses a folder whose settings set a key" "$rc $(has "$out" 'No
 check "and started no tmux server" "$(tmux -L "hl-tray-$$" ls >/dev/null 2>&1 && echo started || echo none)" "none"
 out=$(KLEPSYDRA_WT="$work/no-wt" CLAUDE_CONFIG_DIR="$work/api" KLEPSYDRA_CLAUDE=true KLEPSYDRA_TMUX_SOCKET="hl-tray-$$" bash "$here/../hooks/klepsydra-launch.sh" new "$work/home" 2>&1)
 check "the tray refuses a session on a keyed config folder" "$(has "$out" "Not started: $work/api/settings.json")" "yes"
-out=$(KLEPSYDRA_BACKGROUND=1 KLEPSYDRA_WT="$work/no-wt" CLAUDE_CONFIG_DIR="$work/api" KLEPSYDRA_CLAUDE=true KLEPSYDRA_TMUX_SOCKET="hl-tray-$$" bash "$here/../hooks/klepsydra-launch.sh" new "$work/home" 2>&1)
+out=$(WSL_DISTRO_NAME=Test KLEPSYDRA_BACKGROUND=1 KLEPSYDRA_WT="$work/no-wt" CLAUDE_CONFIG_DIR="$work/api" KLEPSYDRA_CLAUDE=true KLEPSYDRA_TMUX_SOCKET="hl-tray-$$" bash "$here/../hooks/klepsydra-launch.sh" new "$work/home" 2>&1)
 check "a fleet launch from a keyed caller is not judged by the caller's folder" "$(has "$out" 'Not started') $(has "$out" 'wt.exe was not found')" "no yes"
 
 echo "headless: a slow runner loses the start to a starter that gave up"

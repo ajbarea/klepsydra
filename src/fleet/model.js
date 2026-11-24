@@ -8,7 +8,7 @@ import { ledgerLine } from "./ledger.js";
 
 export { voiceName };
 import { speakingNow } from "./speaking.js";
-import { listWords, sessionActions } from "./end.js";
+import { listWords, paneKnown, sessionActions } from "./end.js";
 import { wrapupLine, sessionRoute } from "./wrapup.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
@@ -362,9 +362,9 @@ export function stripItems(sessions, cast, nowMs, before, speaking = null) {
 }
 
 /** Whether the card can jump to the session's terminal, and why not: by its name, or by its tmux pane and Claude process. */
-function jumpable(s) {
+function jumpable(s, native) {
   if (s.status === "ended") return { enabled: false, why: "session ended" };
-  if (!s.name && !(s.tmux && s.claude && s.distro)) return { enabled: false, why: "no session name yet" };
+  if (!s.name && !paneKnown(s, native)) return { enabled: false, why: "no session name yet" };
   return { enabled: true, why: null };
 }
 
@@ -404,8 +404,8 @@ export const accentLight = (accent) => {
  * "needs": the only filled button, on a needs_you card (quiet or not), no marker.
  * "accent": neutral with a left marker in the character's colour. "plain": neutral, no marker.
  */
-function jumpStyle(s, accent) {
-  const kind = !jumpable(s).enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
+function jumpStyle(jump, s, accent) {
+  const kind = !jump.enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
   return { jumpKind: kind, jumpMark: kind === "accent" ? { color: accent, width: markerWidth(accent, BUTTON_BGS) } : null };
 }
 
@@ -633,14 +633,14 @@ export function engineInfo(engine, model) {
   };
 }
 
-/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
-export function card(s, cast, nowMs, request = null) {
+/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown, and `native` its flag for a native Linux app, which reaches tmux itself. */
+export function card(s, cast, nowMs, request = null, native = false) {
   const who = identity(s, cast);
-  const wrapup = wrapupLine(s, request, nowMs);
+  const wrapup = wrapupLine(s, request, nowMs, native);
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
-  const jump = jumpable(s);
+  const jump = jumpable(s, native);
   const marks = crewMarks(crew);
   const eng = s.engine ? s.engine.trim().toLowerCase() : (s.session_id ? "claude" : null);
   const rawModel = s.model?.display_name || s.model?.id || (typeof s.model === "string" ? s.model : null) || s.statusline?.model?.display_name || s.statusline?.model?.id || null;
@@ -694,7 +694,7 @@ export function card(s, cast, nowMs, request = null) {
     epithet: who.epithet,
     figure: who.figure,
     motif: who.motif || "burst",
-    ...jumpStyle(s, who.accent),
+    ...jumpStyle(jump, s, who.accent),
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
@@ -706,8 +706,8 @@ export function card(s, cast, nowMs, request = null) {
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump,
     clear: s.status === "ended" || s.status === "silent",
-    actions: sessionActions(s),
-    wrapupRoute: sessionRoute(s),
+    actions: sessionActions(s, native),
+    wrapupRoute: sessionRoute(s, native),
     wrapup,
     remote: remoteLink(s.remote_url),
     // The account it runs on; the wall shows it only while cards differ in it (accountsDiffer).

@@ -2293,6 +2293,62 @@ def wrapup_confirm_lists_routes(wall):
     page.close()
 
 
+NATIVE_KEYS = ("demo-1-am_michael", "demo-2-af_bella", "demo-5-bf_isabella")  # needs_you, working, done
+
+
+def native_flag_reaches_the_cards(wall):
+    """A native Linux snapshot (native: true) offers its null-distro sessions End, Interrupt, a typed wrap-up and an
+    unnamed Jump styled like any other; the same snapshot with native false (what Windows sends) or
+    without the flag (an older app) offers none of them."""
+    page = open_app(wall, keep=lambda s: s["session_id"] in NATIVE_KEYS)
+    names = names_by_key(page)
+    base = json.loads(json.dumps(page.snapshot))
+    for row in base["sessions"]:
+        row["distro"] = None  # the hook records none on native Linux
+        if row["session_id"] != "demo-2-af_bella":
+            row["name"] = None  # unnamed: Jump finds it by its pane alone
+    state = """() => Object.fromEntries([...document.querySelectorAll('.card')].map((c) => [c.dataset.key, {
+      menu: !c.querySelector('.menu').hidden,
+      jump: !('off' in c.querySelector('.jump').dataset),
+      kind: c.querySelector('.jump').dataset.kind,
+    }]))"""
+    for native in (True, False, None):
+        snap = json.loads(json.dumps(base))
+        if native is not None:
+            snap["native"] = native
+        at = " (flag missing)" if native is None else f" (native: {native})"
+        send(page, snap)
+        got = page.evaluate(state)
+        kinds = {k: got[k]["kind"] for k in NATIVE_KEYS}
+        menus = {k: got[k]["menu"] for k in NATIVE_KEYS}
+        jumps = {k: got[k]["jump"] for k in ("demo-1-am_michael", "demo-5-bf_isabella")}
+        if native:
+            wall.check(all(menus.values()), "every null-distro session in klepsydra's tmux gets the actions menu" + at, menus)
+            wall.check(all(jumps.values()) and kinds["demo-1-am_michael"] == "needs" and kinds["demo-5-bf_isabella"] in ("accent", "plain"),
+                       "an unnamed session's Open terminal is on, filled when it needs you, marked otherwise" + at, [jumps, kinds])
+            open_menu(page, page.locator(".card[data-key='demo-2-af_bella']"))
+            items = page.evaluate(
+                "[...document.querySelectorAll('#session-menu [role=menuitem]')].filter((i) => !i.hidden).map((i) => i.textContent.trim())"
+            )
+            page.keyboard.press("Escape")
+            wall.check(items == ["Interrupt", "End session…"], "a working null-distro card offers Interrupt and End" + at, items)
+        else:
+            wall.check(not any(menus.values()), "through wsl.exe a session with no distro gets no actions menu" + at, menus)
+            wall.check(not any(jumps.values()) and kinds["demo-1-am_michael"] == "off" and kinds["demo-5-bf_isabella"] == "off",
+                       "through wsl.exe an unnamed session with no distro cannot be jumped to" + at, [jumps, kinds])
+        page.click("#wrapup-open")
+        page.wait_for_function("document.getElementById('end-dialog').open")
+        groups = page.evaluate(DIALOG)["groups"]
+        page.get_by_role("button", name="Cancel").click()
+        page.wait_for_function("!document.getElementById('end-dialog').open")
+        typed = [["Typed now", [names["demo-5-bf_isabella"]]]] if native else []
+        by_hand = [] if native else [[BY_HAND, [names["demo-5-bf_isabella"]]]]
+        want = typed + [["At the end of its turn", [names["demo-2-af_bella"]]], ["After you answer", [names["demo-1-am_michael"]]]] + by_hand
+        wall.check(groups == want, "the Wrap up confirm types into an idle null-distro session only with the flag" + at, groups)
+        wall.check(not page.evaluate(STARTS), "looking asks no one" + at, page.evaluate(STARTS))
+    page.close()
+
+
 def wrapup_dialogs_close_on_change(wall):
     """A confirm that no longer describes the wall closes: a session arrives, or one stops being ready."""
     page = open_app(wall)
@@ -5835,6 +5891,7 @@ def main() -> int:
             reply_buttons,
             bulk_end_waits_on_ready,
             wrapup_dialogs_close_on_change,
+            native_flag_reaches_the_cards,
             one_click_or_key_never_ends_all,
             empty_state,
             fleet_health,
