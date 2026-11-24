@@ -188,7 +188,7 @@ Description=klepsydra fleet: commit and push the fleet-briefing repo
 
 [Service]
 Type=oneshot
-TimeoutStartSec=420
+TimeoutStartSec=480
 Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing\"
 ExecStart=/usr/bin/bash $FLEET_STATE/sync-briefing.sh"
 unit fleet-sync-briefing.timer "[Unit]

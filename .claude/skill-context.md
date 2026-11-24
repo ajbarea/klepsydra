@@ -84,6 +84,7 @@ files belong to: the JS guards scan hooks and scripts too.
   delivery, doctor, install).
 - `python3 -I fleet/test_ci_watch.py`: the CI watch against a fake GitHub.
 - `python3 -I fleet/test_prune_shots.py`: the briefing's screenshot prune against a fake gh.
+- `bash fleet/test_sync_mirror.sh`: the briefing sync's Drive mirror refusals (no tmux, no lock).
 - `python3 -I scripts/perf/test_fixture.py`: the perf harness's demo fleet
   writes only files it owns and no future times.
 - `make test-engine` (no tmux, no lock): the agy and Copilot hook adapters in `hooks/klepsydra-engine.sh`; CI does not run it.

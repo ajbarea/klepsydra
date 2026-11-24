@@ -42,7 +42,12 @@ mirror() {
   # back to its older commit: only the commit origin holds goes (#531 review).
   local up
   up=$(git rev-parse -q --verify '@{u}' 2>/dev/null) || { flog WARN "briefing mirror: the branch tracks no upstream; not mirrored" commit="${head:0:7}"; return 0; }
-  timeout 60 git fetch -q origin 2>/dev/null || { flog WARN "briefing mirror: origin did not answer; retried next pass" remote="$DRIVE"; return 0; }
+  # The branch's own remote, bounded (124 is the bound): the only network call on a pass with nothing to push.
+  out=$(timeout "${FLEET_FETCH_TIMEOUT:-60}" git fetch -q 2>&1); rc=$?
+  if (( rc != 0 )); then
+    flog WARN "briefing mirror: the fetch failed; retried next pass" remote="$DRIVE" rc="$rc" said="$(tail -2 <<<"$out")"
+    return 0
+  fi
   up=$(git rev-parse -q --verify '@{u}' 2>/dev/null)
   if [[ $up != "$head" ]]; then
     flog INFO "briefing mirror: this clone is not at origin's commit; mirrored once it is" commit="${head:0:7}"

@@ -4826,7 +4826,7 @@ printf 'q10\n' >"$work/brief/queue.md"; git -C "$work/brief" -c user.name=t -c u
 git -C "$work/brief" push -q origin HEAD 2>/dev/null
 git -C "$work/brief" remote set-url origin "$work/no-such-origin.git"
 check "#531 review: an origin that does not answer mirrors nothing, warns, and keeps the sync green" \
-  "$(FLEET_BRIEFING_DRIVE=gdrive:third msync) $(nsync) $(lastlog "origin did not answer")" "0 7 WARN"
+  "$(FLEET_BRIEFING_DRIVE=gdrive:third msync) $(nsync) $(lastlog "the fetch failed")" "0 7 WARN"
 git -C "$work/brief" remote set-url origin "$url"
 
 echo "fleet send: a message is submitted, never left in the box (#320)"
