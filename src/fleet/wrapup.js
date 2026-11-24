@@ -80,8 +80,9 @@ export const isReady = (s, request) => listed(s, request) && readyState(s) === "
  * never ready. The app marks every typed session asked before it types into
  * any, and unmarks one whose typing failed unless it may have been typed (a
  * timeout or a panic), so a typed route with no answer is one to ask by hand.
+ * `native` is the snapshot's flag, as `sessionRoute` takes it.
  */
-export function wrapupLine(s, request, nowMs) {
+export function wrapupLine(s, request, nowMs, native = false) {
   if (!request || s?.status === "ended") return null;
   if (!listed(s, request)) return { state: "unasked", text: "Not asked" };
   const answer = s.wrapup?.state;
@@ -98,7 +99,7 @@ export function wrapupLine(s, request, nowMs) {
   if (s.status === "needs_you" && s.asked_after_turn) return { state: "by_hand", text: `Answer it, then ask by hand: /klepsydra-wrapup` };
   if (s.status === "needs_you") return { state: "waiting", text: "Answer it first; it wraps up after" };
   if (answer === "asked") return { state: "asked", text: "Wrapping up…" };
-  if (sessionRoute(s) === "turn_end") return { state: "waiting", text: "Wraps up when this turn ends" };
+  if (sessionRoute(s, native) === "turn_end") return { state: "waiting", text: "Wraps up when this turn ends" };
   return { state: "by_hand", text: BY_HAND };
 }
 

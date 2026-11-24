@@ -380,8 +380,8 @@ export const accentLight = (accent) => {
  * "needs": the only filled button, on a needs_you card (quiet or not), no marker.
  * "accent": neutral with a left marker in the character's colour. "plain": neutral, no marker.
  */
-function jumpStyle(s, accent) {
-  const kind = !jumpable(s).enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
+function jumpStyle(jump, s, accent) {
+  const kind = !jump.enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
   return { jumpKind: kind, jumpMark: kind === "accent" ? { color: accent, width: markerWidth(accent, BUTTON_BGS) } : null };
 }
 
@@ -612,7 +612,7 @@ export function engineInfo(engine, model) {
 /** One card on the wall; `request` is the snapshot's wrap-up, when one is shown, and `native` its flag for a native Linux app, which reaches tmux itself. */
 export function card(s, cast, nowMs, request = null, native = false) {
   const who = identity(s, cast);
-  const wrapup = wrapupLine(s, request, nowMs);
+  const wrapup = wrapupLine(s, request, nowMs, native);
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
@@ -670,7 +670,7 @@ export function card(s, cast, nowMs, request = null, native = false) {
     epithet: who.epithet,
     figure: who.figure,
     motif: who.motif || "burst",
-    ...jumpStyle(s, who.accent),
+    ...jumpStyle(jump, s, who.accent),
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),

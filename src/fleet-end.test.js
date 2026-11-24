@@ -63,6 +63,9 @@ test("a model card carries its actions and the menu button's accessible name", (
   const linux = { session_id: "a", status: "working", ...fleet, distro: null };
   assert.equal(card(linux, {}, Date.now()).actions.menu, false, "through wsl.exe");
   assert.equal(card(linux, {}, Date.now(), null, true).actions.menu, true, "the card passes the native flag on");
+  const idle = { ...linux, status: "done" };
+  assert.equal(card(idle, {}, Date.now()).wrapupRoute, "by_hand", "wrap-up through wsl.exe");
+  assert.equal(card(idle, {}, Date.now(), null, true).wrapupRoute, "type", "the card passes the native flag to its wrap-up route");
 });
 
 test("the confirm names the character, the repo and what happens", () => {

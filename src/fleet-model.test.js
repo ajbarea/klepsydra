@@ -413,6 +413,18 @@ test("the Open terminal button: fill only for needs-you, a marker for a characte
   assert.deepEqual(style({ status: "needs_you", voice: "bm_lewis" }), ["needs", null]);
   assert.deepEqual(style({ status: "ended" }), ["off", null], "disabled: no marker, no fill");
   assert.deepEqual(style({ status: "needs_you", name: null }), ["off", null], "disabled needs-you stays quiet");
+  // Native Linux records no distro; the snapshot's flag makes an unnamed session in tmux jumpable, styled like any other.
+  const unnamed = { name: null, tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, claude: { pid: 2231, start: 8717628 }, distro: null };
+  const onLinux = (o, native) => {
+    const k = card(session({ ...unnamed, ...o }), cast, NOW, null, native);
+    return [k.jump.enabled, k.jumpKind, k.jumpMark];
+  };
+  assert.deepEqual(onLinux({ status: "needs_you" }, true), [true, "needs", null], "native: the filled call to action");
+  assert.deepEqual(onLinux({ status: "done" }, true), [true, "accent", { color: "#DA8C20", width: 4 }], "native: the marker");
+  assert.deepEqual(onLinux({ status: "done", voice: "bm_lewis" }, true), [true, "plain", null], "native: a medallion");
+  for (const native of [false, undefined]) {
+    assert.deepEqual(onLinux({ status: "needs_you" }, native), [false, "off", null], `through wsl.exe it needs a distro (${native})`);
+  }
 });
 
 test("only an ended or silent card offers Clear", () => {
