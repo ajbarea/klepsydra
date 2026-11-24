@@ -94,12 +94,14 @@ pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     let Some(id) = crate::choice::picked(menu_id, MENU_PREFIX, &VOICES) else {
         return false;
     };
-    if let Ok(v) = voices::value(id) {
-        crate::write_pref(app, voices::KEY, v);
-    }
+    let saved_ok = if let Ok(v) = voices::value(id) {
+        crate::write_pref(app, voices::KEY, v)
+    } else {
+        false
+    };
     // write_pref logs its own failure; this says which mode holds now.
     let now = saved(app);
-    if now == id {
+    if saved_ok && now == id {
         log::info!(voices = id; "voices: saved; keryx follows it now (fleet voices)");
         crate::launch::apply_voices();
     } else {

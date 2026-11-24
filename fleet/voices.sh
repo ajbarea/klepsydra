@@ -120,8 +120,15 @@ exec 8>>"$FLEET_STATE/voices.lock"
 flock -w $((KERYX_WAIT_S * 2 + 30)) 8 || { err "another fleet voices run holds the lock"; exit 1; }
 if [[ -n ${1:-} && $run == apply ]]; then
   mode=$1
+  # As the app writes it (#484): a file that is not one JSON object is left as it is.
+  prefs_get voices >/dev/null
+  case $? in
+    2) err "$PREFS does not read as one JSON object, so the mode is not saved and the file is left as it is: fix or remove it"; exit 1 ;;
+    1) have=0 ;;
+    *) have=1 ;;
+  esac
   tmp=$(mktemp "$PREFS.XXXXXX") || { err "cannot write beside $PREFS"; exit 1; }
-  if { jq -e 'type == "object"' "$PREFS" >/dev/null 2>&1 && jq --arg m "$mode" '.voices = $m' "$PREFS" || jq -n --arg m "$mode" '{voices: $m}'; } >"$tmp"; then
+  if { if (( have )); then jq --arg m "$mode" '.voices = $m' "$PREFS"; else jq -n --arg m "$mode" '{voices: $m}'; fi; } >"$tmp"; then
     mv -f -- "$tmp" "$PREFS"
   else
     rm -f -- "${tmp:?}"

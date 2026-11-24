@@ -117,6 +117,9 @@ pub struct View {
     /// of its own oldest first, so a card keeps its face. None from a hook
     /// that never stamped it.
     pub started_at: Option<i64>,
+    /// Last request context tokens from its transcript.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_tokens: Option<u64>,
     /// The voice this card gave up to another card that keeps it
     /// (keep_faces_distinct), live or ended; the wall counts it in this card's
     /// place so no other card's face moves (castPicks). Left out when none.
@@ -336,6 +339,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             f.remote_url.clone()
         },
         started_at: f.started_at,
+        call_tokens: f.call_tokens,
         ceded: None,
         pick: None,
         account: f.account.clone(),
@@ -498,6 +502,7 @@ mod tests {
             background: vec![],
             shells_live: None,
             turns: None,
+            call_tokens: None,
             turns_at: None,
             turn_at: None,
             needs: None,
@@ -538,6 +543,17 @@ mod tests {
         let json = serde_json::to_value(&v).unwrap();
         assert_eq!(json["engine"], "agy");
         assert_eq!(json["model"]["display_name"], "Gemini 3.8 Pro");
+    }
+
+    #[test]
+    fn call_tokens_comes_through_from_session_file() {
+        let mut e = entry("a", State::Working, NOW - 5, NOW - 5);
+        assert_eq!(view(&e, NOW).unwrap().call_tokens, None);
+        e.file.call_tokens = Some(245_000);
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.call_tokens, Some(245_000));
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["call_tokens"], 245_000);
     }
 
     #[test]
