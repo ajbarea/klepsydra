@@ -2226,7 +2226,8 @@ NATIVE_KEYS = ("demo-1-am_michael", "demo-2-af_bella", "demo-5-bf_isabella")  # 
 
 def native_flag_reaches_the_cards(wall):
     """A native Linux snapshot (native: true) offers its null-distro sessions End, Interrupt, a typed wrap-up and an
-    unnamed Jump styled like any other; the same snapshot without the flag (Windows) offers none of them."""
+    unnamed Jump styled like any other; the same snapshot with native false (what Windows sends) or
+    without the flag (an older app) offers none of them."""
     page = open_app(wall, keep=lambda s: s["session_id"] in NATIVE_KEYS)
     names = names_by_key(page)
     base = json.loads(json.dumps(page.snapshot))
@@ -2239,11 +2240,11 @@ def native_flag_reaches_the_cards(wall):
       jump: !('off' in c.querySelector('.jump').dataset),
       kind: c.querySelector('.jump').dataset.kind,
     }]))"""
-    for native in (True, None):
+    for native in (True, False, None):
         snap = json.loads(json.dumps(base))
         if native is not None:
             snap["native"] = native
-        at = f" (native: {native})" if native else " (flag missing)"
+        at = " (flag missing)" if native is None else f" (native: {native})"
         send(page, snap)
         got = page.evaluate(state)
         kinds = {k: got[k]["kind"] for k in NATIVE_KEYS}
