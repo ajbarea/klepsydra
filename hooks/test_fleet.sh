@@ -1468,8 +1468,8 @@ check "lock dir block present" "$([[ -n "$(lblock "$hook")" ]] && echo yes)" "ye
 check "lock dir block identical in the launcher" "$(lblock "$hook")" "$(lblock "$here/klepsydra-launch.sh")"
 check "lock dir block identical in the statusline" "$(lblock "$hook")" "$(lblock "$here/../statusline/klepsydra-statusline.sh")"
 # shellcheck disable=SC2016 # literal names, as the scripts spell them
-check "#517 B3: the hooks and statusline source nothing and read no XDG_RUNTIME_DIR" \
-  "$(cat "$hook" "$here/klepsydra-launch.sh" "$here/../statusline/klepsydra-statusline.sh" | grep -v '^[[:space:]]*#' | grep -cE '^[[:space:]]*(\.|source)[[:space:]]+["$/~]|XDG_RUNTIME_DIR|runtime_dir')" "0"
+check "#517 B3, N3, N5: the hooks and statusline source nothing, read no XDG_RUNTIME_DIR and name no /tmp path" \
+  "$(cat "$hook" "$here/klepsydra-launch.sh" "$here/../statusline/klepsydra-statusline.sh" | grep -v '^[[:space:]]*#' | grep -cE '^[[:space:]]*(\.|source)[[:space:]]+["$/~]|XDG_RUNTIME_DIR|runtime_dir|/tmp')" "0"
 pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
 check "proc stat block present" "$([[ -n "$(pblock "$hook")" ]] && echo yes)" "yes"
 check "proc stat block identical in the launcher" "$(pblock "$hook")" "$(pblock "$here/klepsydra-launch.sh")"
