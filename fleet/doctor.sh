@@ -309,6 +309,10 @@ phone() { # CHECK BASE
   [[ -n $phone_body ]] || phone_body=$body
   report ok "$1" "answers at $2"
 }
+# Every setting the app keeps (#484): a file that is not one JSON object is
+# never overwritten, so nothing set in the wall or the tray is kept until it is fixed.
+prefs_get theme >/dev/null
+[[ $? == 2 ]] && report warn prefs "prefs.json does not read as one JSON object: theme, density, voices, zoom, layout and the tray switches are not kept after a restart until it is fixed or removed" prefs="$KLEPSYDRA_DIR/prefs.json"
 # The phone wall is AJ's to switch off (#328): prefs.json's phone_wall, read
 # as the wall reads it (src-tauri/src/phone.rs: a missing or unreadable file is off).
 pw=$(prefs_get phone_wall)
