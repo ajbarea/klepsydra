@@ -19,8 +19,16 @@ one lock folder per host and boot under ~/.local/state/klepsydra; only `fleet re
 - recover's wait: deadline on /proc/uptime (FLEET_UPTIME seam); tick count if unreadable.
 
 ## State
-- Done: code and tests (hooks 649, statusline 142, wrapup 98, make test-launch 289).
-- Next: make test-fleet, mutation run (scratchpad mutate.py, 23 mutants), commit, push,
-  PR body, CI, `fleet done`; Heph runs round 3.
+- Done at c8e4238 (main merged in; doctor.sh header conflict kept both lines): CI green
+  (hooks 655, launcher 289, fleet 1071, status line 146, wrap-up 98, browser 33); local
+  hooks 657, status line 142, wrap-up 98, fleet 1071, launcher 288/1 (#290 flake, klepsydra#134).
+- Independent Opus review of 3e5aa12..1b7b4bb: 0 Blocking; its Should-fix (a host named
+  unknown pruned the unusable hosts' folders) and nits fixed in bedbfb0.
+- Mutants at bedbfb0: 22 run, 22 killed. Not run: F2, F3 (doctor trace age), F4, F5
+  (uptime wait), stopped by WSL memory pressure; rerun with
+  `python3 mutate.py <worktree> results.json F2,F3,F4,F5` (script: below).
+- Next: Heph's r3; after merge update the main checkout before `fleet install`.
 - Verify: `bash hooks/test_fleet.sh`, `bash statusline/test_statusline.sh`, `bash hooks/test_wrapup.sh`,
   `make test-launch`, `make test-fleet`; shellcheck per file (fleet/test_fleet.sh OOMs locally, #503).
+- Mutation script: scripts are not kept in the repo; it applied each mutant to all three block
+  copies in an rsync'd copy and ran the owning suite (hooks, test-launch, test-fleet).
