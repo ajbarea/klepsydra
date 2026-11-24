@@ -159,6 +159,44 @@ proc 406 1 chrome /opt/google/chrome/chrome "--user-data-dir=$cache/mcp-chrome-x
 mutant "no basename guard takes a nested folder" 's/\[\[ \${dir##\*\/} == mcp-chrome-\* \&\& /[[ /' "300,406,500,501,710"
 check "with the guard, the nested folder is not listed" "$(bash "$script" --list | grep -c '^406')" "0"
 
+echo "holders and closed-window detection (#533)"
+tree
+export KLEPSYDRA_DIR=$work/kdir FLEET_STATE=$work/fstate
+mkdir -p "$KLEPSYDRA_DIR/fleet" "$FLEET_STATE"
+jq -n '{session_id: "s100", ended: null, fleet_name: "worker1", claude: {pid: 100}}' >"$KLEPSYDRA_DIR/fleet/s100.json"
+jq -n '{session_id: "s700", ended: null, name: "worker2", claude: {pid: 700}}' >"$KLEPSYDRA_DIR/fleet/s700.json"
+
+check "holder-of returns agent name by pid" "$(bash "$script" --holder-of 100)" "worker1"
+check "holder-of falls back to session name" "$(bash "$script" --holder-of 700)" "worker2"
+check "holder-of unknown pid is empty" "$(bash "$script" --holder-of 9999)" ""
+
+check "holders maps profiles to agent names" "$(bash "$script" --holders | sort)" \
+  "$(printf '%s\tworker1\n%s\tworker2' "$cache/mcp-chrome-c35bcf5" "$cache/mcp-chrome-other" | sort)"
+check "holder returns agent holding the profile" "$(bash "$script" --holder "$cache/mcp-chrome-c35bcf5")" "worker1"
+
+# Active state tracking
+run bash "$script" --sync-holders
+check "sync-holders tracks active browser" \
+  "$(awk -F'\t' '$4 == "worker1" { print $5 "\t" $4 }' "$FLEET_STATE/browser-active")" \
+  "$(printf '%s\tworker1' "$cache/mcp-chrome-c35bcf5")"
+
+# Closed window detection
+rm -rf -- "${P:?}/300"
+run bash "$script" --sync-holders
+check "closed window while held writes browser-closed" "$(cut -f1,2 "$FLEET_STATE/browser-closed")" "$(printf 'worker1\t%s' "$cache/mcp-chrome-c35bcf5")"
+
+# PreToolUse hook denies browser tool calls when window was closed while held
+pre_out=$(bash "$script" --pre-tool <<<'{"tool_name":"browser_click","tool_input":{"selector":"button"}}')
+pre_rc=$?
+check "pre-tool denies tool when browser closed while held" \
+  "$(jq -r '[.hookSpecificOutput.permissionDecision, .hookSpecificOutput.permissionDecisionReason] | join(": ")' <<<"$pre_out") rc=$pre_rc" \
+  "deny: browser closed while worker1 held it rc=0"
+
+# browser_close resets the closed state and succeeds
+pre_close=$(bash "$script" --pre-tool <<<'{"tool_name":"browser_close","tool_input":{}}' 2>&1; echo "rc=$?")
+check "pre-tool allows browser_close and clears state" "$pre_close" "rc=0"
+check "browser-closed file was removed" "$([[ -f $FLEET_STATE/browser-closed ]] && echo exists || echo gone)" "gone"
+
 echo "install block"
 settings=$(sed -n '/^<!-- browser-settings:start -->$/,/^<!-- browser-settings:end -->$/p' "$here/../README.md" |
   grep -v -e '^<!--' -e '^```')

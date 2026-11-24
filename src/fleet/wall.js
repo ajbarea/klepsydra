@@ -43,6 +43,8 @@ const BRANCH_ICON =
 // A head and shoulders: the account a session runs on, told apart from the branch beside it.
 const ACCOUNT_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 14c.6-2.8 2.6-4.2 5-4.2s4.4 1.4 5 4.2"/></svg><span class="visually-hidden">account </span><span></span>';
+const BROWSER_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 6.5h12M4.5 4.8h.01M7 4.8h.01"/></svg><span></span>';
 
 const TALLY = [
   ["needs", "needs you"],
@@ -617,6 +619,13 @@ function paint(el, c) {
   if (!acct.firstChild) acct.innerHTML = ACCOUNT_ICON;
   setText(acct.lastChild, c.showAccount ? c.account : null);
   acct.title = c.showAccount ? `Account: ${c.account}` : "";
+  const browserChip = el.querySelector(".browser-chip");
+  if (browserChip) {
+    browserChip.hidden = !c.browser;
+    if (!browserChip.firstChild) browserChip.innerHTML = BROWSER_ICON;
+    setText(browserChip.lastChild, c.browser ? `browser: ${c.browser}` : null);
+    browserChip.title = c.browser ? `MCP browser held by ${c.browser}` : "";
+  }
   el.querySelector(".where").title = [`${c.place?.repo ?? ""}${c.place?.worktree ? ` / ${c.place.worktree}` : ""}`, c.place?.branch, c.showAccount ? `on ${c.account}` : null].filter(Boolean).join(" \u00b7 ");
   const also = c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t }));
   if (c.alsoRest) {

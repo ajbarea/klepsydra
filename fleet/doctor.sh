@@ -610,31 +610,71 @@ heavy_lock_check() {
 }
 heavy_lock_check
 
-# Open Playwright MCP browsers (#379): pid, owning session (its fleet file's
-# session id by the claude pid, else that pid) and idle time (since its profile
+# Open Playwright MCP browsers (#379, #533): pid, owning session (its fleet file's
+# agent name or session id by the claude pid, else that pid) and idle time (since its profile
 # last changed). One idle past FLEET_BROWSER_IDLE_MIN minutes (30) warns, as
-# does one whose MCP server is gone (the resume service closes it).
+# does one whose MCP server is gone (the resume service closes it), or one closed while held.
 browser_check() {
-  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0
+  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir agent list="" warned=0
   [[ $min =~ ^[0-9]+$ ]] || min=30
   idle_max=$((min * 60))
+  local bscript=${FLEET_BROWSER_SCRIPT:-${here%/fleet}/hooks/klepsydra-browser.sh}
+  declare -A seen_dirs=()
   while IFS=$'\t' read -r pid server claude idle dir; do
     [[ -n $pid ]] || continue
-    who="claude $claude"
-    if [[ $claude == - ]]; then who="no session"
-    else
-      while IFS= read -r f; do
-        jq -e --argjson p "$claude" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1 && { who="session $(basename "$f" .json | cut -c1-8)"; break; }
-      done < <(grep -lE -- "\"pid\": *${claude}[,} ]" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+    [[ -z ${seen_dirs[$dir]:-} ]] || continue
+    seen_dirs[$dir]=1
+    agent=""
+    if [[ $claude != - ]]; then
+      agent=$(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" FLEET_STATE="$FLEET_STATE" REGISTRY="$REGISTRY" KLEPSYDRA_DIR="$KLEPSYDRA_DIR" bash "$bscript" --holder-of "$claude" 2>/dev/null)
     fi
-    list+="pid $pid ($who, idle $( [[ $idle == - ]] && echo '?' || echo "$((idle / 60)) min")"
-    if [[ $server == - ]]; then list+=", its MCP server is gone"; warned=1
-    elif [[ $idle != - ]] && (( idle >= idle_max )); then list+=", past $min min"; warned=1; fi
-    list+="); "
-  done < <(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" bash "${FLEET_BROWSER_SCRIPT:-${here%/fleet}/hooks/klepsydra-browser.sh}" --list 2>/dev/null </dev/null)
-  if [[ -z $list ]]; then report ok "MCP browsers" "none open"
-  elif (( warned )); then report warn "MCP browsers" "${list%; } (the resume service closes one whose server is gone; an idle one closes with browser_close in its session, or a kill of its pid)"
-  else report ok "MCP browsers" "${list%; }"; fi
+    local idle_min
+    if [[ $idle == - ]]; then idle_min="?"
+    else idle_min="$((idle / 60)) min"; fi
+
+    if [[ -n $agent && $agent != "claude "* && $agent != "no session" ]]; then
+      list+="held by $agent for $idle_min"
+      if [[ $server == - ]]; then
+        list+=", its MCP server is gone"
+        warned=1
+      elif [[ $idle != - ]] && (( idle >= idle_max )); then
+        list+=", past $min min"
+        warned=1
+      fi
+    else
+      local who="claude $claude"
+      [[ $claude == - ]] && who="no session"
+      list+="pid $pid ($who, idle $idle_min"
+      if [[ $server == - ]]; then
+        list+=", its MCP server is gone"
+        warned=1
+      elif [[ $idle != - ]] && (( idle >= idle_max )); then
+        list+=", past $min min"
+        warned=1
+      fi
+      list+=")"
+    fi
+    list+="; "
+  done < <(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" FLEET_STATE="$FLEET_STATE" REGISTRY="$REGISTRY" KLEPSYDRA_DIR="$KLEPSYDRA_DIR" bash "$bscript" --list 2>/dev/null </dev/null)
+
+  # Check if browser was closed while held
+  local closed_agent=""
+  if [[ -f $FLEET_STATE/browser-closed ]]; then
+    closed_agent=$(awk -F'\t' '{ print $1; exit }' "$FLEET_STATE/browser-closed" 2>/dev/null)
+    [[ -n $closed_agent ]] || closed_agent=$(awk '{ print $1; exit }' "$FLEET_STATE/browser-closed" 2>/dev/null)
+  fi
+
+  if [[ -n $list ]]; then
+    if (( warned )); then
+      report warn "MCP browsers" "${list%; } (the resume service closes one whose server is gone; an idle one closes with browser_close in its session, or a kill of its pid)"
+    else
+      report ok "MCP browsers" "${list%; }"
+    fi
+  elif [[ -n $closed_agent ]]; then
+    report warn "MCP browsers" "browser closed while $closed_agent held it"
+  else
+    report ok "MCP browsers" "none open"
+  fi
 }
 browser_check
 

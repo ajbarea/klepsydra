@@ -573,6 +573,12 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
+# The agent holding an open Playwright MCP browser, or one line per open browser (#533).
+browser_holder() { # [PROFILE]
+  local bscript=${FLEET_BROWSER_SCRIPT:-${here%/fleet}/hooks/klepsydra-browser.sh}
+  KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" FLEET_STATE="$FLEET_STATE" REGISTRY="$REGISTRY" KLEPSYDRA_DIR="$KLEPSYDRA_DIR" \
+    bash "$bscript" --holder "$@" 2>/dev/null
+}
 # Reports `fleet done` sent: time, name, pane, send result (pending while the
 # send runs, then sent, queued or why not); `fleet close` removes them. Every
 # write goes through the registry lock (with_registry).

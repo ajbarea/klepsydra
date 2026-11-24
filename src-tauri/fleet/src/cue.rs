@@ -183,6 +183,7 @@ mod tests {
             orchestrator: false,
             orchestrator_face: None,
             reply_at: None,
+            browser: None,
             marks: Marks {
                 state_at: START + at,
                 turns,

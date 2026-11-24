@@ -300,6 +300,9 @@ pub struct SessionFile {
     /// The model running this session if recorded.
     #[serde(default)]
     pub model: Option<serde_json::Value>,
+    /// The agent holding an open Playwright MCP browser (#533).
+    #[serde(default)]
+    pub browser: Option<String>,
 }
 
 /// `orchestrator_face` when it is a short plain voice key; anything else is

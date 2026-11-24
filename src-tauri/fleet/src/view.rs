@@ -154,6 +154,9 @@ pub struct View {
     /// so the card can play it; left out of the JSON without one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_at: Option<i64>,
+    /// The agent holding an open Playwright MCP browser (#533).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser: Option<String>,
     #[serde(skip)]
     pub marks: Marks,
 }
@@ -349,6 +352,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         orchestrator: f.orchestrator,
         orchestrator_face: f.orchestrator_face.clone(),
         reply_at: None,
+        browser: f.browser.clone(),
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
@@ -513,6 +517,7 @@ mod tests {
             orchestrator_face: None,
             engine: None,
             model: None,
+            browser: None,
         }
     }
 

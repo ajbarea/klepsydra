@@ -82,14 +82,25 @@ is_claude() { # pid
 # (or the older .../ms-playwright/mcp-chrome-<hash>), and no --type= (Chrome's
 # renderers, zygote and GPU process carry one).
 mcp_browser() { # pid
-  local arg dir="" main=1
-  local -a argv=()
+  local arg dir="" main=1 w
+  local -a argv=() words=()
   profile=""
   { mapfile -d '' -t argv <"$PROC_ROOT/$1/cmdline"; } 2>/dev/null || return 1
   for arg in "${argv[@]}"; do
     case $arg in
       --type=*) main=0 ;;
       --user-data-dir=*) dir=${arg#--user-data-dir=} ;;
+      *)
+        if [[ $arg == *" --type="* || $arg == *" --user-data-dir="* ]]; then
+          read -r -a words <<<"$arg"
+          for w in "${words[@]}"; do
+            case $w in
+              --type=*) main=0 ;;
+              --user-data-dir=*) dir=${w#--user-data-dir=} ;;
+            esac
+          done
+        fi
+        ;;
     esac
   done
   (( main )) || return 1
@@ -150,6 +161,207 @@ signal() { # SIG pid start
   "$KILL" "-$1" "$2" 2>/dev/null
 }
 
+FLEET_STATE=${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}
+REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
+
+if [[ -z "${KLEPSYDRA_DIR:-}" ]]; then
+  proc_osrelease
+  if [[ "$osrelease" == *[Mm]icrosoft* ]]; then
+    if [[ -n "${USER:-}" ]]; then
+      KLEPSYDRA_DIR="/mnt/c/Users/$USER/AppData/Local/dev.ajsoftworks.klepsydra"
+    fi
+  else
+    data_home="${HOME:-}/.local/share"
+    [[ "${XDG_DATA_HOME:-}" == /* ]] && data_home="$XDG_DATA_HOME"
+    [[ "$data_home" == /* ]] && KLEPSYDRA_DIR="$data_home/dev.ajsoftworks.klepsydra"
+  fi
+fi
+
+# Whether `child` is equal to or a descendant of `parent` (up to 32 levels).
+is_descendant() { # child parent
+  local p=$1 want=$2 i
+  local -a stat=()
+  for ((i = 0; i < 32 && p > 1; i++)); do
+    [[ $p == "$want" ]] && return 0
+    proc_stat "$p" || return 1
+    p=${stat[1]}
+  done
+  [[ $p == "$want" ]]
+}
+
+# Map a Claude/engine PID to an agent name:
+# 1. Look in $KLEPSYDRA_DIR/fleet/*.json for matching .claude.pid and .ended == null:
+#    - .orchestrator == true -> "heph"
+#    - .fleet_name -> fleet_name
+#    - panes.tsv col 4 (session id) or col 1 (.tmux.pane) -> col 2 (name)
+#    - orchestrator.pane -> "heph"
+#    - .name -> name
+#    - first 8 chars of session id
+# 2. Look in tmux panes if running
+# 3. Fallback: "claude <pid>"
+agent_for_pid() { # claude_pid
+  local cpid=$1 f sid="" agent="" pane=""
+  [[ $cpid =~ ^[0-9]+$ ]] || { printf '%s' "no session"; return 0; }
+  if [[ -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]]; then
+    while IFS= read -r f; do
+      [[ -f $f ]] || continue
+      if jq -e --argjson p "$cpid" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1; then
+        sid=$(basename "$f" .json)
+        if jq -e '.orchestrator == true' "$f" >/dev/null 2>&1; then
+          agent="heph"
+          break
+        fi
+        agent=$(jq -r '.fleet_name // empty | strings' "$f" 2>/dev/null)
+        if [[ -n $agent ]]; then break; fi
+        pane=$(jq -r '.tmux.pane // empty | strings' "$f" 2>/dev/null)
+        if [[ -r ${REGISTRY:-$FLEET_STATE/panes.tsv} ]]; then
+          agent=$(awk -F'\t' -v s="$sid" -v p="$pane" '($4 == s || ($1 == p && p != "")) { print $2; exit }' "${REGISTRY:-$FLEET_STATE/panes.tsv}" 2>/dev/null)
+          if [[ -n $agent ]]; then break; fi
+        fi
+        if [[ -n $pane && -r ${FLEET_STATE:-}/orchestrator.pane ]] && [[ $pane == "$(<"${FLEET_STATE}/orchestrator.pane")" ]]; then
+          agent="heph"
+          break
+        fi
+        agent=$(jq -r '.name // empty | strings' "$f" 2>/dev/null)
+        if [[ -n $agent ]]; then break; fi
+        agent=$(jq -r '.where.worktree // empty | strings' "$f" 2>/dev/null)
+        if [[ -n $agent ]]; then break; fi
+        agent=$(cut -c1-8 <<<"$sid")
+        break
+      fi
+    done < <(grep -lE -- "\"pid\": *${cpid}([^0-9]|$)" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+  fi
+  if [[ -z $agent ]] && command -v tmux >/dev/null 2>&1; then
+    local t_sock=${FLEET_SOCK:-klepsydra}
+    local p_id p_pid w_name
+    while read -r p_id p_pid w_name; do
+      [[ -n $p_id ]] || continue
+      if [[ $cpid == "$p_pid" ]] || is_descendant "$cpid" "$p_pid"; then
+        if [[ -r ${FLEET_STATE:-}/orchestrator.pane ]] && [[ $p_id == "$(<"${FLEET_STATE}/orchestrator.pane")" ]]; then
+          agent="heph"
+          break
+        fi
+        if [[ -r ${REGISTRY:-$FLEET_STATE/panes.tsv} ]]; then
+          agent=$(awk -F'\t' -v p="$p_id" '$1 == p { print $2; exit }' "${REGISTRY:-$FLEET_STATE/panes.tsv}" 2>/dev/null)
+          if [[ -n $agent ]]; then break; fi
+        fi
+        if [[ -n $w_name ]]; then
+          agent=${w_name#✳ }
+          agent=${agent%% *}
+          break
+        fi
+      fi
+    done < <(tmux -L "$t_sock" list-panes -a -F '#{pane_id} #{pane_pid} #{window_name}' 2>/dev/null)
+  fi
+  if [[ -n $agent ]]; then
+    printf '%s' "$agent"
+  elif is_claude "$cpid"; then
+    printf 'claude %s' "$cpid"
+  else
+    printf '%s' ""
+  fi
+}
+
+set_session_browser() { # sid agent
+  local sid=$1 agent=$2 f tmp
+  [[ -n $sid && -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]] || return 0
+  f=$KLEPSYDRA_DIR/fleet/$sid.json
+  [[ -f $f ]] || return 0
+  tmp=$f.$$.tmp
+  if [[ -n $agent ]]; then
+    jq --arg b "$agent" '.browser = $b' "$f" >"$tmp" 2>/dev/null && mv -f "$tmp" "$f"
+  else
+    jq 'del(.browser)' "$f" >"$tmp" 2>/dev/null && mv -f "$tmp" "$f"
+  fi
+}
+
+sync_holders() {
+  local active_file=${FLEET_STATE:-}/browser-active
+  local closed_file=${FLEET_STATE:-}/browser-closed
+  local -A current=()
+  local pid start ppid server claude dir agent sid f
+  mkdir -p "${FLEET_STATE:-}" 2>/dev/null
+
+  while read -r pid start ppid server claude dir; do
+    [[ -n $pid && -n $dir ]] || continue
+    agent=$(agent_for_pid "$claude")
+    current[$dir]="$pid"$'\t'"$start"$'\t'"$claude"$'\t'"$agent"
+    if [[ $claude != - && -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]]; then
+      while IFS= read -r f; do
+        if jq -e --argjson p "$claude" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1; then
+          sid=$(basename "$f" .json)
+          set_session_browser "$sid" "$agent"
+          break
+        fi
+      done < <(grep -lE -- "\"pid\": *${claude}([^0-9]|$)" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+    fi
+  done < <(browsers)
+
+  if [[ -f $active_file ]]; then
+    while IFS=$'\t' read -r old_pid _start old_claude old_agent old_dir; do
+      [[ -n $old_pid && -n $old_dir ]] || continue
+      if [[ -z ${current[$old_dir]:-} ]]; then
+        local still_alive=0
+        if [[ $old_claude =~ ^[0-9]+$ ]] && is_claude "$old_claude"; then
+          still_alive=1
+        elif [[ -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]]; then
+          while IFS= read -r f; do
+            if jq -e --argjson p "$old_claude" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1; then
+              still_alive=1
+              sid=$(basename "$f" .json)
+              set_session_browser "$sid" ""
+              break
+            fi
+          done < <(grep -lE -- "\"pid\": *${old_claude}([^0-9]|$)" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+        fi
+        if (( still_alive )) && [[ -n $old_agent && $old_agent != "no session" ]]; then
+          printf '%s\t%s\t%s\n' "$old_agent" "$old_dir" "$(now)" >"$closed_file"
+        fi
+      fi
+    done <"$active_file"
+  fi
+
+  if (( ${#current[@]} )); then
+    local tmp=$active_file.$$.tmp
+    for d in "${!current[@]}"; do
+      printf '%s\t%s\n' "${current[$d]}" "$d"
+      # If this profile is now running, remove it from closed_file
+      if [[ -f $closed_file ]]; then
+        sed -i "\#\t${d}\t#d" "$closed_file" 2>/dev/null || true
+        [[ -s $closed_file ]] || rm -f "$closed_file"
+      fi
+    done >"$tmp" && mv -f "$tmp" "$active_file"
+  else
+    rm -f "$active_file"
+  fi
+}
+
+handle_pre_tool() {
+  local payload=$1
+  local tool
+  tool=$(jq -r '.tool_name // .toolName // empty' <<<"$payload" 2>/dev/null)
+  local closed_file=${FLEET_STATE:-}/browser-closed
+  local active_file=${FLEET_STATE:-}/browser-active
+
+  if [[ $tool == *"browser_close"* ]]; then
+    rm -f "$closed_file" "$active_file"
+    exit 0
+  fi
+
+  sync_holders
+
+  if [[ -f $closed_file ]]; then
+    local closed_agent=""
+    closed_agent=$(awk -F'\t' '{ print $1; exit }' "$closed_file" 2>/dev/null)
+    [[ -n $closed_agent ]] || closed_agent=$(awk '{ print $1; exit }' "$closed_file" 2>/dev/null)
+    [[ -n $closed_agent ]] || closed_agent="an agent"
+    jq -nc --arg reason "browser closed while $closed_agent held it" \
+      '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": $reason}}'
+    exit 0
+  fi
+  exit 0
+}
+
 case ${1:-} in
   --list)
     n=$(now)
@@ -159,6 +371,47 @@ case ${1:-} in
       (( ${idle/-/0} < 0 )) && idle=0
       printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$server" "$claude" "$idle" "$dir"
     done < <(browsers)
+    ;;
+  --sync-holders)
+    sync_holders
+    ;;
+  --holders)
+    sync_holders
+    declare -A seen_holders=()
+    while read -r pid start ppid server claude dir; do
+      [[ -n $dir ]] || continue
+      [[ -z ${seen_holders[$dir]:-} ]] || continue
+      seen_holders[$dir]=1
+      agent=$(agent_for_pid "$claude")
+      [[ -n $agent && $agent != "no session" ]] || continue
+      printf '%s\t%s\n' "$dir" "$agent"
+    done < <(browsers)
+    ;;
+  --holder)
+    sync_holders
+    target_dir=${2:-}
+    found=0
+    while read -r pid start ppid server claude dir; do
+      if [[ -z $target_dir || $target_dir == "$dir" ]]; then
+        agent=$(agent_for_pid "$claude")
+        if [[ -n $target_dir ]]; then
+          printf '%s\n' "$agent"
+          found=1
+          break
+        else
+          printf '%s\t%s\t%s\t%s\n' "$agent" "$pid" "$claude" "$dir"
+        fi
+      fi
+    done < <(browsers)
+    (( found )) || [[ -z $target_dir ]] || exit 1
+    ;;
+  --holder-of)
+    agent_for_pid "${2:?--holder-of takes a pid}"
+    printf '\n'
+    ;;
+  --pre-tool)
+    payload=$(cat)
+    handle_pre_tool "$payload"
     ;;
   --reap)
     state=${2:?--reap takes a state file}
@@ -193,8 +446,15 @@ case ${1:-} in
     fi
     ;;
   "")
+    # PreToolUse or SessionEnd: Claude Code passes JSON payload on stdin.
+    payload=""
+    if [[ ! -t 0 ]]; then
+      payload=$(cat 2>/dev/null)
+    fi
+    if [[ $payload == *'"hook_event_name":"PreToolUse"'* || $payload == *'"hookEventName":"PreToolUse"'* || $payload == *'"tool_name"'* || $payload == *'"toolName"'* ]]; then
+      handle_pre_tool "$payload"
+    fi
     # SessionEnd: the hook runs under this session's Claude Code process.
-    cat >/dev/null 2>&1
     me="" p=${KLEPSYDRA_PPID:-$PPID} # tests start from a fake parent
     declare -a stat=()
     for ((i = 0; i < 32 && p > 1; i++)); do
@@ -202,6 +462,18 @@ case ${1:-} in
       proc_stat "$p" || break
       p=${stat[1]}
     done
+    if [[ -n $me ]]; then
+      if [[ -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]]; then
+        while IFS= read -r f; do
+          if jq -e --argjson p "$me" '.claude.pid == $p' "$f" >/dev/null 2>&1; then
+            sid=$(basename "$f" .json)
+            set_session_browser "$sid" ""
+            break
+          fi
+        done < <(grep -lE -- "\"pid\": *${me}[,} ]" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+      fi
+      rm -f "${FLEET_STATE:-}/browser-closed" "${FLEET_STATE:-}/browser-active"
+    fi
     [[ -n $me ]] || exit 0
     left=()
     while read -r pid start ppid server claude dir; do

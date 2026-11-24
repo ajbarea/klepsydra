@@ -1505,12 +1505,19 @@ bproc 4301 4300 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome
 bproc 4302 1 chrome /opt/google/chrome/chrome "--user-data-dir=$work/home/.config/google-chrome"
 mkdir -p "$bc/mcp-chrome-aa/Default"; touch -d "@$(( $(date +%s) - 330 ))" "$bc/mcp-chrome-aa" "$bc/mcp-chrome-aa/Default"
 check "#379: a live one: its pid, owning session and idle time; AJ's Chrome is not listed" "$(doctor | grep 'MCP browsers')" \
-  "ok   MCP browsers: pid 4301 (session dddddddd, idle 5 min)"
+  "ok   MCP browsers: held by worker for 5 min"
 check "#379: idle past FLEET_BROWSER_IDLE_MIN warns" \
-  "$(FLEET_BROWSER_IDLE_MIN=5 doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min, past 5 min)')" "1"
+  "$(FLEET_BROWSER_IDLE_MIN=5 doctor | grep -c '^warn MCP browsers: held by worker for 5 min, past 5 min')" "1"
 bproc 4310 1 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-bb"
 check "#379: one whose MCP server is gone warns" \
-  "$(doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min); pid 4310 (no session, idle ?, its MCP server is gone)')" "1"
+  "$(doctor | grep -c '^warn MCP browsers: held by worker for 5 min; pid 4310 (no session, idle ?, its MCP server is gone)')" "1"
+rm -rf "$work/dproc/4301" "$work/dproc/4310"
+printf 'worker\t%s\n' "$(date +%s)" >"$FLEET_STATE/browser-closed"
+check "#533: closed while held warns" "$(doctor | grep 'MCP browsers')" \
+  "warn MCP browsers: browser closed while worker held it"
+rm -f "$FLEET_STATE/browser-closed"
+bproc 4301 4300 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-aa"
+bproc 4310 1 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-bb"
 djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"

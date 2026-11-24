@@ -704,6 +704,7 @@ def assistant_text($line):
   | .name = (($ev.session_title | text) // .name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
+  | if $event == "SessionEnd" then del(.browser) else . end
   # An orchestrator file written before faces (#222) is Hephaestus's: it keeps him.
   # One written while Athena wore bf_alice (before 11-02) keeps her on her voice now.
   | if $orchestrator then .orchestrator_face = ((.orchestrator_face | strings | if . == "bf_alice" then $athena_face else . end)

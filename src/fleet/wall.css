@@ -499,7 +499,7 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card.dim .face { filter: grayscale(0.85) brightness(0.8); }
 .card.dim .figure { filter: grayscale(0.85) brightness(0.8); }
 .card.dim .name, .card.dim .where, .card.dim .reply { color: var(--text-dim); }
-.card.dim .prompt, .card.dim .repo .wt, .card.dim .branch, .card.dim .acct { color: var(--text-quiet); }
+.card.dim .prompt, .card.dim .repo .wt, .card.dim .branch, .card.dim .acct, .card.dim .browser-chip { color: var(--text-quiet); }
 
 /* At a glance (#248): one line says what the card is doing (its latest
    reply). The relay prompt, the other repos, the receipt and "updated" wait
@@ -810,7 +810,7 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .gh:hover, .gh:focus-visible { color: var(--text); }
 a.branch { text-decoration: none; }
 a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
-.branch, .acct {
+.branch, .acct, .browser-chip {
   display: inline-flex;
   flex: 0 1 auto;
   min-width: 0;
@@ -822,8 +822,8 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   border: 1px solid color-mix(in oklab, var(--on-card, var(--card-line)) 50%, var(--card-line));
   border-radius: 6px;
 }
-.branch svg, .acct svg { width: 12px; height: 12px; flex: none; }
-.branch span, .acct span { overflow: hidden; text-overflow: ellipsis; }
+.branch svg, .acct svg, .browser-chip svg { width: 12px; height: 12px; flex: none; }
+.branch span, .acct span, .browser-chip span { overflow: hidden; text-overflow: ellipsis; }
 .also { display: flex; flex-wrap: wrap; gap: 4px 10px; list-style: none; margin-top: -4px; color: var(--text-quiet); font-size: 12.5px; }
 .also:empty { display: none; }
 .meta, .foot { display: contents; } /* rows of their own only on the compact card */
@@ -1123,7 +1123,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   font-size: 13px;
 }
 [data-density="compact"] .where { flex: 0 1 auto; gap: var(--space-3); }
-[data-density="compact"] .branch, [data-density="compact"] .acct { padding: 1px 6px; font-size: 12px; }
+[data-density="compact"] .branch, [data-density="compact"] .acct, [data-density="compact"] .browser-chip { padding: 1px 6px; font-size: 12px; }
 [data-density="compact"] .also { display: none; }
 [data-density="compact"] .also-more:not([hidden]) { display: inline-block; }
 [data-density="compact"] .crew-line { flex: none; margin-top: 0; font-size: 12px; }
