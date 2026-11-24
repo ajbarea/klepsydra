@@ -70,6 +70,12 @@ jobs:
         env:
           KERYX_SRC: ${{ github.workspace }}/keryx/src
         run: bash hooks/test_fleet.sh
+      # Fork budgets and the screen parser's differential (#492): strace counts
+      # processes, and mawk is the awk the parser must agree under.
+      - name: Fork budget tests
+        run: |
+          sudo apt-get update && sudo apt-get install -y strace mawk
+          make test-forks
       - name: Wrap-up hook tests
         run: bash hooks/test_wrapup.sh
       - name: Browser closer tests
@@ -106,6 +112,8 @@ jobs:
         run: python3 -I fleet/test_prune_shots.py
       - name: Shell lint
         run: make shellcheck SHELLCHECK=shellcheck FLEET_HEAVY_HELD=1
+      - name: Shell lint runner tests
+        run: make test-shellcheck
       # The install dir is writable only because the NSIS mode is currentUser;
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.
