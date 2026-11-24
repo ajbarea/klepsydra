@@ -983,14 +983,14 @@ check "a body that already has the rules is refused" "$(bash "$here/brief.sh" de
 check "a name that is not a plain slug is refused" "$(bash "$here/brief.sh" '../x' "$work/body" >/dev/null 2>&1; echo $?)" "2"
 FLEET_BRIEFING="$work/custom-briefing" bash "$here/brief.sh" custom "$work/body" >/dev/null 2>&1
 check "#531: brief rendered with FLEET_BRIEFING has no /mnt/c/ path and has custom briefing root" \
-  "$(grep -c '/mnt/c/' "$FLEET_STATE/task-custom.src") $(grep -c "$work/custom-briefing" "$FLEET_STATE/task-custom.src")" "0 3"
+  "$(grep -c '/mnt/c/' "$FLEET_STATE/task-custom.src") $(grep -o "$work/custom-briefing" "$FLEET_STATE/task-custom.src" | wc -l)" "0 3"
 check "#531: fresh_preamble with custom FLEET_BRIEFING" \
   "$(FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; fresh_preamble why' | grep -c "$work/custom-briefing/queue.md")" "1"
 check "#531: heph_note with custom FLEET_BRIEFING" \
   "$(FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; heph_note why sid heph doing' | grep -c "$work/custom-briefing/queue.md")" "1"
 mkdir -p "$work/home/fleet-briefing"
 check "#531: fallback to ~/fleet-briefing when /mnt/c does not exist" \
-  "$(HOME="$work/home" FLEET_BRIEFING=/nonexistent/path bash -c '. "'"$here"'/lib.sh"; echo "$FLEET_BRIEFING"')" "$work/home/fleet-briefing"
+  "$(HOME="$work/home" FLEET_WSL_BRIEFING=/nonexistent/wsl bash -c '. "'"$here"'/lib.sh"; echo "$FLEET_BRIEFING"')" "$work/home/fleet-briefing"
 check "#531: fleet_briefing helper matches FLEET_BRIEFING" \
   "$(FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; fleet_briefing')" "$work/custom-briefing"
 check "--check passes a current brief" "$(bash "$here/brief.sh" --check "$out" 2>/dev/null; echo $?)" "0"

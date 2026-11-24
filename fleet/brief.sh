@@ -29,7 +29,9 @@ archive() { # FILE NAME
 }
 # Print the shared rules with the machine's briefing folder filled in (#531).
 render_tail() {
-  local target=${FLEET_BRIEFING//&/\\&}
+  local target
+  target=$(fleet_briefing)
+  target=${target//&/\\&}
   sed "s|/mnt/c/Users/ajbar/fleet-briefing|$target|g" "$TAIL"
 }
 # A unique archive stamp: two writes in one second never share a name.
@@ -39,13 +41,15 @@ rules() { sed -n '/^Resources: /,$p' "$1"; }
 # Every line of the current tail and of each committed version of it (from
 # this checkout's history; without one, the current tail alone).
 tail_lines() {
-  local root
+  local root target
+  target=$(fleet_briefing)
+  target=${target//&/\\&}
   render_tail
   root=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null) || return 0
   git -C "$root" log --format='commit %H' --name-only --follow -- fleet/brief-tail.md 2>/dev/null |
     awk '/^commit / { h = $2; next } NF { print h, $0 }' |
     while read -r h path; do git -C "$root" show "$h:$path" 2>/dev/null; done |
-    sed "s|/mnt/c/Users/ajbar/fleet-briefing|${FLEET_BRIEFING//&/\\&}|g" | grep .
+    sed "s|/mnt/c/Users/ajbar/fleet-briefing|$target|g" | grep .
 }
 
 # BRIEF as the current tail would have it: its body, the tail, then the lines

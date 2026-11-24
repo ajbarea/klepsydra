@@ -28,12 +28,20 @@ from pathlib import Path
 
 HOME = Path.home()
 STATE = Path(os.environ.get("FLEET_STATE", HOME / ".local/state/fleet-orchestrator"))
-REPO = Path(
-    os.environ.get(
-        "FLEET_BRIEFING",
-        os.environ.get("BRIEFING_DIR", "/mnt/c/Users/ajbar/fleet-briefing"),
-    )
-)
+def fleet_briefing() -> Path:
+    val = os.environ.get("FLEET_BRIEFING") or os.environ.get("BRIEFING_DIR")
+    if val:
+        return Path(val)
+    wsl = Path("/mnt/c/Users/ajbar/fleet-briefing")
+    if wsl.is_dir():
+        return wsl
+    debian = Path.home() / "fleet-briefing"
+    if debian.is_dir():
+        return debian
+    return wsl
+
+
+REPO = fleet_briefing()
 SLUG = os.environ.get("BRIEFING_SLUG", "ajbarea/fleet-briefing")
 GH = os.environ.get("FLEET_GH", "gh")
 NOW = float(os.environ.get("FLEET_NOW", time.time()))

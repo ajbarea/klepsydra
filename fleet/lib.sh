@@ -32,12 +32,19 @@ prefs_get() { # KEY
 # doctor checks the copies still match the checkout.
 FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
 # The briefing repository (queue, needs-you, screenshots).
-FLEET_BRIEFING=${FLEET_BRIEFING:-/mnt/c/Users/ajbar/fleet-briefing}
-if [[ ! -d $FLEET_BRIEFING && -d $HOME/fleet-briefing ]]; then
-  FLEET_BRIEFING=$HOME/fleet-briefing
-fi
+fleet_briefing() {
+  if [[ -n ${FLEET_BRIEFING:-} ]]; then
+    printf '%s' "$FLEET_BRIEFING"
+  elif [[ -d ${FLEET_WSL_BRIEFING:-/mnt/c/Users/ajbar/fleet-briefing} ]]; then
+    printf '%s' "${FLEET_WSL_BRIEFING:-/mnt/c/Users/ajbar/fleet-briefing}"
+  elif [[ -d $HOME/fleet-briefing ]]; then
+    printf '%s' "$HOME/fleet-briefing"
+  else
+    printf '%s' "${FLEET_WSL_BRIEFING:-/mnt/c/Users/ajbar/fleet-briefing}"
+  fi
+}
+FLEET_BRIEFING=${FLEET_BRIEFING:-$(fleet_briefing)}
 export FLEET_BRIEFING
-fleet_briefing() { printf '%s' "$FLEET_BRIEFING"; }
 # shellcheck disable=SC2034 # read by install.sh and doctor.sh
 HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
