@@ -36,15 +36,18 @@ mirror() {
   head=$(git rev-parse -q --verify HEAD) || return 0
   last=$(cat "$gd/fleet-drive-mirror.head" 2>/dev/null)
   [[ "$head $DRIVE" == "$last" ]] && return 0
+  command -v "$RCLONE" >/dev/null 2>&1 || { flog WARN "briefing mirror: rclone not installed" remote="$DRIVE"; return 0; }
+  "$RCLONE" listremotes 2>/dev/null | grep -qxF "${DRIVE%%:*}:" || { flog WARN "briefing mirror: no such rclone remote; run rclone config create" remote="$DRIVE"; return 0; }
   # A clone behind origin (another host pushed, or an edit on GitHub) would roll the folder
   # back to its older commit: only the commit origin holds goes (#531 review).
-  git fetch -q origin 2>/dev/null || { flog WARN "briefing mirror: origin did not answer; retried next pass" remote="$DRIVE"; return 0; }
-  if [[ $(git rev-parse -q --verify '@{u}' 2>/dev/null) != "$head" ]]; then
+  local up
+  up=$(git rev-parse -q --verify '@{u}' 2>/dev/null) || { flog WARN "briefing mirror: the branch tracks no upstream; not mirrored" commit="${head:0:7}"; return 0; }
+  timeout 60 git fetch -q origin 2>/dev/null || { flog WARN "briefing mirror: origin did not answer; retried next pass" remote="$DRIVE"; return 0; }
+  up=$(git rev-parse -q --verify '@{u}' 2>/dev/null)
+  if [[ $up != "$head" ]]; then
     flog INFO "briefing mirror: this clone is not at origin's commit; mirrored once it is" commit="${head:0:7}"
     return 0
   fi
-  command -v "$RCLONE" >/dev/null 2>&1 || { flog WARN "briefing mirror: rclone not installed" remote="$DRIVE"; return 0; }
-  "$RCLONE" listremotes 2>/dev/null | grep -qxF "${DRIVE%%:*}:" || { flog WARN "briefing mirror: no such rclone remote; run rclone config create" remote="$DRIVE"; return 0; }
   snap=$(mktemp -d) || { flog WARN "briefing mirror: no temp folder; retried next pass"; return 0; }
   if ! (set -o pipefail; git archive --format=tar "$head" | tar -x -C "$snap"); then
     flog WARN "briefing mirror: could not copy the commit; retried next pass" commit="${head:0:7}"

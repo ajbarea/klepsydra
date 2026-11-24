@@ -4821,6 +4821,13 @@ check "#531 review: a clone behind origin with nothing to push mirrors nothing (
   "$(FLEET_BRIEFING_DRIVE=$D msync) $(nsync) $(lastlog "not at origin's commit")" "0 6 INFO"
 git -C "$work/brief" pull -q --ff-only 2>/dev/null
 check "#531 review: once it holds origin's commit, it mirrors" "$(FLEET_BRIEFING_DRIVE=$D msync) $(nsync)" "0 7"
+url=$(git -C "$work/brief" remote get-url origin)
+printf 'q10\n' >"$work/brief/queue.md"; git -C "$work/brief" -c user.name=t -c user.email=t@t commit -qam local
+git -C "$work/brief" push -q origin HEAD 2>/dev/null
+git -C "$work/brief" remote set-url origin "$work/no-such-origin.git"
+check "#531 review: an origin that does not answer mirrors nothing, warns, and keeps the sync green" \
+  "$(FLEET_BRIEFING_DRIVE=gdrive:third msync) $(nsync) $(lastlog "origin did not answer")" "0 7 WARN"
+git -C "$work/brief" remote set-url origin "$url"
 
 echo "fleet send: a message is submitted, never left in the box (#320)"
 fsend() { bash "$here/send.sh" "$@" 2>/dev/null; }
