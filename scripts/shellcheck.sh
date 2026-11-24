@@ -39,7 +39,6 @@ short_takes_next() { # GROUP
 # shortened as ShellCheck accepts it (--sev for --severity).
 long_takes_next() { # OPTION
   local o
-  [[ $1 == *=* ]] && return 1
   for o in include exclude extended-analysis format rcfile enable source-path shell severity wiki-link-count; do
     [[ --$o == "$1"* ]] && return 0
   done
