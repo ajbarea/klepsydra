@@ -691,15 +691,36 @@ fn explorer_opened(said: Result<String, String>) -> Result<String, String> {
     }
 }
 
+const NO_FOLDER: &str = "klepsydra does not know this session's folder.";
+const NO_PAGE: &str = "klepsydra does not know this session's GitHub page.";
+
+/// Session `id`'s folder in `snapshot` and the arguments that open it, as
+/// this build reaches it.
+fn folder_request(snapshot: &Value, id: &str) -> Result<(String, Vec<String>), String> {
+    let (dir, distro) = crate::folder::folder_of(snapshot, id, NATIVE).ok_or(NO_FOLDER)?;
+    let args = folder_args(&dir, distro.as_deref())?;
+    Ok((dir, args))
+}
+
+/// Session `id`'s GitHub page in `snapshot`, or with `branch` its branch's,
+/// and the arguments that open it, as this build reaches it.
+fn github_request(
+    snapshot: &Value,
+    id: &str,
+    branch: bool,
+) -> Result<(String, Vec<String>), String> {
+    let (url, distro) = crate::folder::github_of(snapshot, id, branch, NATIVE).ok_or(NO_PAGE)?;
+    let args = github_args(&url, distro.as_deref())?;
+    Ok((url, args))
+}
+
 /// Show session `id`'s work folder in the file manager (#149).
 #[tauri::command]
 pub async fn open_folder(app: tauri::AppHandle, id: String) -> Result<String, String> {
-    let (dir, distro) = app
+    let (dir, args) = app
         .state::<crate::fleet::Fleet>()
-        .with_latest(|v| crate::folder::folder_of(v, &id, NATIVE))
-        .flatten()
-        .ok_or("klepsydra does not know this session's folder.")?;
-    let args = folder_args(&dir, distro.as_deref())?;
+        .with_latest(|v| folder_request(v, &id))
+        .unwrap_or_else(|| Err(NO_FOLDER.into()))?;
     let shown = dir.rsplit('/').next().unwrap_or(&dir).to_string();
     tauri::async_runtime::spawn_blocking(move || {
         logged("open folder", Some(&id), || {
@@ -737,12 +758,10 @@ pub async fn open_github(
     id: String,
     branch: bool,
 ) -> Result<String, String> {
-    let (url, distro) = app
+    let (url, args) = app
         .state::<crate::fleet::Fleet>()
-        .with_latest(|v| crate::folder::github_of(v, &id, branch, NATIVE))
-        .flatten()
-        .ok_or("klepsydra does not know this session's GitHub page.")?;
-    let args = github_args(&url, distro.as_deref())?;
+        .with_latest(|v| github_request(v, &id, branch))
+        .unwrap_or_else(|| Err(NO_PAGE.into()))?;
     tauri::async_runtime::spawn_blocking(move || {
         logged("open github", Some(&id), || {
             run_open("github", &url, &args, JUMP_TIMEOUT, jump_timed_out)
@@ -1847,6 +1866,35 @@ mod tests {
                 "{branch}"
             );
         }
+    }
+
+    /// What Folder and GitHub answer for a session with no distro, as this
+    /// build reads the snapshot: opened on native Linux, not known through
+    /// wsl.exe.
+    #[test]
+    fn folder_and_github_read_the_snapshot_as_this_build_reaches_it() {
+        let snap = json!({"sessions": [{
+            "session_id": "n",
+            "distro": null,
+            "where": {"repo": "klepsydra", "dir": "/home/aj/ajsoftworks/klepsydra",
+                      "github": "https://github.com/ajbarea/klepsydra", "branch": "main"}}]});
+        let folder = folder_request(&snap, "n").map(|(dir, _)| dir);
+        let page = github_request(&snap, "n", false).map(|(url, _)| url);
+        let branch = github_request(&snap, "n", true).map(|(url, _)| url);
+        if NATIVE {
+            assert_eq!(folder, Ok("/home/aj/ajsoftworks/klepsydra".into()));
+            assert_eq!(page, Ok("https://github.com/ajbarea/klepsydra".into()));
+            assert_eq!(
+                branch,
+                Ok("https://github.com/ajbarea/klepsydra/tree/main".into())
+            );
+        } else {
+            assert_eq!(folder, Err(NO_FOLDER.into()));
+            assert_eq!(page, Err(NO_PAGE.into()));
+            assert_eq!(branch, Err(NO_PAGE.into()));
+        }
+        assert_eq!(folder_request(&snap, "gone"), Err(NO_FOLDER.into()));
+        assert_eq!(github_request(&snap, "gone", false), Err(NO_PAGE.into()));
     }
 
     #[test]
