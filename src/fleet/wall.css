@@ -1043,7 +1043,8 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
    stacks. That is always one column, where a card is as wide as the wall's
    content, which a queue or ledger tab narrows. */
 @container wall (max-width: 499.98px) {
-  .wall[data-density="compact"] .card {
+  /* The phone wall keeps its own one-line header (.served), so these are the desktop's. */
+  :root:not(.served) .wall[data-density="compact"] .card {
     grid-template-rows: auto auto auto auto auto 1fr auto;
     grid-template-areas:
       "face name name name name"
@@ -1055,17 +1056,16 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
       "menu note note note note";
   }
   /* The pill keeps to its share of the line: its time gives way first ("12m qu…"). */
-  [data-density="compact"] .pill { justify-self: start; min-width: 0; max-width: calc(100% - var(--head-gap)); margin: var(--space-1) 0 0 var(--head-gap); }
-  [data-density="compact"] .pill :is(.mark, .label) { flex-shrink: 0; }
-  [data-density="compact"] .pill .when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  :root:not(.served) [data-density="compact"] .pill { justify-self: start; min-width: 0; max-width: calc(100% - var(--head-gap)); margin-left: var(--head-gap); }
+  :root:not(.served) [data-density="compact"] .pill :is(.mark, .label) { flex-shrink: 0; }
+  :root:not(.served) [data-density="compact"] .pill .when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 [data-density="compact"] .pill .when { display: inline; }
 [data-density="compact"] .jump,
 [data-density="compact"] .clear {
   grid-area: jump;
   align-self: center;
-  /* The whole label (#505): a set minimum lets the auto column shrink a button below its text. */
-  min-width: max-content;
+  min-width: 24px;
   min-height: 28px; /* over the 24x24 minimum (WCAG 2.2, 2.5.8) */
   margin-left: var(--space-3);
   padding: 0 var(--space-4);
