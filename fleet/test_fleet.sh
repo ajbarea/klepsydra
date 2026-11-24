@@ -993,8 +993,8 @@ check "#531: a folder with &, |, a backslash or a space is filled in as written"
   "$(grep -cF "$odd/queue.md" "$FLEET_STATE/task-odd.src")" "1"
 check "#531: a brief rendered for another folder is still current there (--check)" \
   "$(FLEET_BRIEFING="$work/custom-briefing" bash "$here/brief.sh" --check "$FLEET_STATE/task-custom.src" 2>/dev/null; echo $?)" "0"
-check "#531: fresh_preamble and heph_note name FLEET_BRIEFING's queue" \
-  "$(FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; fresh_preamble why; heph_note why sid heph doing' | grep -c "$work/custom-briefing/queue.md")" "2"
+check "#531: fresh_preamble and heph_note each name FLEET_BRIEFING's queue" \
+  "$(for f in 'fresh_preamble why' 'heph_note why sid heph doing'; do FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; '"$f" | grep -cF "$work/custom-briefing/queue.md"; done | paste -sd' ')" "1 1"
 # The resolver's matrix: FLEET_BRIEFING unset, the WSL clone and ~/fleet-briefing each there or not.
 resolve() { env -u FLEET_BRIEFING HOME="$work/rh$2" FLEET_WSL_BRIEFING="$work/rw$1" bash -c '. "'"$here"'/lib.sh"; printf %s "$FLEET_BRIEFING"'; }
 mkdir -p "$work/rw1" "$work/rh1/fleet-briefing" "$work/rh0" 
