@@ -513,12 +513,13 @@ paused=$(awk -F'\t' '$1 != "" && $1 !~ /^#/ { printf "%s, ", $1 }' "${FLEET_PAUS
 # unread (done-reports.tsv; `fleet close NAME` clears a row), #445, and
 # undelivered reports in the durable inbox (#367).
 undelivered="" unread="" panes_now=$(fleet_panes)
-while IFS=$'\t' read -r at rname rpane rresult; do
+# shellcheck disable=SC2034 # _ absorbs the optional 5th column (the report text)
+while IFS=$'\t' read -r at rname rpane rresult _; do
   [[ $at =~ ^[0-9]+$ ]] || continue
   if [[ $rresult == pending ]] && (( now - at <= 300 )); then
     : # its send is still running
   elif [[ $rresult != sent && $rresult != queued && $rresult != acked ]]; then
-    if [[ -f $FLEET_INBOX ]] && jq -e --arg name "$rname" 'select(.name == $name and (.status == "acked" or .status == "delivered"))' "$FLEET_INBOX" >/dev/null 2>&1; then
+    if [[ -f $FLEET_INBOX ]] && jq -e --argjson at "$at" 'select(.at == $at and (.status == "acked" or .status == "delivered"))' "$FLEET_INBOX" >/dev/null 2>&1; then
       : # acked or delivered in inbox
     else
       undelivered+="$rname ($rresult), "

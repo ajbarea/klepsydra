@@ -2499,9 +2499,54 @@ check "#367: later call does not mark delivered twice" \
 check "#367: fleet inbox shows 0 unread reports" \
   "$(bash "$here/fleet" inbox)" "no unread reports"
 
+# 7. Finding 2: an acked report must not hide a newer pending one from the same agent
+t send-keys -t "$h367" -l "AJ: busy again"; settle
+w_reup=$(dpane wrk_reup)
+fdone "$w_reup" "first report" >/dev/null 2>&1
+bash "$here/fleet" inbox ack wrk_reup >/dev/null 2>&1
+check "#367: first report is acked" \
+  "$(jq -r 'select(.name == "wrk_reup") | .status' "$FLEET_INBOX")" "acked"
+check "#367: doctor reports ok with first report acked" \
+  "$(doctor | grep -c '^ok  *done reports')" "1"
+# Second report from same agent while orchestrator pane is still busy
+bash "$here/fleet" "done" wrk_reup "second report" >/dev/null 2>&1
+check "#367: second report waiting as pending in inbox" \
+  "$(jq -r 'select(.name == "wrk_reup" and .status == "pending") | .report' "$FLEET_INBOX")" "second report"
+check "#367: doctor flags the newer pending report despite earlier acked one" \
+  "$(doctor | grep '^warn  *done reports' | sed -E 's/.*not delivered to the orchestrator: ([^:]*):.*/\1/')" "wrk_reup (not-pasted)"
+bash "$here/fleet" inbox ack wrk_reup >/dev/null 2>&1
+check "#367: both reports are now acked and doctor is ok" \
+  "$(jq -r 'select(.name == "wrk_reup") | .status' "$FLEET_INBOX" | sort -u) $(doctor | grep -c '^ok  *done reports')" "acked 1"
+
+# 8. Finding 3: fleet inbox deliver sends the whole multi-line report
+t send-keys -t "$h367" -l "AJ: busy again"; settle
+w_ml=$(dpane wrk_ml)
+fdone "$w_ml" - <<<'line 1
+line 2' >/dev/null 2>&1
+check "#367: multi-line report in inbox preserves newlines" \
+  "$(jq -r 'select(.name == "wrk_ml" and .status == "pending") | .report' "$FLEET_INBOX")" $'line 1\nline 2'
+t send-keys -t "$h367" C-u; settle
+state hph367 '{"above":["idle"],"on_submit":"none"}'; settle
+: >"$work/hph367.log"
+out_ml=$(bash "$here/fleet" inbox deliver wrk_ml 2>&1)
+check "#367: fleet inbox deliver succeeds for multi-line report" \
+  "$(grep -c 'delivered: wrk_ml (sent)' <<<"$out_ml")" "1"
+check "#367: whole multi-line report was submitted to orchestrator pane" \
+  "$(grep '^SUBMIT wrk_ml' "$work/hph367.log")" \
+  "SUBMIT wrk_ml finished: line 1\nline 2"
+
+# 9. Finding 4: done-reports.tsv carries the report in column 5 and tracks delivery state
+check "#367: done-reports.tsv carries the report in column 5" \
+  "$(awk -F'\t' '$2 == "wrk_busy" { print $2 "\t" $4 "\t" $5 }' "$DONE_REPORTS")" \
+  "wrk_busy	acked	PR #301 open, CI green"
+check "#367: done-reports.tsv tracks delivered status in column 4" \
+  "$(awk -F'\t' '$2 == "wrk_ml" { print $2 "\t" $4 "\t" $5 }' "$DONE_REPORTS")" \
+  "wrk_ml	sent	line 1\nline 2"
+
 t kill-window -t "$h367" 2>/dev/null; t kill-window -t "$w_busy" 2>/dev/null
 t kill-window -t "$w_lim" 2>/dev/null; t kill-window -t "$w_gone" 2>/dev/null
-t kill-window -t "$w_ret" 2>/dev/null
+t kill-window -t "$w_ret" 2>/dev/null; t kill-window -t "$w_reup" 2>/dev/null
+t kill-window -t "$w_ml" 2>/dev/null
 for cp in "${panes_c[@]}"; do t kill-window -t "$cp" 2>/dev/null; done
 : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$FLEET_INBOX"
 

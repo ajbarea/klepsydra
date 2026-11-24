@@ -563,7 +563,16 @@ orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 # write goes through the registry lock (with_registry).
 # shellcheck disable=SC2034 # read by done.sh, close.sh and doctor.sh
 DONE_REPORTS=${FLEET_DONE_REPORTS:-$FLEET_STATE/done-reports.tsv}
-dr_append() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$DONE_REPORTS"; } # AT NAME PANE RESULT
+dr_append() { # AT NAME PANE RESULT [REPORT]
+  local rep=${5:-}
+  rep=${rep//$'\n'/\\n}
+  rep=${rep//$'\r'/}
+  if (( $# >= 5 )); then
+    printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$rep" >>"$DONE_REPORTS"
+  else
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$DONE_REPORTS"
+  fi
+}
 dr_set() { # AT NAME RESULT: the result of the row AT and NAME name
   local tmp
   tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
@@ -630,14 +639,14 @@ inbox_append() { # NAME PANE REPORT RESULT AT
   chmod 0600 "$FLEET_INBOX" 2>/dev/null || true
   printf '%s\n' "$line" >>"$FLEET_INBOX"
 }
-inbox_mark_delivered() { # NAME [REPORT]
-  local name=$1 report=${2:-}
+inbox_mark_delivered() { # NAME [REPORT] [ID]
+  local name=$1 report=${2:-} id=${3:-}
   [[ -f $FLEET_INBOX ]] || return 0
   local tmp now
   now=$(date +%s)
   tmp=$(mktemp "$FLEET_INBOX.XXXXXX") || return 1
-  if jq -s -c --arg name "$name" --arg rep "$report" --argjson now "$now" '
-    (map(.name == $name and .status == "pending" and ($rep == "" or .report == $rep)) | index(true)) as $idx |
+  if jq -s -c --arg name "$name" --arg rep "$report" --arg id "$id" --argjson now "$now" '
+    (map((if $id != "" then .id == $id else .name == $name end) and .status == "pending" and ($rep == "" or .report == $rep)) | index(true)) as $idx |
     if $idx != null then
       .[$idx].status = "delivered" | .[$idx].delivered_at = $now
     else . end | .[]
@@ -691,7 +700,8 @@ queue_note_now() {
     limited) line="the orchestrator's pane is at a usage limit; send it after the reset" ;;
     *) line="the orchestrator did not get it" ;;
   esac
-  line="- 📋 **$1 (fleet done, report not delivered: $2):** $3 ($line.) $(date '+%a %m-%d %H:%M')"
+  local rep=${3//$'\n'/ }
+  line="- 📋 **$1 (fleet done, report not delivered: $2):** $rep ($line.) $(date '+%a %m-%d %H:%M')"
   tmp=$(mktemp "$FLEET_QUEUE_MD.XXXXXX") || return 1
   # Before the section's trailing blank lines.
   QLINE=$line awk 'BEGIN { line = ENVIRON["QLINE"] }

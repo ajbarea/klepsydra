@@ -114,19 +114,20 @@ case $cmd in
     fi
     failed=0
     for name in "${targets[@]}"; do
-      row=$(jq -r --arg name "$name" 'select(.name == $name and .status == "pending") | "\(.at // 0)\t\(.report)"' "$FLEET_INBOX" 2>/dev/null | head -1)
-      if [[ -z $row ]]; then
+      item=$(jq -c --arg name "$name" 'select(.name == $name and .status == "pending")' "$FLEET_INBOX" 2>/dev/null | head -1)
+      if [[ -z $item ]]; then
         err "no unread report for $name"
         failed=1
         continue
       fi
-      at=${row%%$'\t'*}
-      rep=${row#*$'\t'}
+      at=$(jq -r '.at // 0' <<<"$item")
+      rep=$(jq -r '.report' <<<"$item")
+      id=$(jq -r '.id' <<<"$item")
       msg="$name finished: $rep"
       got=$(bash "$here/send.sh" "$orch" - <<<"$msg" 2>/dev/null) || true
       got=${got##*$'\n'}
       if [[ $got == sent || $got == queued ]]; then
-        with_inbox inbox_mark_delivered "$name" "$rep"
+        with_inbox inbox_mark_delivered "$name" "$rep" "$id"
         [[ $at != 0 ]] && with_registry dr_set "$at" "$name" "$got"
         flog INFO "inbox: delivered report" name="$name" result="$got"
         echo "delivered: $name ($got)"

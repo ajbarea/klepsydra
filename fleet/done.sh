@@ -32,7 +32,7 @@ named=("$REGISTRY")
 [[ -f $FINISHED ]] && named+=("$FINISHED")
 report=${!#}
 [[ $report == - ]] && report=$(cat)
-report=$(tr '\r\n' '  ' <<<"$report" | sed -E 's/^ +//; s/ +$//')
+report=$(tr -d '\r' <<<"$report" | awk 'NF {found=1} found' | sed 's/[[:space:]]*$//')
 [[ -n $report ]] || { err "$usage"; exit 2; }
 # The old one-argument form named an agent. A lone word that is one is refused, not sent as a report,
 # and a worker names only itself (an unquoted two-word report must not finish another agent).
@@ -113,7 +113,7 @@ deliver_report() {
   orch=$(orchestrator)
   at=$(date +%s)
   # Recorded before the send: a call the tool's timeout kills mid-send still leaves a row the doctor flags.
-  with_registry dr_append "$at" "$label" "$rpane" pending ||
+  with_registry dr_append "$at" "$label" "$rpane" pending "$report" ||
     flog ERROR "done: done-reports.tsv cannot be written" file="$DONE_REPORTS"
   if [[ $orch =~ ^%[0-9]+$ && $orch == "${TMUX_PANE:-}" && ${TMUX:-} == *"/$FLEET_SOCK,"* ]]; then
     # The orchestrator closing an agent itself needs no message to itself.
