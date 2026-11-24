@@ -445,3 +445,13 @@ test("the Queue panel's text meets 4.5:1 on every surface it sits on, and its ma
   assert.ok(contrast(t("--tone-working"), t("--card-bg")) >= 3, "the pending mark");
   assert.ok(contrast(t("--card-focus"), t("--card-bg")) >= 3, "the focus ring on the separator and summaries");
 });
+
+test("#505: wall grid uses intrinsically responsive column sizing to prevent overflow on narrow desktop windows", () => {
+  const css = read("./fleet/wall.css");
+  assert.match(
+    css,
+    /\.wall\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(var\(--card-min\),\s*100%\),\s*1fr\)\)/,
+    "wall grid uses minmax(min(var(--card-min), 100%), 1fr)"
+  );
+});
+

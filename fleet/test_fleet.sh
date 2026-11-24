@@ -4,6 +4,8 @@
 set -uo pipefail
 # A fleet session runs with its own KERYX_VOICE; no test may inherit it.
 unset KERYX_VOICE
+# Nor the host's Copilot folder: cases that read it name their own (#513).
+unset COPILOT_HOME
 
 here=$(cd "$(dirname "$0")" && pwd)
 fake="$here/tests/fake_pane.py"
@@ -17,6 +19,9 @@ export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_BROWSERS=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
+# A copy as it was, so a change can be told apart from a toggle (#516).
+real_keryx_copy="$work/real-keryx-config.json"
+cp -p -- "$real_keryx_config" "$real_keryx_copy" 2>/dev/null || :
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 # Never AJ's briefing: `fleet done` writes an undelivered report into this queue file (#445).
 export FLEET_QUEUE_MD="$work/queue.md"
@@ -82,6 +87,56 @@ check() {
 }
 has() { grep -qF -- "$2" <<<"$1" && echo yes || echo no; } # TEXT NEEDLE
 
+# The "quit requested" line keryx's daemon logs (daemon.log, JSON lines) within
+# SLACK seconds of epoch AT, which `keryx off` writes right after config.json (#516).
+keryx_quit_event() { # AT SLACK [LOG...]
+  local at=$1 slack=$2 f
+  shift 2
+  local -a logs=()
+  if (( $# )); then
+    logs=("$@")
+  else
+    for f in "${XDG_STATE_HOME:-$HOME/.local/state}/keryx/log/daemon.log" \
+             "${XDG_STATE_HOME:-$HOME/.local/state}/keryx/log/daemon.log.1"; do
+      [[ -r $f ]] && logs+=("$f")
+    done
+  fi
+  (( ${#logs[@]} )) || return 1
+  # Line by line (-R, fromjson?), so a line that is not JSON is skipped, not the end of the read.
+  jq -n -R -r --argjson at "$at" --argjson slack "$slack" 'first(
+    inputs | fromjson? | objects
+    | select(.message? == "quit requested" and (.ts? | type) == "string")
+    | (.ts | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $t
+    | select($t != null and $t >= $at - $slack and $t <= $at + $slack)
+    | "\(.ts) \(.message)"
+  )' "${logs[@]}" 2>/dev/null
+}
+
+# AJ's live keryx config is untouched (#273). A change is let pass, with a note,
+# only when it is keryx's own toggle off: no key but `enabled` (now false) differs from the copy
+# taken at the start, and the daemon logged its quit within seconds of the write
+# (#516). A case that leaked into the file changes some other key, or none quits.
+# FILE as keryx's json.loads reads it, one object and nothing after it: its keys
+# but `enabled`, sorted; fails on anything else.
+kiso_rest() { # FILE
+  jq -cS -s 'if length == 1 and (.[0] | type) == "object" then .[0] | del(.enabled) else error end' "$1" 2>/dev/null
+}
+
+check_keryx_isolation() { # [CFG ORIG_SUM ORIG_COPY LOG NAME]
+  local cfg=${1:-$real_keryx_config} orig_sum=${2:-$real_keryx_sum} orig=${3:-$real_keryx_copy}
+  local name=${5:-"#273: no case touched AJ's own keryx config"} cur_sum mtime event
+  cur_sum=$(sha256sum "$cfg" 2>/dev/null | cut -d' ' -f1)
+  local was now
+  if [[ "$cur_sum" != "$orig_sum" ]] && was=$(kiso_rest "$orig") && now=$(kiso_rest "$cfg") && [[ $was == "$now" ]] &&
+    [[ $(jq -s '.[0].enabled' "$cfg" 2>/dev/null) == false ]] &&
+    mtime=$(stat -c %Y -- "$cfg" 2>/dev/null) &&
+    event=$(keryx_quit_event "$mtime" 5 ${4:+"$4"}) && [[ -n $event ]]; then
+    printf '  skip %s: AJ turned keryx off mid-run (only "enabled" changed; %s)\n' "$name" "$event"
+    return 0
+  fi
+  check "$name" "$cur_sum" "$orig_sum"
+}
+
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 
@@ -97,6 +152,17 @@ pane() { # NAME STATE-JSON
 state() { printf '%s' "$2" >"$work/$1.json"; sleep 0.4; } # NAME STATE-JSON
 events() { cat "$work/$1.log"; }
 settle() { sleep 0.6; }
+# A mock launcher reports only once its new pane drew TEXT, as launch.sh does before it
+# reports NOT-DELIVERED (#532); a pane that never draws it is written to drawn.timeouts.
+cat >"$work/drawn.sh" <<EOF
+#!/usr/bin/env bash
+for _ in \$(seq 100); do
+  tmux -L "$FLEET_SOCK" capture-pane -p -t "\$1" 2>/dev/null | grep -qF -- "\$2" && exit 0
+  sleep 0.05
+done
+echo "\$1 never drew: \$2" >>"$work/drawn.timeouts"
+EOF
+chmod +x "$work/drawn.sh"
 reading() { # DIR LABEL FIVE_HOUR_PCT MTIME: a usage reading for account DIR
   # A case that sets an account's reading starts with no limit seen on it (#319).
   rm -f -- "$FLEET_STATE/limited/${1:?}".five "$FLEET_STATE/limited/${1:?}".seven
@@ -1142,7 +1208,7 @@ doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_
 printf '{"ts":%s,"shots_rc":0,"techne":"/t/cleanup.py","unowned":[],"stale":[],"queue_old":0,"done_files":0,"heph_bytes":1,"briefs_stale":0,"archive_stale":0}\n' "$(date +%s)" >"$work/clean-cleanup.json"
 doctor() { local rc; doc_prefs; FLEET_CLEANUP_REPORT="${FLEET_CLEANUP_REPORT:-$work/clean-cleanup.json}" FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" FLEET_UNITS="$work/dunits" bash "$here/doctor.sh" 2>/dev/null; rc=$?
-  rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
+  rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return "$rc"; }
 phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
 sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
 w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
@@ -1194,6 +1260,12 @@ for pw in '{phone' '{"phone_wall": true} garbage' '{"phone_wall": true}{}' '[tru
   check "#328 review 1: prefs.json $pw does not read: a warning, and neither phone line is tried" \
     "$(DOC_PREFS=$pw doctor | phone_lines)" "warn phone wall"
 done
+check "#484: a prefs.json that does not read warns that settings are not kept" \
+  "$(DOC_PREFS='{"theme":' doctor | grep -c '^warn prefs: prefs.json does not read as one JSON object: theme, density')" "1"
+check "#484: a prefs.json that reads gives no prefs line" "$(DOC_PREFS='{"theme":"kourai"}' doctor | grep -c '^[a-zA-Z]* *prefs:')" "0"
+check "#484: no prefs.json at all gives no prefs line (the app's defaults)" "$(DOC_PREFS=none doctor | grep -c '^[a-zA-Z]* *prefs:')" "0"
+check "#484: a prefs.json opening with a UTF-8 BOM warns, as the app refuses it" \
+  "$(DOC_PREFS=$'\xef\xbb\xbf{"theme":"kourai"}' doctor | grep -c '^warn prefs:')" "1"
 check "#289: with no fleet scope there is no task caps line" "$(grep -c 'task caps' <<<"$out")" "0"
 printf 'fleet-a-1.scope 7000 8745\nfleet-b-2.scope 100 8745\nnot-fleet.scope 9 10\n' >"$work/scopes"
 check "#289: a scope past 80% of its task cap warns, naming it" "$(DOC_SCOPES="$work/scopes" doctor | grep 'task caps')" \
@@ -2877,6 +2949,7 @@ printf '%s' '{"above":["Claude Code"],"input":"the brief, pasted and never sent"
 cat >"$work/launch-stuck.sh" <<EOF
 #!/usr/bin/env bash
 new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/stucknew.json $work/stucknew.log")
+"$work/drawn.sh" "\$new" 'the brief, pasted and never sent'
 sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
 echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
 EOF
@@ -3068,16 +3141,18 @@ t kill-window -t "$abl"
 p=$(pane relold '{"above":["idle"]}'); settle
 live "$p"
 printf '%s\trel\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
-printf '%s' '{"above":["Claude Code"],"input":"the brief, never sent"}' >"$work/relnew.json"; : >"$work/relnew.log"
+printf '%s' '{"above":["Claude Code"],"input":"the brief, never sent","exit_on_exit":true}' >"$work/relnew.json"; : >"$work/relnew.log"
 cat >"$work/launch-rel.sh" <<EOF
 #!/usr/bin/env bash
 new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/relnew.json $work/relnew.log")
+"$work/drawn.sh" "\$new" 'the brief, never sent'
 sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
 echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
 EOF
 LAUNCH="$work/launch-rel.sh" bash "$here/relaunch-fresh.sh" "$p" rel "$work/brief.src" "hint" >/dev/null 2>&1; rc=$?
 check "review 3: a relaunch whose brief never started keeps the old pane, points the row back and exits the new one" \
   "$rc $(cut -f1,4,6 "$REGISTRY") $(grep -c 'SUBMIT /exit' "$work/relnew.log") $(grep -c '^SUBMIT' "$work/relold.log")" "1 $p	$SID	$work/cfg-a 1 0"
+check "#532: each mock pane drew its unsent brief before the launcher reported" "$(cat "$work/drawn.timeouts" 2>/dev/null)" ""
 t kill-window -t "$p"; : >"$REGISTRY"
 # #229 review: a relaunch whose old pane AJ was watching puts the new one in view.
 p=$(pane relview '{"above":["idle"],"exit_on_exit":true}'); settle
@@ -3230,6 +3305,108 @@ state cil '{"above":["⏺ Done. done 11:50 AM"],"paste_prefix":"AJ: ","clear":tr
 check "review 4: pasted as AJ began a line, nothing is sent and none of his line is taken" \
   "$(inbox_deliver "$p" "$work/alert3.txt") [$(input_text "$(screen "$p")")] $(grep -c '^SUBMIT' "$work/cil.log")" "mixed [AJ: $(<"$work/alert3.txt")] 1"
 t kill-window -t "$p"
+echo "#515: the context budget: checkpoint, then a fresh session"
+login a; login b; reading a Personal 10 5000; reading b RIT 10 4000
+ctx_file() { # PANE TOKENS STAMP [STATE]: the hook's file for the session live in PANE
+  jq -n --arg p "$1" --argjson t "$2" --arg at "$3" --arg st "${4:-done}" \
+    '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: [], call_tokens: $t, prompt: {at: $at}, turn_at: $at}' \
+    >"$KLEPSYDRA_DIR/fleet/$SID.json"
+}
+ctx_idle='{"above":["⏺ Done. done 11:50 AM"],"rc":"on"}'
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane ctx "$ctx_idle"); settle
+ctx_file "$p" 300000 t1
+printf '%s\tctx\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
+mover "$noon"
+check "#515: at the budget, at a finished turn, the worker is asked to write its resume state, and nothing moves yet" \
+  "$(grep -c '^SUBMIT Your context is past the fleet.s budget: your last request carried 300000 tokens (budget 300000)' "$work/ctx.log") $(wc -c <"$work/moved")" "1 0"
+check "#515: logged with its size" "$(jq -r 'select(.message | startswith("context budget: asked")) | [.pane, .name, .tokens, .result] | join(" ")' "$FLEET_LOG")" "$p ctx 300000 sent"
+state ctx "$ctx_idle"
+mover "$((noon + 60))"
+check "#515: the turn it was asked at (the ask not yet taken up) neither relaunches nor asks again" \
+  "$(wc -c <"$work/moved") $(grep -c '^SUBMIT' "$work/ctx.log")" "0 1"
+state ctx '{"above":["⏺ working"],"busy":true,"rc":"on"}'; ctx_file "$p" 305000 t2 working
+mover "$((noon + 120))"; mover "$((noon + 180))"
+check "#515: passes while the checkpoint turn runs (each its own process) keep the ask on record" \
+  "$(cut -d$'\x1f' -f12 <(grep -F "$p" "$FLEET_STATE/resume-state")) $(wc -c <"$work/moved")" "$SID t1/t1 0"
+state ctx "$ctx_idle"; ctx_file "$p" 310000 t2
+mover "$((noon + 240))"
+check "#515: once the checkpoint turn has ended, a fresh session takes the pane (launch.sh picks its account), asked once" \
+  "[$(head -1 "$work/moved")] $(sed -n 2p "$work/moved") $(grep -c '^SUBMIT Your context' "$work/ctx.log")" "[] ctx 1"
+check "#515: its brief says why" "$(grep -c 'passed the context budget (310000 of 300000 tokens a request) and wrote its resume state' "$work/moved-brief")" "1"
+check "#515: logged" "$(logged 'context budget: a fresh session took over')" "$p "
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; : >"$work/ctx-fails"; rm -f "$FLEET_STATE/resume-state"
+printf '%s\n' '#!/usr/bin/env bash' "echo x >>'$work/ctx-fails'" 'exit 3' >"$work/launch-fail.sh"
+chmod +x "$work/launch-fail.sh"
+p=$(pane ctxf "$ctx_idle"); settle
+ctx_file "$p" 400000 t1
+printf '%s\tctxf\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
+ctxf() { LAUNCH="$work/launch-fail.sh" FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # NOW
+ctxf "$noon"; state ctxf "$ctx_idle"; ctx_file "$p" 410000 t2
+for i in 1 2 3 4; do ctxf "$((noon + 60 * i))"; done
+check "#515: a relaunch that keeps failing is held like any move, and the worker is not asked again" \
+  "$(grep -c '^SUBMIT' "$work/ctxf.log") $(wc -l <"$work/ctx-fails")" "1 2"
+ctxf "$((noon + 60 * 5 + 900))"
+check "#515: past the hold it is tried again, still without a new ask" "$(grep -c '^SUBMIT' "$work/ctxf.log") $(wc -l <"$work/ctx-fails")" "1 3"
+jq '.session_id = "y"' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp"
+SID3=33333333-2222-4333-8444-555555555555
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"; ctx_file "$p" 120000 t9; mv -- "$KLEPSYDRA_DIR/fleet/$SID.json" "$KLEPSYDRA_DIR/fleet/$SID3.json"
+mover "$((noon + 60 * 30))"
+check "#515: a new session in the pane (a /clear) drops the record" \
+  "$(cut -d$'\x1f' -f12 <(grep -F "$p" "$FLEET_STATE/resume-state"))[$(wc -c <"$work/moved")]" "[0]"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SID3.json" "$work/ctx.tmp"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane ctxlow "$ctx_idle"); settle
+ctx_file "$p" 299999 t1
+printf '%s\tctxlow\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
+mover "$noon"; mover "$((noon + 60))"
+check "#515: one token under the budget, nothing is asked or moved" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
+jq 'del(.call_tokens)' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp" && mv -- "$work/ctx.tmp" "$KLEPSYDRA_DIR/fleet/$SID.json"
+mover "$((noon + 120))"
+check "#515: nor for a session an older hook never measured" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane ctxbusy '{"above":["⏺ working"],"busy":true,"rc":"on"}'); settle
+ctx_file "$p" 400000 t1
+printf '%s\tctxbusy\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
+mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
+mover "$noon"
+check "#515: not into a running turn" "$(grep -cE 'SUBMIT|ESC' "$work/ctxbusy.log") $(wc -c <"$work/moved")" "0 0"
+state ctxbusy "$ctx_idle"
+t send-keys -t "$p" -l "AJ: one more thing"; settle
+mover "$((noon + 60))"
+check "#515: nor over a line AJ is typing" "$(grep -c '^SUBMIT' "$work/ctxbusy.log") [$(input_text "$(screen "$p")")]" "0 [AJ: one more thing]"
+t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
+
+: >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
+p=$(pane ctxun "$ctx_idle"); settle
+ctx_file "$p" 900000 t1
+mover "$noon"
+check "#515: a session no brief registered (AJ's own) is never asked" "$(grep -c '^SUBMIT' "$work/ctxun.log") $(wc -c <"$work/moved")" "0 0"
+t kill-window -t "$p" 2>/dev/null; rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"
+# Back to the one logged-out account the cases after this one start from.
+logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"; rm -f "$FLEET_STATE/resume-state"
+refused() { # RC: move_tries and move_failed set after a move refused with RC, from the service's own helpers
+  bash -c 'declare -A move_tries move_failed last asked fresh_failed due seen_on note; NOW=100
+    eval "$(sed -n "/^moved() {/,/^}/p;/^forget() {/p;/^move_refused() {/,/^}/p" "$1")"
+    move_refused "%7" "$2"; echo "${move_tries[%7]:-0} ${move_failed[%7]:-none}"' _ "$here/resume-at-reset.sh" "$1"
+}
+check "#515 review: a move AJ refused before it started costs nothing; a launch he undid waits as a second failure; any other failure counts once" \
+  "$(refused 1) | $(refused 4) | $(refused 3)" "0 none | 2 100 | 1 100"
+# shellcheck disable=SC2016 # literal text to find in the service
+check "#515 review: every kind of move hands its refusals to that one rule" \
+  "$(grep -c 'move_refused "$p" "$rc"' "$here/resume-at-reset.sh")" "3"
+check "#515: the wall warns at the same budget the resume service acts on" \
+  "$(grep -oE 'CONTEXT_BUDGET = [0-9]+' "$here/../src/fleet/ledger.js" | grep -oE '[0-9]+')" "$(bash -c '. "$1/lib.sh"; echo "$FLEET_CONTEXT_BUDGET"' _ "$here")"
+
 echo "the watcher holds panes limited when it starts (#246)"
 : >"$FLEET_LOG"
 lp=$(pane wlim '{"above":["  ⎿  You'"'"'ve hit your session limit · resets 1:10pm (America/New_York)","",""]}'); settle
@@ -3679,6 +3856,64 @@ check "doctor: an installed engine with the lock policy shows its lanes, locked,
   "engine agy: signed in; lanes: print interactive, locked | warn print interactive"
 doc=$(HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$work/nohooks" bash "$here/doctor.sh" 2>/dev/null)
 check "doctor: without the lock policy the lanes are OFF, never silently on" "$(grep -c '^warn *engine [a-z]*: .*lanes OFF' <<<"$doc")" "2"
+models_dir="$work/models_test"
+mkdir -p "$models_dir"
+mdoc() { # AGY_MODEL_LIST [VAR=VALUE...]: doctor's "models agy" line
+  local list=$1
+  shift
+  env HOME="$work/enghome" FLEET_AGY=/bin/true FLEET_COPILOT=/bin/true FLEET_HOOK_DIR="$here/../hooks" \
+    FLEET_MODELS_DIR="$models_dir" FLEET_MODELS_EVERY_S=0 FLEET_AGY_MODELS="$list" "$@" bash "$here/doctor.sh" 2>/dev/null |
+    grep -E '^(ok|warn|FAIL) +models agy:' | sed -E 's/[0-9]{2}-[0-9]{2} ([+-])/WHEN \1/g; s/asked [0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/asked WHEN/'
+}
+two=$'gemini-3.8-flash-high\nclaude-sonnet-4-6'
+check "doctor: #513 the first run records the list" "$(mdoc "$two")" "ok   models agy: 2 models"
+check "doctor: #513 the record is sorted, one id a line" "$(cat "$models_dir/models-agy.txt")" $'claude-sonnet-4-6\ngemini-3.8-flash-high'
+check "doctor: #513 the same list again is ok" "$(mdoc "$two")" "ok   models agy: 2 models"
+check "doctor: #513 a new model is a warning to review routing" "$(mdoc "$two"$'\ngemini-4-neon')" \
+  "warn models agy: changed WHEN +gemini-4-neon: review routing in docs/engines.md"
+check "doctor: #513 the record takes the new list" "$(cat "$models_dir/models-agy.txt")" $'claude-sonnet-4-6\ngemini-3.8-flash-high\ngemini-4-neon'
+check "doctor: #513 the warning holds on the timer's next run, so it is seen" "$(mdoc "$two"$'\ngemini-4-neon')" \
+  "warn models agy: changed WHEN +gemini-4-neon: review routing in docs/engines.md"
+check "doctor: #513 past FLEET_MODELS_WARN_S it is ok again" "$(mdoc "$two"$'\ngemini-4-neon' FLEET_MODELS_WARN_S=0)" "ok   models agy: 3 models"
+check "doctor: #513 a model gone is a warning too, after the change before it (both within the warning's days)" "$(mdoc $'gemini-3.8-flash-high\ngemini-4-neon')" \
+  "warn models agy: changed WHEN +gemini-4-neon; WHEN -claude-sonnet-4-6: review routing in docs/engines.md"
+check "doctor: #513 within FLEET_MODELS_EVERY_S the list is not asked again" \
+  "$(mdoc $'only-one' FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0; cat "$models_dir/models-agy.txt")" $'ok   models agy: 2 models\ngemini-3.8-flash-high\ngemini-4-neon'
+rm -f -- "$models_dir/models-agy.asked"
+# A lister that fails: asked once an interval, its list kept whole, and said once it is stale.
+printf '%s\n' '#!/usr/bin/env bash' "echo x >>'$work/agy-calls'" 'printf "gemini-3.8-flash-high\tGemini\n"' 'exit 1' >"$work/fail-agy"
+chmod +x "$work/fail-agy"
+: >"$work/agy-calls"; rm -f -- "$models_dir/models-agy.asked"
+check "doctor: #513 a listing that fails partway changes nothing (not read as models gone)" \
+  "$(mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0; cat "$models_dir/models-agy.txt")" $'ok   models agy: 2 models\ngemini-3.8-flash-high\ngemini-4-neon'
+mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0 >/dev/null
+mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0 >/dev/null
+check "doctor: #513 and is asked once within FLEET_MODELS_EVERY_S, failed or not" "$(wc -l <"$work/agy-calls")" "1"
+touch -d '-3 hours' -- "$models_dir/models-agy.txt" "$models_dir/models-agy.asked"
+check "doctor: #513 a list unread for two intervals says so" \
+  "$(mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0 | sed -E 's/since [0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}/since WHEN/')" \
+  "warn models agy: not read since WHEN (its listing failed): changes go unseen"
+rm -rf -- "${models_dir:?}"; mkdir -p "$models_dir"; : >"$work/agy-calls"
+mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600 >/dev/null
+check "doctor: #513 with no list yet, a failing lister is not asked on every run" \
+  "$(mdoc "" FLEET_AGY="$work/fail-agy" FLEET_MODELS_EVERY_S=3600; wc -l <"$work/agy-calls")" $'warn models agy: its model list could not be read (asked WHEN): changes go unseen\n1'
+# The parsers, on what the engines really print and store (agy `agy models` 11-23; Copilot CLI 1.0 data.db).
+# shellcheck disable=SC2016 # the stub's $1 is its own
+printf '%s\n' '#!/usr/bin/env bash' '[[ $1 == models ]] || exit 2' "printf 'Fetching available models...\\n'" \
+  "printf 'gemini-3.8-flash-high\\tGemini 3.8 Flash (High)\\nclaude-sonnet-4-6\\tClaude Sonnet 4.6 (Thinking)\\ngpt-oss-120b-medium\\tGPT-OSS 120B (Medium)\\n'" \
+  >"$work/fake-agy"
+chmod +x "$work/fake-agy"
+check "doctor: #513 agy's listing gives its ids, without the banner" \
+  "$(FLEET_AGY="$work/fake-agy" bash -c '. "$1/engines.sh"; eng_models agy' _ "$here")" $'claude-sonnet-4-6\ngemini-3.8-flash-high\ngpt-oss-120b-medium'
+mkdir -p "$work/copilot-home"
+python3 -I -c 'import json, sqlite3, sys
+c = sqlite3.connect(sys.argv[1]); c.execute("CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT)")
+c.execute("INSERT INTO app_state VALUES (?, ?)", ("copilot-available-models", json.dumps([{"id": "auto"}, {"id": "gpt-5.2", "name": "GPT-5.2"}, {"id": "claude-haiku-4.5"}])))
+c.commit()' "$work/copilot-home/data.db"
+check "doctor: #513 Copilot's cached list gives its ids, without auto" \
+  "$(FLEET_COPILOT=/bin/true COPILOT_HOME="$work/copilot-home" bash -c '. "$1/engines.sh"; eng_models copilot' _ "$here")" $'claude-haiku-4.5\ngpt-5.2'
+check "doctor: #513 Copilot with no cache gives nothing and fails" \
+  "$(FLEET_COPILOT=/bin/true COPILOT_HOME="$work/none" bash -c '. "$1/engines.sh"; eng_models copilot; echo "rc=$?"' _ "$here")" "rc=1"
 check "recover leaves a finished agent alone and relaunches the lost one" \
   "$(rec --dry-run --no-orchestrator | grep -E '^(finished|would recover)' | sed 's/ (.*//')" $'finished: d\nwould recover: e'
 # #261 review 4: d's finish is recorded; AJ resumes it in its pane (the same id,
@@ -4340,6 +4575,13 @@ check "#273 review: --if-changed leaves a manual keryx off alone while the mode 
   "$(fv --if-changed; jq -c .enabled "$kc") $(wc -l <"$kcalls")" "false 0"
 printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
 check "#273 review: --check names a saved mode not yet applied" "$(fv --check; echo "rc=$?")" $'heph not applied (last applied: everyone): fleet voices applies it\nrc=1'
+printf '{"theme":' >"$KLEPSYDRA_DIR/prefs.json"
+check "#484: fleet voices MODE leaves a prefs.json that does not read as it is, and fails" \
+  "$(fv off; echo "rc=$?") $(cat "$KLEPSYDRA_DIR/prefs.json")" 'rc=1 {"theme":'
+printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
+check "#484: fleet voices MODE over a file that reads keeps its other keys" \
+  "$(fv off >/dev/null; jq -c '[.voices, .theme]' "$KLEPSYDRA_DIR/prefs.json")" '["off","kourai"]'
+printf '{"voices":"heph","theme":"kourai"}' >"$KLEPSYDRA_DIR/prefs.json"
 check "#273: a changed mode the tray saved applies at the next pass, other prefs kept" \
   "$(fv --if-changed) | $(jq -c '[.enabled, .speak_only]' "$kc") $(jq -r .theme "$KLEPSYDRA_DIR/prefs.json")" "voices: heph (changed: enabled speak_only) | [true,[\"$orch_rec\"]] kourai"
 check "#273: and --check then says so" "$(fv --check; echo "rc=$?")" $'applied heph\nrc=0'
@@ -4431,6 +4673,48 @@ stub_keryx "$work/home/.claude-rit/plugins/cache/techne/keryx/0.12.0"
 check "#273 review: the newest keryx across both accounts' caches is used (0.12.0 under .claude-rit, not 0.11.0)" \
   "$(env -u FLEET_KERYX HOME="$work/home" bash "$here/fleet" voices 2>/dev/null)" "voices: heph (changed: speak_only)"
 vreset; rm -f "$kcalls"
+
+echo "keryx isolation check (#516)"
+kiso_cfg="$work/kiso-config.json" kiso_orig="$work/kiso-orig.json" kiso_log="$work/kiso-daemon.log"
+kiso_iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.047Z; }
+kiso_quit() { printf '{"ts": "%s", "level": "INFO", "logger": "keryx", "message": "quit requested"}\n' "$(kiso_iso "$1")"; }
+kiso_run() { # CONFIG_TEXT LOG_TEXT NAME [ORIG_TEXT]: the check's output, as it would print
+  printf '%s\n' "${4:-{\"enabled\": true, \"speak_only\": [\"%1\"]\}}" >"$kiso_orig"
+  printf '%s\n' "$1" >"$kiso_cfg"
+  touch -d @1795400000 -- "$kiso_cfg"
+  printf '%s' "$2" >"$kiso_log"
+  GITHUB_ACTIONS="" check_keryx_isolation "$kiso_cfg" "$(sha256sum "$kiso_orig" | cut -d' ' -f1)" "$kiso_orig" "$kiso_log" "$3" 2>&1
+}
+kiso_off='{"enabled": false, "speak_only": ["%1"]}'
+kiso_out=$(kiso_run '{"enabled": true, "speak_only": ["%1"]}' "" "kiso same")
+check "#516: an unchanged config passes" "$(grep -c '^  ok   kiso same' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "$(kiso_quit 1795400001)" "kiso toggle")
+check "#516: only enabled flipped, with keryx's quit a second after the write, is a skip with a note" \
+  "$(grep -c '^  skip kiso toggle: AJ turned keryx off mid-run' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run '{"enabled": false, "speak_only": []}' "$(kiso_quit 1795400001)" "kiso leak")
+check "#516: another key changed fails even with a quit beside the write (the leak #273 guards)" \
+  "$(grep -c '^  FAIL kiso leak' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "$(kiso_quit 1795400060)" "kiso far")
+check "#516: a quit a minute away from the write fails" "$(grep -c '^  FAIL kiso far' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "$(kiso_quit 1577836800)" "kiso old")
+check "#516: a quit from another day fails" "$(grep -c '^  FAIL kiso old' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "" "kiso nolog")
+check "#516: no quit logged fails" "$(grep -c '^  FAIL kiso nolog' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" '{"ts": "'"$(kiso_iso 1795400001)"'", "message": "quit  0 chars -> {}"}' "kiso other")
+check "#516: only the daemon's own quit line counts, not another line naming quit" "$(grep -c '^  FAIL kiso other' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "not json" "$(kiso_quit 1795400001)" "kiso broken")
+check "#516: a config that no longer parses fails" "$(grep -c '^  FAIL kiso broken' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "not json at all"$'\n'"$(kiso_quit 1795400001)" "kiso garbage")
+check "#516: a log line that is not JSON is skipped, not the end of the read" "$(grep -c '^  skip kiso garbage' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run '{"enabled": true, "speak_only": ["%1"]}' "$(kiso_quit 1795400001)" "kiso on" '{"enabled": false, "speak_only": ["%1"]}')
+check "#516: turned on (a quit beside it from a daemon swap) is no toggle off, and fails" "$(grep -c '^  FAIL kiso on' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off {}" "$(kiso_quit 1795400001)" "kiso trailing")
+check "#516: an object with another value after it (keryx cannot read it) fails" "$(grep -c '^  FAIL kiso trailing' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "$kiso_off" "$(kiso_quit 1795400001)" "kiso same off" "$kiso_off")
+check "#516: an unchanged file that was already off passes, quit or not" "$(grep -c '^  ok   kiso same off' <<<"$kiso_out")" "1"
+kiso_out=$(kiso_run "still not json" "$(kiso_quit 1795400001)" "kiso both" "not json")
+check "#516: a config unreadable before and after, but changed, fails" "$(grep -c '^  FAIL kiso both' <<<"$kiso_out")" "1"
+rm -f -- "$kiso_cfg" "$kiso_orig" "$kiso_log"
 
 echo "briefing sync"
 git init -q --bare "$work/brief-remote.git"
@@ -4872,6 +5156,18 @@ check "#395 review: doctor reads keryx's hold before the environment" \
 rm -f "$KLEPSYDRA_DIR/fleet/s1.json" "$KLEPSYDRA_DIR/fleet/s2.json"
 rm -rf "$work/dproc/91001" "$work/dproc/91002"
 
+echo "#515: a brief naming more than one repo's items"
+mkdir -p "$work/repos/keryx/.git" "$work/repos/klepsydra/.git"
+printf '%s\n' 'Work on keryx#71 and https://github.com/ajbarea/keryx/pull/95.' 'Read the PR, open a PR, review the issue#3 and PR#4 notes.' >"$work/one-repo.md"
+check "#515: one repo's items, and words before PR or a #, are no warning" \
+  "$(FLEET_REPOS_ROOT="$work/repos" bash "$here/brief.sh" one-repo "$work/one-repo.md" 2>&1 >/dev/null | grep -c 'warning: brief')" "0"
+printf '%s\n' 'Review ajbarea/keryx#99, then https://github.com/ajbarea/klepsydra/issues/515.' >"$work/two-repo.md"
+check "#515: two repos' items warn, naming both" \
+  "$(FLEET_REPOS_ROOT="$work/repos" bash "$here/brief.sh" two-repo "$work/two-repo.md" 2>&1 >/dev/null | grep '^warning: brief')" \
+  "warning: brief two-repo names issues or PRs in keryx, klepsydra; one PR-sized item a session keeps its context small (chain briefs instead)"
+check "#515: and the brief is still written" "$(test -s "$FLEET_STATE/task-two-repo.src" && echo yes)" "yes"
+rm -f -- "$FLEET_STATE/task-one-repo.src" "$FLEET_STATE/task-two-repo.src"
+
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
   "$(jq -s 'all(has("ts") and has("level") and has("target") and has("message"))' "$FLEET_LOG")" "true"
@@ -4881,7 +5177,7 @@ check "past its cap the log is renamed, and only the newest four are kept" \
 
 echo "the suite's own isolation"
 check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""
-check "#273: no case touched AJ's own keryx config" "$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)" "$real_keryx_sum"
+check_keryx_isolation
 
 echo
 echo "$pass passed, $fail failed"

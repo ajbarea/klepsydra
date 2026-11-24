@@ -8,7 +8,7 @@ import { ledgerLine } from "./ledger.js";
 
 export { voiceName };
 import { speakingNow } from "./speaking.js";
-import { listWords, sessionActions } from "./end.js";
+import { listWords, paneKnown, sessionActions } from "./end.js";
 import { wrapupLine, sessionRoute } from "./wrapup.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
@@ -138,6 +138,30 @@ export function identity(s, cast) {
   const name = own ? voiceName(own) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
   const face = medallion(name, own ?? s.session_id);
   return { name, voice: null, voiceKey: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null, motif: "burst" };
+}
+
+/**
+ * The drawer's character per session: each card on the wall by `identity`, then
+ * each session gone from it that today's file records a crate pick for (`day.picks`),
+ * when that pick has a face in this cast (a theme changed since keeps it out).
+ * A card wearing the character the wall cast (its crate pick), not its own voice's,
+ * has cast: true so tokensByCharacter attributes its tokens to the character row (#148, #536).
+ */
+export function drawerCharacters(sessions, cast, day) {
+  const map = new Map();
+  for (const s of sessions) {
+    const id = identity(s, cast);
+    // What tells two cards of one character apart: the session's name, else its repo.
+    // A card wearing the character the wall cast (crate picks), not its own voice's: the Ledger names the card's.
+    map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voiceKey === s.pick });
+  }
+  // A session gone from the wall keeps the character the crate recorded in today's file.
+  for (const [sid, pick] of Object.entries(day?.picks ?? {})) {
+    if (map.has(sid)) continue;
+    const id = identity({ session_id: sid, pick }, cast);
+    if (id.full) map.set(sid, { name: id.name, accent: id.accent, label: null, cast: true });
+  }
+  return map;
 }
 
 /** The voice keys of the orchestrator's faces, Hephaestus and Athena (src-tauri/fleet/src/picks.rs ORCHESTRATORS). */
@@ -338,9 +362,9 @@ export function stripItems(sessions, cast, nowMs, before, speaking = null) {
 }
 
 /** Whether the card can jump to the session's terminal, and why not: by its name, or by its tmux pane and Claude process. */
-function jumpable(s) {
+function jumpable(s, native) {
   if (s.status === "ended") return { enabled: false, why: "session ended" };
-  if (!s.name && !(s.tmux && s.claude && s.distro)) return { enabled: false, why: "no session name yet" };
+  if (!s.name && !paneKnown(s, native)) return { enabled: false, why: "no session name yet" };
   return { enabled: true, why: null };
 }
 
@@ -380,8 +404,8 @@ export const accentLight = (accent) => {
  * "needs": the only filled button, on a needs_you card (quiet or not), no marker.
  * "accent": neutral with a left marker in the character's colour. "plain": neutral, no marker.
  */
-function jumpStyle(s, accent) {
-  const kind = !jumpable(s).enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
+function jumpStyle(jump, s, accent) {
+  const kind = !jump.enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
   return { jumpKind: kind, jumpMark: kind === "accent" ? { color: accent, width: markerWidth(accent, BUTTON_BGS) } : null };
 }
 
@@ -609,14 +633,14 @@ export function engineInfo(engine, model) {
   };
 }
 
-/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
-export function card(s, cast, nowMs, request = null) {
+/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown, and `native` its flag for a native Linux app, which reaches tmux itself. */
+export function card(s, cast, nowMs, request = null, native = false) {
   const who = identity(s, cast);
-  const wrapup = wrapupLine(s, request, nowMs);
+  const wrapup = wrapupLine(s, request, nowMs, native);
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
-  const jump = jumpable(s);
+  const jump = jumpable(s, native);
   const marks = crewMarks(crew);
   const eng = s.engine ? s.engine.trim().toLowerCase() : (s.session_id ? "claude" : null);
   const rawModel = s.model?.display_name || s.model?.id || (typeof s.model === "string" ? s.model : null) || s.statusline?.model?.display_name || s.statusline?.model?.id || null;
@@ -670,7 +694,7 @@ export function card(s, cast, nowMs, request = null) {
     epithet: who.epithet,
     figure: who.figure,
     motif: who.motif || "burst",
-    ...jumpStyle(s, who.accent),
+    ...jumpStyle(jump, s, who.accent),
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
@@ -678,12 +702,12 @@ export function card(s, cast, nowMs, request = null) {
     reply: plainText(nowReply),
     said: plainText(s.said?.text ?? null),
     error: s.status === "error" ? s.error ?? null : null,
-    ledger: ledgerLine(s.ledger, s.ledger_partial === true),
+    ledger: ledgerLine(s.ledger, s.ledger_partial === true, s.call_tokens),
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump,
     clear: s.status === "ended" || s.status === "silent",
-    actions: sessionActions(s),
-    wrapupRoute: sessionRoute(s),
+    actions: sessionActions(s, native),
+    wrapupRoute: sessionRoute(s, native),
     wrapup,
     remote: remoteLink(s.remote_url),
     // The account it runs on; the wall shows it only while cards differ in it (accountsDiffer).

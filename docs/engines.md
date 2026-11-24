@@ -40,6 +40,22 @@ called "past the crossover every seed was ambiguous" false by reading a
 4-column outcome row as the wrong column (friction 11-11 qml-paper). Check each
 claim against the code, the lexicon or the row before you edit anything.
 
+### Model discovery and routing review
+
+`fleet doctor` keeps each engine's model list in
+`$FLEET_STATE/models-agy.txt` and `models-copilot.txt`: agy's from `agy models`,
+Copilot's from the list its CLI cached at its last start (`~/.copilot/data.db`).
+It asks at most every 6 hours (`FLEET_MODELS_EVERY_S`). A change is a warning for
+3 days (`FLEET_MODELS_WARN_S`), so the doctor timer does not clear it unread:
+
+    warn models agy: changed 11-25 +gemini-4-neon: review routing in docs/engines.md
+
+When a new model appears:
+1. **Measure it on our own work first.** A vendor's benchmarks are not evidence
+   for this fleet: run it on real items (qualifier sweeps, doc lint, research).
+2. **Then review routing.** If it holds up, update `eng_order()` and
+   `eng_model()` in `fleet/engines.sh` and record the evidence in the table above.
+
 ### Briefing a lane
 
 - **Prompt shape.** Put the answer first in the task and ask for `path:line`
