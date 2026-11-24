@@ -1671,6 +1671,25 @@ mod tests {
     }
 
     #[test]
+    fn dst_midnights_through_the_tz_database() {
+        // The same midnights as the app reads its zone: from the tz database
+        // (jiff's bundled copy on Windows, the system's elsewhere).
+        let db = TimeZone::get("America/New_York").unwrap();
+        for (at, day) in [
+            (1_793_505_599, "2026-10-31"),
+            (1_793_505_600, "2026-11-01"),
+            (1_793_595_599, "2026-11-01"),
+            (1_793_595_600, "2026-11-02"),
+            (1_772_945_999, "2026-03-07"),
+            (1_772_946_000, "2026-03-08"),
+            (1_773_028_799, "2026-03-08"),
+            (1_773_028_800, "2026-03-09"),
+        ] {
+            assert_eq!(day_name(at, &db), day, "{at}");
+        }
+    }
+
+    #[test]
     fn a_point_starting_in_the_future_is_dropped_and_keeps_no_baseline() {
         let s = |n: u64| n * 1_000_000_000;
         let future = 8_993_548_800u64; // 2255-01-01
