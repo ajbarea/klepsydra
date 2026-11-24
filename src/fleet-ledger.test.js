@@ -141,12 +141,17 @@ test("#536: drawerCharacters maps picked sessions and day.picks to cast: true fo
   assert.equal(namesGone.get("s2").cast, true);
 
   // 3. A session wearing its own cast voice has cast: false (drawer attributes it by own voice)
-  const ownVoice = { session_id: "s3", voice: "af_heart", pick: null };
+  const ownVoice = { session_id: "s3", voice: "af_heart" };
   const namesOwn = drawerCharacters([ownVoice], CAST, {});
   assert.equal(namesOwn.get("s3").cast, false);
   // A card still on the wall keeps its own character, even when today's file recorded a pick for it.
   const both = drawerCharacters([{ ...ownVoice, name: "docs" }], CAST, { picks: { s3: "am_puck" } }).get("s3");
   assert.deepEqual([both.name, both.cast, both.label], ["Cupid", false, "docs"]);
+  // A recorded pick with no face in this cast (a theme changed since) is no character row.
+  assert.equal(drawerCharacters([], CAST, { picks: { g: "am_onyx" } }).has("g"), false);
+  // A pick the card does not wear is not the wall's cast: an unknown pick, or one under a cast voice of its own.
+  assert.equal(drawerCharacters([{ session_id: "w", voice: "bm_george", pick: "am_onyx" }], CAST, {}).get("w").cast, false);
+  assert.equal(drawerCharacters([{ session_id: "o", voice: "af_heart", pick: "am_puck" }], CAST, {}).get("o").cast, false);
 
   // 4. Verify tokensByCharacter attributes both picked sessions to Cupid, not Other sessions
   const wall = drawerCharacters([onWall], CAST, { picks: { s2: "af_heart" } });

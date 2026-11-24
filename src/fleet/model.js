@@ -142,8 +142,9 @@ export function identity(s, cast) {
 
 /**
  * The drawer's character per session: each card on the wall by `identity`, then
- * each session gone from it that today's file records a crate pick for (`day.picks`).
- * A card wearing a character the wall cast (crate picks), not its own voice's,
+ * each session gone from it that today's file records a crate pick for (`day.picks`),
+ * when that pick has a face in this cast (a theme changed since keeps it out).
+ * A card wearing the character the wall cast (its crate pick), not its own voice's,
  * has cast: true so tokensByCharacter attributes its tokens to the character row (#148, #536).
  */
 export function drawerCharacters(sessions, cast, day) {
