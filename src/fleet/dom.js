@@ -31,9 +31,16 @@ export function say(note, text, ms = NOTE_MS) {
 
 // Off is aria-disabled, never the disabled property, so a focused button keeps focus.
 const refresh = (button) => {
-  if (button.dataset.busy || button.dataset.off) button.setAttribute("aria-disabled", "true");
+  if (button.dataset.busy || button.dataset.off || button.dataset.waiting) button.setAttribute("aria-disabled", "true");
   else button.removeAttribute("aria-disabled");
 };
+
+/** Mark `button` waiting on what it needs to know before it can act (+ New session's saved default); off meanwhile, apart from busy and off. */
+export function setWaiting(button, waiting) {
+  if (waiting) button.dataset.waiting = "1";
+  else delete button.dataset.waiting;
+  refresh(button);
+}
 
 /** Mark `button` unavailable or not; it stays off while a call runs either way. */
 export function setOff(button, off) {

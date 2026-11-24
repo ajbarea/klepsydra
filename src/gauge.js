@@ -13,6 +13,8 @@ export const DROP_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 // Two sessions can timestamp the same window a moment apart; within this many
 // seconds they are the same window, not a newer one.
 export const WINDOW_MATCH_SECONDS = 90;
+// Keep this mirror of fleet/lib.sh's default FLEET_ROOM_PCT in sync.
+export const FLEET_ROOM_PCT = 90;
 
 /**
  * A reading's number: a JSON number only, as the phone server sends it
@@ -21,19 +23,90 @@ export const WINDOW_MATCH_SECONDS = 90;
 const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : Number.NaN);
 
 // Fixed display order, so rows never reshuffle between polls.
-export const WINDOW_ORDER = ["five_hour", "seven_day", "spend_limit"];
+export const WINDOW_ORDER = [
+  "five_hour",
+  "seven_day",
+  "spend_limit",
+  "gemini",
+  "claude_gpt",
+  "ai_credits",
+  "personal",
+  "ldqis",
+];
+
+export const HARNESS_ORDER = ["claude", "agy", "copilot", "api"];
+
+export const HARNESS_LABELS = {
+  claude: "Claude Code",
+  agy: "Antigravity",
+  copilot: "Copilot",
+  api: "API Keys",
+};
+
+export const ROUTE_ORDER = ["agy_gemini", "agy_claude_gpt", "copilot", "api_credit", "claude_subscription"];
+
+/**
+ * The lane the fleet should try next. A model group is a lane of its own:
+ * one spent group must not disqualify another group on the same account.
+ */
+export function routeLane(row) {
+  const harness = row?.harness;
+  const window = row?.window;
+  if (harness === "agy" && ["five_hour", "seven_day", "gemini"].includes(window)) return "agy_gemini";
+  if (harness === "agy" && window === "claude_gpt") return "agy_claude_gpt";
+  if (harness === "copilot") return "copilot";
+  if (harness === "api" || ["ai_credits", "personal", "ldqis", "claude_gpt"].includes(window)) return "api_credit";
+  return "claude_subscription";
+}
+
+/** The windows that must all have room for one lane to run, as one key per account and model. */
+export const routeGroup = (row) => {
+  const lane = routeLane(row);
+  // API credit and Copilot windows are separate model pools; Claude and AGY
+  // Gemini windows are coupled limits for one account.
+  const model = ["api_credit", "copilot"].includes(lane) ? row.window : lane;
+  return `${row.account}\u0000${model}`;
+};
+
+const hasRoom = (row) => {
+  if (!Number.isFinite(row.pct)) return false;
+  const remaining = Math.floor(100 - row.pct);
+  if (row.window === "five_hour") return remaining > 100 - FLEET_ROOM_PCT;
+  if (row.window === "seven_day") return remaining > 5;
+  return remaining > 0;
+};
 
 const WINDOW_LABELS = {
   five_hour: "Current session",
   seven_day: "This week",
   spend_limit: "Spend limit",
+  gemini: "Gemini models",
+  claude_gpt: "Claude & GPT",
+  ai_credits: "AI Credits",
+  personal: "Personal API",
+  ldqis: "LDQIS API",
 };
 // Shorter forms, used once an account name is already carrying context.
 const WINDOW_SHORT = {
   five_hour: "session",
   seven_day: "week",
   spend_limit: "spend",
+  gemini: "gemini",
+  claude_gpt: "claude/gpt",
+  ai_credits: "credits",
+  personal: "personal",
+  ldqis: "ldqis",
 };
+
+export function harnessOf(entry) {
+  if (entry?.harness) return entry.harness;
+  const acct = String(entry?.account ?? "");
+  if (acct.startsWith("agy") || entry?.engine === "agy") return "agy";
+  if (acct.startsWith("copilot") || entry?.engine === "copilot") return "copilot";
+  if (acct.startsWith("api")) return "api";
+  return "claude";
+}
+
 
 export function windowLabel(key) {
   return WINDOW_LABELS[key] ?? key;
@@ -131,6 +204,11 @@ export function formatAgeShort(ms) {
   return a === null ? "now" : `${a[0]}${a[1][0]}`;
 }
 
+/** When a window's number was read (s): its own stamp, else its reading's. */
+export function readAtOf(payload, win) {
+  return num(win?.observed_at ?? payload?.observed_at ?? payload?.written_at);
+}
+
 /**
  * Decide what to draw from a parsed usage.json (or null when it is missing
  * or unreadable). Never throws; an unusable payload degrades to "waiting".
@@ -154,7 +232,7 @@ export function evaluate(payload, key, nowMs = Date.now()) {
     return { state: "reset", label: windowLabel(key), pct: 0, sub, short };
   }
 
-  const age = nowMs - num(win.observed_at ?? payload.observed_at ?? payload.written_at) * 1000;
+  const age = nowMs - readAtOf(payload, win) * 1000;
   let sub = countdown;
   let short = formatCountdownShort(resetsAt, nowMs);
   if (!Number.isFinite(age)) {
@@ -219,10 +297,11 @@ export function ringStyle(pct, cap) {
  * and one sentence for a screen reader, which reads the full forms.
  */
 export function entryText(row, compact) {
+  const sub = compact ? row.short : row.sub;
   return {
     label: row.label,
     pct: compact ? formatPctShort(row.pct) : formatPct(row.pct),
-    sub: compact ? row.short : row.sub,
+    sub,
     spoken: `${row.label}: ${formatPct(row.pct)}. ${row.sub}`,
   };
 }
@@ -335,6 +414,7 @@ export function toRows(payload, nowMs = Date.now()) {
       // The newest reading names the account: an organisation renamed shows
       // its new name, and dropping older readings never changes it.
       label: (newest.find((s) => s.label) ?? sessions.find((s) => s.label))?.label ?? "Claude",
+      harness: harnessOf(newest[0] ?? sessions[0]),
       written_at: writtenAt,
       windows,
     });
@@ -359,6 +439,7 @@ export function toRows(payload, nowMs = Date.now()) {
   const multi = fresh.length > 1;
   const rows = [];
   for (const p of fresh) {
+    const h = p.harness ?? "claude";
     for (const key of WINDOW_ORDER) {
       if (!p.windows[key]) continue;
       const r = evaluate(p, key, nowMs);
@@ -366,9 +447,80 @@ export function toRows(payload, nowMs = Date.now()) {
       rows.push({
         ...r,
         key: `${p.account}:${key}`,
+        account: p.account,
+        harness: h,
+        window: key,
+        accountLabel: p.label,
+        harnessLabel: HARNESS_LABELS[h] ?? h,
+        // When the account's newest reading arrived (s).
+        observedAt: Number(p.written_at),
+        // When this window's own number was read (s): older than observedAt
+        // when a live window survives from an earlier reading.
+        readAt: readAtOf(p, p.windows[key]),
+        // The reconciled window's reset, unix seconds: + New session says when room comes back.
+        resetsAt: num(p.windows[key].resets_at),
+        isCapped: r.pct >= 100 || r.state === "waiting",
         label: multi ? `${p.label} \u00b7 ${WINDOW_SHORT[key] ?? key}` : r.label,
       });
     }
   }
+
+  // Route recommendation follows the same free-first order as the fleet.
+  // Windows that constrain the same account/model group must all have room;
+  // otherwise a low row can recommend a route that cannot actually run.
+  const groups = new Map();
+  for (const row of rows) {
+    row.isBestRoute = false;
+    const key = routeGroup(row);
+    if (!groups.has(key)) groups.set(key, { lane: routeLane(row), rows: [] });
+    groups.get(key).rows.push(row);
+  }
+
+  const bestByLane = new Map();
+  for (const group of groups.values()) {
+    const required = group.lane === "agy_gemini" && !group.rows.some((row) => row.window === "gemini")
+      ? ["five_hour", "seven_day"]
+      : [];
+    const keys = new Set(group.rows.map((row) => row.window));
+    if (required.some((key) => !keys.has(key)) || !group.rows.every(hasRoom)) continue;
+    const best = group.rows.reduce((a, b) => (b.pct > a.pct ? b : a));
+    const current = bestByLane.get(group.lane);
+    if (!current || best.pct < current.pct) bestByLane.set(group.lane, best);
+  }
+
+  for (const lane of ROUTE_ORDER) {
+    const best = bestByLane.get(lane);
+    if (best) {
+      best.isBestRoute = true;
+      break;
+    }
+  }
+
   return rows;
+}
+
+/**
+ * Group evaluated usage rows by harness for dashboard grouping (#393).
+ * Returns array of { harness, label, isCapped, isBestRoute, rows }.
+ */
+export function harnessGroups(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const groups = new Map();
+  for (const row of rows) {
+    const h = row.harness ?? "claude";
+    if (!groups.has(h)) {
+      groups.set(h, {
+        harness: h,
+        label: HARNESS_LABELS[h] ?? h,
+        isCapped: true,
+        isBestRoute: false,
+        rows: [],
+      });
+    }
+    const g = groups.get(h);
+    g.rows.push(row);
+    if (!row.isCapped) g.isCapped = false;
+    if (row.isBestRoute) g.isBestRoute = true;
+  }
+  return HARNESS_ORDER.filter((h) => groups.has(h)).map((h) => groups.get(h));
 }

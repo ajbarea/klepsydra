@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fixture-driven tests for the fleet hook. Run: bash hooks/test_fleet.sh
 set -uo pipefail
+# A fleet session runs with its own KERYX_VOICE; no test may inherit it.
+unset KERYX_VOICE
 
 here=$(cd "$(dirname "$0")" && pwd)
 hook="$here/klepsydra-fleet.sh"
@@ -13,8 +15,30 @@ stub="$work/stubbin"
 mkdir -p "$stub"
 # $work/tmux.mode: "fail" exits 1, "hang" sleeps past the hook's timeout; else it succeeds.
 # shellcheck disable=SC2016 # the stub script expands its own variables
-printf '#!/bin/sh\necho "$*" >>"%s/tmux.log"\ncase $(cat "%s/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac\n' "$work" "$work" >"$stub/tmux"
-chmod +x "$stub/tmux"
+# capture-pane prints $work/screen, or, while $work/screens lists any, the next
+# of them in turn (the last one stays): each line is a screen file and,
+# optionally, a script run before it is shown; a line GONE fails the capture,
+# as a closed pane does, so a watcher ends after a known number of looks
+# (#230 review 3: a 1 s limit gave it anywhere from 0 to 1 s). setsid only
+# logs, so no test starts a real watcher.
+cat >"$stub/tmux" <<STUB
+#!/bin/sh
+echo "\$*" >>"$work/tmux.log"
+case \$(cat "$work/tmux.mode" 2>/dev/null) in fail) exit 1;; hang) exec sleep 30;; esac
+case "\$*" in *capture-pane*)
+  if [ -s "$work/screens" ]; then
+    set -- \$(head -n 1 "$work/screens")
+    [ "\$(wc -l <"$work/screens")" -gt 1 ] && sed -i 1d "$work/screens"
+    [ "\$1" = GONE ] && exit 1
+    [ -n "\${2:-}" ] && sh "\$2"
+    cat "\$1"
+  else
+    cat "$work/screen" 2>/dev/null
+  fi;;
+esac
+STUB
+printf '#!/bin/sh\necho "$*" >>"%s/setsid.log"\n' "$work" >"$stub/setsid"
+chmod +x "$stub/tmux" "$stub/setsid"
 export PATH="$stub:$PATH"
 tlog="$work/tmux.log"
 
@@ -30,8 +54,10 @@ check() {
 }
 
 cp "$here/../src/fleet/themes/kourai.json" "$work/test-cast.json"
+# Sourced with the suite's runtime folder, so its LOCK and PRUNE_STAMP are the
+# suite's, never the caller's live ones (#230 reviews 2 and 3).
 # shellcheck source=hooks/klepsydra-fleet.sh
-source "$hook"
+XDG_RUNTIME_DIR=$work source "$hook"
 
 echo "where"
 
@@ -170,7 +196,7 @@ fire() { # fixture [filter] [VAR=value...]
     env KLEPSYDRA_DIR="$dir" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
       KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work" KLEPSYDRA_CAST="$work/test-cast.json" \
       KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" \
-      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= "$@" bash "$hook"
+      FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= KLEPSYDRA_ASK_WATCH=0 "$@" bash "$hook"
 }
 field() { jq -c "$1" "$file"; }
 mtime() { stat -c %Y "$file"; }
@@ -280,10 +306,24 @@ check "stop: the reply from last_assistant_message" "$(field .reply.text)" \
   '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
 check "stop: never the lagging transcript" "$(grep -c STALE "$file")" "0"
 # The transcript lags the turn, so the reply never comes from it. Remote
-# Control is the one thing the hook reads there, and only as a tail.
+# Control and the last request's size (#515) are all the hook reads there, each as a tail.
 # shellcheck disable=SC2016 # literal text to find in the hook
-check "the hook reads the transcript only for Remote Control" \
-  "$(grep -c '"\$transcript"' "$hook") $(grep -c 'remote=$(remote_lines "$transcript")' "$hook")" "1 1"
+check "the hook reads the transcript only for Remote Control and the context size" \
+  "$(grep -c '"\$transcript"' "$hook") $(grep -c 'remote=$(remote_lines "$transcript")' "$hook") $(grep -c 'call_tokens=$(context_tokens "$transcript")' "$hook")" "2 1 1"
+ctx_t="$work/ctx-transcript.jsonl"
+printf '%s\n' '{"type":"user","message":{"content":"go"}}' \
+  '{"type":"assistant","message":{"usage":{"input_tokens":2,"cache_read_input_tokens":300000,"cache_creation_input_tokens":5000,"output_tokens":90}}}' \
+  '{"type":"assistant","isSidechain":true,"message":{"usage":{"input_tokens":7,"cache_read_input_tokens":20000}}}' >"$ctx_t"
+fire stop.json ".session_id = \"66666666-2222-4333-8444-555555555555\" | .transcript_path = \"$ctx_t\""
+check "#515: a turn's end records the context its last request carried, not a subagent's" "$(jq -c .call_tokens "$dir/fleet/66666666-2222-4333-8444-555555555555.json")" "305002"
+fire post-tool-bash.json '.session_id = "66666666-2222-4333-8444-555555555555"'
+check "#515: other events keep it" "$(jq -c .call_tokens "$dir/fleet/66666666-2222-4333-8444-555555555555.json")" "305002"
+printf '%s\n' '{"type":"user","message":{"content":"go"}}' >"$ctx_t"
+fire stop.json ".session_id = \"66666666-2222-4333-8444-555555555555\" | .transcript_path = \"$ctx_t\""
+check "#515: a turn whose transcript shows no usage yet keeps the last one" "$(jq -c .call_tokens "$dir/fleet/66666666-2222-4333-8444-555555555555.json")" "305002"
+fire session-start.json '.session_id = "66666666-2222-4333-8444-555555555555" | .source = "clear"'
+check "#515: a fresh or cleared context starts with none" "$(jq -c .call_tokens "$dir/fleet/66666666-2222-4333-8444-555555555555.json")" "null"
+rm -f -- "$dir/fleet/66666666-2222-4333-8444-555555555555.json"
 now=$((now + 5)) fire stop.json '.last_assistant_message = ""'
 check "stop with no text keeps the last reply" "$(field '[.reply.text, .reply.at]')" \
   '["That works with no model calls: the hook writes one file per session and the overlay reads them.",1792353050]'
@@ -294,6 +334,124 @@ fire stop-failure.json
 check "failure: error" "$(field '[.state, .reason, .error]')" '["error","rate limit","API Error: Rate limit reached"]'
 fire user-prompt.json
 check "the next prompt clears the error" "$(field '[.state, .error]')" '["working",null]'
+
+echo "mid-turn narration: said vs reply (#410)"
+narrate_transcript="$work/narrate-transcript.jsonl"
+cat >"$narrate_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"do something"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will now inspect the files"},{"type":"tool_use","name":"Bash"}]}}
+EOF
+now=1792353070
+fire post-tool-bash.json ".transcript_path = \"$narrate_transcript\""
+check "PostToolUse harvests narration from transcript into .said" \
+  "$(field '[.said.text, .said.at]')" '["I will now inspect the files",1792353070]'
+check "PostToolUse does not overwrite .reply" "$(field .reply.text)" \
+  '"That works with no model calls: the hook writes one file per session and the overlay reads them."'
+
+# Assistant text followed by a Write tool call (contains "content": in input) does not overwrite .said
+write_transcript="$work/write-transcript.jsonl"
+cat >"$write_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"write the code"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Writing the shared policy module, then wiring it into sisters and heuresis:"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Write","input":{"file_path":"/tmp/foo.py","content":"def batch_ssh(): pass\n"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"File created"}]}}
+EOF
+now=1792353072
+fire post-tool-bash.json ".transcript_path = \"$write_transcript\""
+check "PostToolUse text followed by Write keeps assistant text in .said" \
+  "$(field '[.said.text, .said.at]')" '["Writing the shared policy module, then wiring it into sisters and heuresis:",1792353072]'
+
+# Meta user line after a Skill call does not clear narration
+meta_transcript="$work/meta-transcript.jsonl"
+cat >"$meta_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"run skill"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Invoking the skill now"}]}}
+{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"<system-reminder>Skill directions</system-reminder>"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"Bash","input":{"command":"ls"}}]}}
+EOF
+now=1792353074
+fire post-tool-bash.json ".transcript_path = \"$meta_transcript\""
+check "meta user line does not clear .said" \
+  "$(field '[.said.text, .said.at]')" '["Invoking the skill now",1792353074]'
+
+# Malformed transcript line shapes do not crash jq or block session write
+malformed_transcript1="$work/malformed1.jsonl"
+cat >"$malformed_transcript1" <<'EOF'
+{"type":"user","message":{"role":"user","content":"hi"}}
+{"type":"assistant","message":"not an object with content"}
+EOF
+now=1792353076
+fire post-tool-bash.json ".transcript_path = \"$malformed_transcript1\""
+check "malformed assistant string message does not crash jq or abort write" "$(field .session_id)" '"11111111-2222-4333-8444-555555555555"'
+
+malformed_transcript2="$work/malformed2.jsonl"
+cat >"$malformed_transcript2" <<'EOF'
+{"type":"USER_INPUT","content":"hi"}
+{"type":"PLANNER_RESPONSE","content":["malformed string in content array"]}
+EOF
+now=1792353078
+fire post-tool-bash.json ".transcript_path = \"$malformed_transcript2\""
+check "malformed planner content array does not crash jq or abort write" "$(field .session_id)" '"11111111-2222-4333-8444-555555555555"'
+
+# Unchanged narration event keeps said.at and does not rewrite file
+unchanged_transcript="$work/unchanged-transcript.jsonl"
+cat >"$unchanged_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"do work"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Narration constant"}]}}
+EOF
+now=1792353080
+fire post-tool-bash.json ".transcript_path = \"$unchanged_transcript\""
+check "PostToolUse writes .said and stamps written_at" "$(field '[.said.text, .said.at, .written_at]')" '["Narration constant",1792353080,1792353080]'
+
+now=1792353082
+fire post-tool-bash.json ".transcript_path = \"$unchanged_transcript\""
+check "unchanged PostToolUse does not rewrite file: written_at and said.at kept" \
+  "$(field '[.said.text, .said.at, .written_at]')" '["Narration constant",1792353080,1792353080]'
+
+cat >>"$unchanged_transcript" <<'EOF'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Narration updated"}]}}
+EOF
+now=1792353084
+fire post-tool-bash.json ".transcript_path = \"$unchanged_transcript\""
+check "changed PostToolUse rewrites file with new said and updated at" \
+  "$(field '[.said.text, .said.at, .written_at]')" '["Narration updated",1792353084,1792353084]'
+
+now=1792353086
+empty_transcript="$work/empty-transcript.jsonl"
+cat >"$empty_transcript" <<'EOF'
+{"type":"user","message":{"role":"user","content":"hello"}}
+EOF
+fire post-tool-bash.json ".transcript_path = \"$empty_transcript\""
+check "empty tail leaves existing .said alone" \
+  "$(field '[.said.text, .said.at]')" '["Narration updated",1792353084]'
+
+now=1792353088
+sub_transcript="$work/sub-transcript.jsonl"
+cat >"$sub_transcript" <<'EOF'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Subagent chatter"}]}}
+EOF
+fire post-tool-bash.json ".agent_id = \"subagent-1\" | .transcript_path = \"$sub_transcript\""
+check "subagent PostToolUse does not overwrite main session .said" \
+  "$(field '[.said.text, .said.at]')" '["Narration updated",1792353084]'
+
+now=1792353090
+agy_transcript="$work/agy-transcript.jsonl"
+cat >"$agy_transcript" <<'EOF'
+{"type":"USER_INPUT","content":"agy prompt"}
+{"type":"PLANNER_RESPONSE","content":"I am planning the changes now"}
+EOF
+fire post-tool-bash.json ".transcript_path = \"$agy_transcript\""
+check "PostToolUse harvests AGY PLANNER_RESPONSE narration into .said" \
+  "$(field '[.said.text, .said.at]')" '["I am planning the changes now",1792353090]'
+
+now=1792353092
+fire stop.json '.last_assistant_message = "All tasks finished successfully"'
+check "Stop writes .reply" "$(field '[.reply.text, .reply.at]')" '["All tasks finished successfully",1792353092]'
+check "Stop keeps .said distinct" "$(field '[.said.text, .said.at]')" '["I am planning the changes now",1792353090]'
+
+now=1792353095
+fire user-prompt.json
+check "UserPromptSubmit clears .said" "$(field .said)" "null"
 
 echo "where moves, identity stays"
 now=1792353100
@@ -326,6 +484,14 @@ check "a voice keryx changes is copied" "$(field .voice)" '"bf_emma"'
 rm "$work/voices.json"
 fire user-prompt.json
 check "keryx gone keeps the voice" "$(field .voice)" '"bf_emma"'
+# #417 review: a launch's voice stands in only while keryx holds none; a
+# `keryx voice` pick (the hold) is what keryx speaks, so the card follows it.
+printf '{"holders":{"500:8717628":{"voice":"am_puck","seen":3}}}\n' >"$work/voices.json"
+fire post-tool-bash.json . KERYX_VOICE=af_bella
+check "#417 review: keryx's hold outranks the launch's KERYX_VOICE" "$(field .voice)" '"am_puck"'
+rm "$work/voices.json"
+fire post-tool-bash.json . KERYX_VOICE=af_bella
+check "#417 review: with no hold, the launch's KERYX_VOICE is the voice" "$(field .voice)" '"af_bella"'
 
 echo "home voice"
 # While keryx is muted no terminal is held, so a session takes the voice keryx
@@ -1559,6 +1725,8 @@ check "an agent name that is not a plain name is not written" "$(jq -c .fleet_na
 printf '%s\n' "$H" >"$work/fleet-state/orchestrator.session"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%9
 check "review 1: with a session on record, that session is Heph wherever its pane" "$(jq -c .orchestrator "$hfile")" "true"
+rm -f "$hfile"; hfire session-start.json
+check "an orchestrator session on record outside tmux is Heph" "$(jq -c .orchestrator "$hfile")" "true"
 W=66666666-4444-4555-8666-777777777777
 wfile="$dir/fleet/$W.json"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
@@ -1580,6 +1748,29 @@ check "review 3: but not once it is in another pane" "$(jq -c .orchestrator "$wf
 rm -f "$wfile"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph >/dev/null
 check "review 2: a session launched as heph (a move, a recovery) is Heph at once" "$(jq -c .orchestrator "$wfile")" "true"
+rm -f "$wfile"
+fire session-start.json ".session_id = \"$W\"" KLEPSYDRA_AGENT=heph >/dev/null
+check "a session launched as heph outside tmux is Heph" "$(jq -c .orchestrator "$wfile")" "true"
+# #333: a `claude -p` that Heph runs from his Bash tool inherits his
+# KLEPSYDRA_AGENT and TMUX_PANE, but it is a helper under his process: never
+# the orchestrator, and it names no pane (so it never stands for his).
+mkproc 1700 500 bash 8718000 S /bin/bash -c "claude -p review"
+mkproc 1710 1700 claude 8718001 S claude -p review
+mkproc 1720 1710 klepsydra-fleet 8718002 S bash "$hook"
+NS=33333333-4444-4555-8666-777777777333
+nsfile="$dir/fleet/$NS.json"
+was_pane=$(cat "$work/fleet-state/orchestrator.pane" 2>/dev/null)
+for on_record in "$W" ""; do
+  if [[ -n $on_record ]]; then printf '%s\n' "$on_record" >"$work/fleet-state/orchestrator.session"; else rm -f "$work/fleet-state/orchestrator.session"; fi
+  printf '%%3\n' >"$work/fleet-state/orchestrator.pane"
+  rm -f "$nsfile"
+  fire session-start.json ".session_id = \"$NS\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph KLEPSYDRA_PID=1720 >/dev/null
+  fire post-tool-bash.json ".session_id = \"$NS\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%3 KLEPSYDRA_AGENT=heph KLEPSYDRA_PID=1720 >/dev/null
+  check "#333 ($([[ -n $on_record ]] && echo "session on record" || echo "no session on record")): Heph's claude -p is no orchestrator, wears no face, names no pane" \
+    "$(jq -c '[.orchestrator, has("orchestrator_face"), .tmux, .claude.pid]' "$nsfile")" '[false,false,null,1710]'
+done
+rm -f "$nsfile"
+if [[ -n $was_pane ]]; then printf '%s\n' "$was_pane" >"$work/fleet-state/orchestrator.pane"; else rm -f "$work/fleet-state/orchestrator.pane"; fi
 rm -f "$work/fleet-state/orchestrator.session" "$wfile"
 fire session-start.json ".session_id = \"$W\"" "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=sphragis >/dev/null
 check "review 2: an agent launched under another name is never Heph, even in the orchestrator's pane" "$(jq -c .orchestrator "$wfile")" "false"
@@ -1603,6 +1794,19 @@ check "AJ 11-02: a file from when Athena wore bf_alice keeps her, on bf_emma now
 printf 'zeus\n' >"$work/fleet-state/orchestrator.face"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 check "an unknown name is Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KERYX_VOICE=bf_emma
+check "#395 review: a launch's face voice outranks the file on a tie" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KERYX_VOICE=af_bella
+check "#395 review: a launch voice that is no orchestrator face is ignored" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+# #417 review: Heph launched with a face voice wears it outright, so a card that
+# shows up between launch.sh's face_now and this first event cannot flip it.
+A=99999999-8888-4777-8666-555555555555
+printf '%s\n' "{\"v\":1,\"session_id\":\"$A\",\"orchestrator\":true,\"orchestrator_face\":\"bf_emma\",\"ended\":{\"at\":1},\"last_active\":5}" >"$dir/fleet/$A.json"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=heph
+check "#417 review: with Athena's card shown, a new Heph would wear Hephaestus" "$(jq -r .orchestrator_face "$hfile")" "am_michael"
+rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7 KLEPSYDRA_AGENT=heph KERYX_VOICE=bf_emma
+check "#417 review: launched with Athena's voice, Heph wears Athena" "$(jq -r .orchestrator_face "$hfile")" "bf_emma"
+rm -f "$hfile" "$dir/fleet/$A.json"
 printf 'athena\n' >"$work/fleet-state/orchestrator.face"
 rm -f "$hfile"; hfire session-start.json "TMUX=$work/sock/klepsydra,1,0" TMUX_PANE=%7
 jq -c 'del(.orchestrator_face)' "$hfile" >"$work/n" && mv "$work/n" "$hfile"
@@ -2053,6 +2257,132 @@ check "queue clear: the default again" "$rc|$out|$([[ -e $qdir/queue.json ]] && 
 check "queue show: none" "$(queue show)" "No queue.json: the Queue panel reads its default file."
 out=$(KLEPSYDRA_DIR=""; queue_cmd show 2>&1); rc=$? # the sourced hook's: a run would find the real folder
 check "queue: no data folder is an error" "$rc|$out" "1|klepsydra: no data folder (set KLEPSYDRA_DIR)"
+
+echo "#217: an answer no hook reports"
+# Its own per run, so two suites at once never see each other's watcher.
+A=$(printf '21700000-0000-4000-8000-%012d' "$$")
+afile="$dir/fleet/$A.json"
+afield() { jq -c "$1" "$afile"; }
+askfire() { # fixture [filter] [VAR=value...]; in pane %7 of the fleet socket
+  local fx=$1 f=${2:-.}
+  shift; (( $# )) && shift
+  fire "$fx" ".session_id = \"$A\" | $f" TMUX="$work/sock/klepsydra,1,0" TMUX_PANE=%7 "$@"
+}
+watch_ask_run() { # [max seconds]
+  env KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" KLEPSYDRA_NOW="$now" KLEPSYDRA_ASK_TICK=0.05 \
+    KLEPSYDRA_ASK_MAX="${1:-20}" bash "$hook" watch-ask "$A"
+}
+now=1792360000 askfire session-start.json
+now=1792360010 askfire user-prompt.json
+: >"$work/setsid.log"
+now=1792360020 fire permission-request.json ".session_id = \"$A\"" KLEPSYDRA_ASK_WATCH=1
+check "outside tmux: no watcher" "$(cat "$work/setsid.log")" ""
+now=1792360020 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1
+check "a permission prompt in a pane starts its watcher" "$(cat "$work/setsid.log")" "-f bash $hook watch-ask $A"
+check "the file names the pane the watcher reads" "$(afield .tmux)" "{\"socket\":\"$work/sock/klepsydra\",\"pane\":\"%7\"}"
+# With a real setsid, the watcher runs and the fleet-wide lock is free (#230
+# review: a watcher that kept the hook's lock fd froze every card).
+cp "$stub/setsid" "$work/setsid.stub"
+printf '#!/bin/sh\nexec /usr/bin/setsid "$@"\n' >"$stub/setsid"
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360025 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1 KLEPSYDRA_ASK_MAX=2 KLEPSYDRA_ASK_TICK=0.05
+sleep 0.5
+check "a real watcher leaves the fleet lock free" \
+  "$(pgrep -f "watch-ask $A" >/dev/null && echo running) $(flock -w 0 "$work/klepsydra-fleet-$UID.lock" true && echo free)" "running free"
+for _ in $(seq 40); do pgrep -f "watch-ask $A" >/dev/null || break; sleep 0.1; done
+check "and it ends at its time limit" "$(pgrep -f "watch-ask $A" >/dev/null && echo running || echo ended)" "ended"
+mv -f -- "$work/setsid.stub" "$stub/setsid"
+
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360030
+watch_ask_run & wpid=$!
+sleep 0.5
+check "the dialog on screen: still needs you" "$(afield .state)" '"needs_you"'
+cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
+timeout 10 tail --pid="$wpid" -f /dev/null
+check "the dialog gone (approved): working, and the watcher ends" \
+  "$(afield '[.state, .reason, .needs, .state_at]')|$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended)" '["working",null,null,1792360030]|ended'
+
+now=1792360040 askfire permission-request.json
+iscreen=$fixtures/pane-idle-2.1.302.txt
+printf '%s\n' "$iscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360045 watch_ask_run 20
+rm -f -- "$work/screens"
+check "a dialog never seen on screen is never cleared" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+echo fail >"$work/tmux.mode"
+now=1792360046 watch_ask_run 5 & wpid=$!
+timeout 2 tail --pid="$wpid" -f /dev/null
+rm -f "$work/tmux.mode"
+check "the pane gone: the watcher ends at once, the ask stays" \
+  "$(kill -0 "$wpid" 2>/dev/null && echo running || echo ended) $(afield .state)" 'ended "needs_you"'
+wait "$wpid" 2>/dev/null
+before=$(<"$afile")
+ask_answered "$afile" 1792360001 1792360047
+check "an answer to an earlier ask changes nothing" "$(<"$afile")" "$before"
+ask_answered "$afile" 1792360040 1792360047
+check "the answer to this ask" "$(afield '[.state, .needs, .state_at]')" '["working",null,1792360047]'
+check "and its turn count stamped with the write, as the hook stamps it" "$(afield '.turns_at == .written_at')" "true"
+check "#230 review 2: the sourced hook's lock and prune stamp are the suite's own" "$([[ $LOCK == "$work"/* && $PRUNE_STAMP == "$work"/* ]] && echo own)" "own"
+# An ask after the turn ended with nothing left running, its file holding no
+# .background key (the hook deletes an empty one): done, as the hook reads it.
+jq -c '.state = "needs_you" | .state_at = 1792360060 | .needs = {tool: "Bash", turn_over: true} | del(.background)' "$afile" >"$work/a.tmp" && mv -f -- "$work/a.tmp" "$afile"
+ask_answered "$afile" 1792360060 1792360061
+check "#230 review 2: answered after the turn, no background key: done" "$(afield '[.state, .reason]')" '["done",null]'
+# A busy fleet lock when the answer is seen: the watcher tries again and the
+# answer lands once the lock is free, never lost (#230 review 2).
+now=1792360062 askfire permission-request.json
+cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
+now=1792360063 watch_ask_run 15 & wpid=$!
+sleep 0.4
+flock "$LOCK" sleep 6.5 & lpid=$!
+sleep 0.2
+cp "$fixtures/pane-working-tool-2.1.302.txt" "$work/screen"
+sleep 2
+check "#230 review 2: while the fleet lock is busy, the ask still waits" "$(afield .state)" '"needs_you"'
+timeout 20 tail --pid="$wpid" -f /dev/null
+kill "$wpid" 2>/dev/null; wait "$wpid" "$lpid" 2>/dev/null # a failed case leaves no watcher to act on later asks
+check "#230 review 2: once it is free, the answer lands" "$(afield '[.state, .needs]')" '["working",null]'
+# The dialog is both lines: the question alone, or the option alone, then gone,
+# was never a dialog, so the ask stays.
+grep -v '1\. Yes' "$fixtures/pane-permission-2.1.302.txt" >"$work/q-only.txt"
+grep -v 'Do you want to proceed' "$fixtures/pane-permission-2.1.302.txt" >"$work/o-only.txt"
+for half in q-only o-only; do
+  now=1792360070 askfire permission-request.json
+  printf '%s\n' "$work/$half.txt" "$iscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+  now=1792360071 watch_ask_run 20
+  rm -f -- "$work/screens"
+  check "#230 review 2: $half on screen, then gone: never a dialog, the ask stays" "$(afield .state)" '"needs_you"'
+done
+
+pscreen=$fixtures/pane-permission-2.1.302.txt iscreen=$fixtures/pane-idle-2.1.302.txt
+now=1792360048 askfire permission-request.json
+# Two misses with the dialog back between them: each sighting starts the count again (#230 review 4).
+printf '%s\n' "$pscreen" "$iscreen" "$pscreen" "$iscreen" GONE >"$work/screens"
+now=1792360049 watch_ask_run 20
+check "one look without the dialog is not an answer, nor two looks apart" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
+printf 'jq -c ".state_at = 1792360099" "%s" >"%s.new" && mv -f "%s.new" "%s"\n' "$afile" "$afile" "$afile" "$afile" >"$work/new-ask.sh"
+printf '%s\n' "$pscreen $work/new-ask.sh" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360100 watch_ask_run 20
+check "a dialog seen for one ask is not seen for the next" "$(afield '[.state, .state_at]')" '["needs_you",1792360099]'
+rm -f "$work/screens"
+
+now=1792360110 askfire pre-tool-question.json
+printf '%s\n' "$pscreen" "$iscreen" "$iscreen" GONE >"$work/screens"
+now=1792360111 watch_ask_run 20
+check "a question is not a permission: the watcher leaves it" "$(afield '[.state, .reason]')" '["needs_you","question"]'
+rm -f "$work/screens"
+
+echo "#217: a subagent's ask ends with it"
+now=1792360160 askfire subagent-start.json '.agent_id = "agent-217"'
+now=1792360161 askfire permission-request.json '.agent_id = "agent-217"'
+now=1792360162 askfire subagent-stop.json '.agent_id = "agent-other"'
+check "another subagent stopping leaves the ask" "$(afield '[.state, .needs.by]')" '["needs_you","agent-217"]'
+now=1792360163 askfire subagent-stop.json '.agent_id = "agent-217"'
+check "the asker stopping (denied, or done) ends its ask" "$(afield '[.state, .reason, .needs]')" '["working",null,null]'
+now=1792360170 askfire permission-request.json
+now=1792360171 askfire subagent-stop.json '.agent_id = null'
+check "a subagent stop naming no agent leaves the session's own ask" "$(afield '[.state, .needs.by]')" '["needs_you",""]'
 
 echo "the fleet registry follows a session at the event (#261)"
 mkdir -p "$work/fleet-state"

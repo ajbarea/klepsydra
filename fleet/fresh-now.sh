@@ -44,11 +44,10 @@ while IFS=$'\t' read -r -u 3 p name brief sid _ account; do
   fi
   txt="$FLEET_STATE/fresh-$name-$(date +%Y%m%d-%H%M).src"
   { fresh_preamble "had grown too large to keep resuming"; printf '\n\n'; cat "$brief"; } >"$txt"
-  if ! type_exactly "$p" "/clear"; then
-    flog WARN "fresh session skipped: AJ typed while /clear went in" pane="$p" name="$name"
+  if ! pane_locked "$p" type_enter "$p" "/clear"; then
+    flog WARN "fresh session skipped: /clear did not go in (AJ typed meanwhile, or another typer held the pane)" pane="$p" name="$name"
     continue
   fi
-  t send-keys -t "$p" Enter
   wait_for "$p" 30 idle_empty || flog WARN "/clear did not come back to an empty prompt" pane="$p" name="$name"
   # /clear starts a new session id in the same pane: the registry follows it.
   new_sid=""

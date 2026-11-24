@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 import { join } from "node:path";
 import { card, needsFirst, remoteLink } from "./fleet/model.js";
 
@@ -135,21 +136,21 @@ test("on the phone every desktop action is hidden: only buttons marked data-phon
   const html = read("src/wall.html");
   const css = read("src/fleet/wall.css");
   const wall = read("src/fleet/wall.js");
-  assert.match(css, /\.served button:not\(\[data-phone\]\),\s*\.served \.density,\s*\.served \.theme-pick,\s*\.served \.tools \{ display: none !important; \}/);
+  assert.match(css, /\.served button:not\(\[data-phone\]\),\s*\.served \.gear,\s*\.served \.tools \{ display: none !important; \}/);
   const buttons = [...html.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]);
   const phone = buttons.filter((b) => /\bdata-phone\b/.test(b));
   assert.deepEqual(
     phone.map((b) => (b.match(/class="([^"]+)"/) ?? b.match(/id="([^"]+)"/))[1]).sort(),
-    ["agora-open", "ci-open", "close", "health-open", "look", "play", "unfold"],
-    "only the portrait's look, its Close, a card's reply button, its Full text, the CI list, the fleet's health and the Agora feed act on the phone",
+    ["ci-open", "close", "health-open", "look", "play", "unfold"],
+    "only the portrait's look, its Close, a card's reply button, its Full text, the CI list and the fleet's health act on the phone",
   );
-  for (const action of ['id="new-session"', 'class="jump"', 'class="clear"', 'class="menu"', 'data-act="interrupt"', 'data-act="end"', 'class="undo"', 'class="end-confirm"', 'id="ledger-open"', 'class="chip"', 'class="agora-react"']) {
+  for (const action of ['id="new-session"', 'class="jump"', 'class="clear"', 'class="menu"', 'data-act="interrupt"', 'data-act="end"', 'class="undo"', 'class="end-confirm"', 'id="ledger-open"', 'class="chip"']) {
     const b = buttons.find((x) => x.includes(action));
     assert.ok(b, `${action} found`);
     assert.doesNotMatch(b, /data-phone/, `${action} is desktop-only`);
   }
   assert.doesNotMatch(wall, /createElement\("button"\)|<button/, "no button is made outside wall.html, where the rule could miss it");
-  assert.match(wall, /document\.documentElement\.classList\.toggle\("served", served\)/);
+  assert.match(read("src/fleet/scheme.js"), /document\.documentElement\.classList\.toggle\("served", served\)/);
 });
 
 test("a card's Remote Control link is a plain new-tab link, set only on the phone", () => {
@@ -214,13 +215,16 @@ const RAMP = ["--ramp-low", "--ramp-mid", "--ramp-high", "--ramp-mid-at", "--ram
 test("the phone draws the gauge's rows with the gauge's own code: one model, no second formatter", () => {
   const wall = read("src/fleet/wall.js");
   const main = read("src/main.js");
-  assert.match(wall, /import \{ WAITING, usageRows \} from "\.\.\/gauge\.js";/);
+  assert.match(wall, /import \{ WAITING, toRows, usageRows \} from "\.\.\/gauge\.js";/);
   assert.match(wall, /import \{ readMode, readStops, syncEntries \} from "\.\.\/gaugeview\.js";/);
-  assert.match(main, /import \{ readMode, readStops, syncEntries \} from "\.\/gaugeview\.js";/);
   assert.match(wall, /syncEntries\(limitRows, rows, \{ compact: true, stops: readStops\(\), mode: readMode\(\) \}, true\);/);
-  assert.match(main, /syncEntries\(rowsEl, rows, \{/);
+  // The desktop strip draws chips (#421) from the same rows: toRows, then toChips.
+  assert.match(main, /import \{ readMode, readStops \} from "\.\/gaugeview\.js";/);
+  assert.match(main, /const rows = toRows\(lastPayload, now\);/);
+  assert.match(main, /chips = rows\.length \? toChips\(rows, now\) : \[\];/);
+  assert.match(main, /syncChips\(chipsEl, chips, \{/);
   // The words and the ring's arithmetic live in gauge.js alone.
-  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "model.js", "strip.js", "drawer.js"].map((f) => `src/fleet/${f}`)];
+  const others = ["src/main.js", "src/gaugeview.js", ...["wall.js", "model.js", "strip.js", "drawer.js", "newsession.js", "chips.js", "chipview.js"].map((f) => `src/fleet/${f}`)];
   for (const f of others) {
     const src = read(f);
     assert.doesNotMatch(src, /function format|% used|Resets in|resets_at|used_percentage|2 \* Math\.PI|strokeDasharray = `/, f);
@@ -263,6 +267,37 @@ test("the gauges open the page, outside the sticky bar, shown only for a snapsho
   assert.doesNotMatch(bar, /limits/, "the sticky bar stays one tally high");
   assert.match(html, /<main id="main">\s*<section class="limits" aria-label="Usage limits" hidden>\s*<ul class="limit-rows"><\/ul>\s*<p class="limit-wait" hidden><\/p>\s*<\/section>\s*<h1 id="wall-title"[^>]*>[^<]*<\/h1>\s*<section id="wall"/, "the sessions heading sits right before the wall it names");
   const wall = read("src/fleet/wall.js");
-  assert.match(wall, /const rows = usageRows\(latestSnapshot, now\);\s*limits\.hidden = rows === null;/);
+  assert.match(wall, /const all = usageRows\(latestSnapshot, now\);\s*limits\.hidden = all === null;/);
+  assert.match(wall, /const hidden = hiddenRows\(all\);\s*const rows = all\.filter\(\(r\) => !hidden\.has\(r\)\);/, "a spent week hides its session row here too (#421)");
   assert.match(wall, /paintTally\(\);\s*paintLimits\(now\);/, "drawn on every snapshot and every tick");
+});
+
+test("#247: scheme.js marks the phone page .served before the first paint, by feedKind's rule", () => {
+  const src = read("src/fleet/scheme.js");
+  const html = read("src/wall.html");
+  const head = html.slice(0, html.indexOf("</head>"));
+  assert.match(head, /<script src="fleet\/scheme\.js"><\/script>/, "a classic script in the head, not a deferred module");
+  assert.ok(head.indexOf("scheme.js") > head.lastIndexOf('name="theme-color"'), "after the theme-color metas it edits");
+  const run = (app, search, pathname) => {
+    const classes = new Set();
+    const metas = [
+      { media: "(prefers-color-scheme: dark)", removed: false, remove() { this.removed = true; }, removeAttribute() { this.media = ""; } },
+      { media: "(prefers-color-scheme: light)", removed: false, remove() { this.removed = true; }, removeAttribute() { this.media = ""; } },
+    ];
+    const window = app ? { __TAURI_INTERNALS__: {} } : {};
+    const document = {
+      documentElement: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) } },
+      querySelectorAll: () => metas,
+    };
+    vm.runInNewContext(src, { window, document, location: { search, pathname }, URLSearchParams });
+    return { served: classes.has("served"), metas };
+  };
+  for (const app of [false, true])
+    for (const search of ["", "?demo", "?x=1"])
+      for (const pathname of ["/", "/wall.html"]) {
+        const got = run(app, search, pathname);
+        const want = feed.feedKind(app, search, pathname) === "served";
+        assert.equal(got.served, want, `${app} ${search} ${pathname}`);
+        assert.deepEqual(got.metas.map((m) => [m.removed, m.media === ""]), want ? [[false, true], [true, false]] : [[false, false], [false, false]]);
+      }
 });

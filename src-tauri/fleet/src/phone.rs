@@ -93,7 +93,7 @@ pub fn exact_assets<K: AsRef<str>>(
 /// (shown, never acted on: the phone has no wrap-up buttons). The rest (its
 /// tmux pane, Claude process, distro, full launch folder) serve the
 /// desktop's actions alone.
-const SESSION_FIELDS: [&str; 26] = [
+const SESSION_FIELDS: [&str; 27] = [
     "session_id",
     "name",
     "voice",
@@ -104,6 +104,7 @@ const SESSION_FIELDS: [&str; 26] = [
     "where",
     "touched",
     "prompt",
+    "said",
     "reply",
     "error",
     "updated_at",
@@ -242,6 +243,7 @@ pub fn asset_type(path: &str) -> Option<&'static str> {
             | "zoom.js"
             | "gauge.js"
             | "gaugeview.js"
+            | "opacity.js"
             | "log.js"
             | "manifest.webmanifest"
             | "sw.js"
@@ -431,8 +433,7 @@ struct Shared {
 /// The parts of the phone's snapshot: the fleet's phone view, the usage
 /// readings' once a usage source has been read, the character theme once
 /// the app has named one, the CI watch's view once `ci.json` was read,
-/// the fleet's health once `fleet-health.json` was read, and the Agora's
-/// once it has a post.
+/// and the fleet's health once `fleet-health.json` was read.
 #[derive(Default)]
 struct Parts {
     fleet: Option<Value>,
@@ -440,7 +441,6 @@ struct Parts {
     theme: Option<&'static str>,
     ci: Option<Value>,
     health: Option<Value>,
-    agora: Option<Value>,
 }
 
 /// The snapshot every phone gets, made from its parts.
@@ -471,9 +471,6 @@ impl Feed {
             }
             if let Some(health) = &parts.health {
                 map.insert("health".into(), health.clone());
-            }
-            if let Some(agora) = &parts.agora {
-                map.insert("agora".into(), agora.clone());
             }
         }
         let Ok(json) = serde_json::to_vec(&view) else {
@@ -790,12 +787,6 @@ impl Server {
         self.feed.update(|p| p.health = Some(view));
     }
 
-    /// Show every phone the Agora's view (`agora::view`).
-    pub fn set_agora(&self, view: &Value) {
-        let view = view.clone();
-        self.feed.update(|p| p.agora = Some(view));
-    }
-
     /// Close the port and every connection, and return once they are closed.
     pub fn stop(mut self) {
         self.shutdown();
@@ -1061,6 +1052,7 @@ mod tests {
             ("/zoom.js", Some(Route::Asset("zoom.js".into()))),
             ("/gauge.js", Some(Route::Asset("gauge.js".into()))),
             ("/gaugeview.js", Some(Route::Asset("gaugeview.js".into()))),
+            ("/opacity.js", Some(Route::Asset("opacity.js".into()))),
             ("/log.js", Some(Route::Asset("log.js".into()))),
             (
                 "/manifest.webmanifest",
@@ -1112,7 +1104,7 @@ mod tests {
                 "session_id": "s1", "name": "n", "launch_dir": "/home/aj/repos/klepsydra/",
                 "voice": "v", "status": "working", "reason": null, "status_at": 1, "active_at": 2,
                 "where": {"repo": "r", "worktree": null, "branch": "b", "at": 1},
-                "touched": [], "prompt": {"text": "p", "at": 1}, "reply": null, "error": null,
+                "touched": [], "prompt": {"text": "p", "at": 1}, "said": null, "reply": null, "error": null,
                 "updated_at": 3, "quiet_since": null,
                 "tmux": {"socket": "/tmp/tmux-1000/klepsydra", "pane": "%1"},
                 "distro": "Ubuntu", "claude": {"pid": 42, "start": 7},
@@ -1965,26 +1957,6 @@ mod tests {
             data(&next_item(&mut r))["health"],
             health,
             "a change is the next event"
-        );
-    }
-
-    #[test]
-    fn the_agora_rides_on_the_snapshot_and_a_post_reaches_open_streams() {
-        let p = serve(QUICK);
-        let addr = p.server.addr();
-        p.server.publish(&snapshot(1));
-        let (_, _, body) = get(addr, "GET", "/fleet.json", "");
-        let v: Value = serde_json::from_slice(&body).unwrap();
-        assert!(v.get("agora").is_none(), "no Agora before its first post");
-        let (code, mut r) = open_events(addr);
-        assert_eq!(code, 200);
-        let _ = next_item(&mut r);
-        let board = json!({"posts": [{"id": "a@1", "text": "hi"}], "emoji": ["👍"]});
-        p.server.set_agora(&board);
-        assert_eq!(
-            data(&next_item(&mut r))["agora"],
-            board,
-            "a post is the next event, without a new fleet snapshot"
         );
     }
 

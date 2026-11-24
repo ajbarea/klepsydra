@@ -101,8 +101,86 @@ fn account_key(reading: &Object) -> String {
     }
 }
 
+/// When account `account`'s spent window comes back, read as gauge.js
+/// reconciles an account's sessions (`reconcilable` and `pickWindow`): the
+/// observed readings, unless an older hook's file is newer than all of them
+/// (then every reading, since no time is trusted). Per window, from the readings
+/// that carry it as numbers: by time, those observed last; then the newest
+/// `resets_at` (within `WINDOW_MATCH_SECONDS`) and the highest reading of it.
+/// A window at 100% that has not reset by `now` (unix seconds) is spent; the
+/// latest such reset is returned. `None` when the account has room or no
+/// reading. A launch on a spent account is refused with it, even from a menu
+/// drawn before it ran out.
+pub fn spent_until(readings: &[Value], account: &str, now: i64) -> Option<i64> {
+    const WINDOW_MATCH_SECONDS: f64 = 90.0; // gauge.js WINDOW_MATCH_SECONDS
+    let num = |r: &Value, k: &str| r.get(k).and_then(Value::as_f64);
+    let max = |xs: &mut dyn Iterator<Item = f64>| {
+        xs.fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))))
+    };
+    let mine: Vec<&Value> = readings
+        .iter()
+        .filter(|r| r.get("account").and_then(Value::as_str) == Some(account))
+        .collect();
+    let observed: Vec<&Value> = mine
+        .iter()
+        .copied()
+        .filter(|r| num(r, "observed_at").is_some())
+        .collect();
+    let newest = max(&mut observed.iter().filter_map(|r| num(r, "observed_at")));
+    let by_time = newest.is_some_and(|n| {
+        !mine
+            .iter()
+            .any(|r| num(r, "observed_at").is_none() && num(r, "written_at").is_some_and(|w| w > n))
+    });
+    let current = if by_time { observed } else { mine };
+    let mut keys: Vec<&String> = current
+        .iter()
+        .filter_map(|r| r.get("windows")?.as_object())
+        .flat_map(|w| w.keys())
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys.into_iter()
+        .filter_map(|key| {
+            // (observed time, percent, reset) of each reading that carries this window as numbers.
+            let all: Vec<(Option<f64>, f64, f64)> = current
+                .iter()
+                .filter_map(|r| {
+                    let w = r.get("windows")?.get(key)?;
+                    let pct = w.get("used_percentage")?.as_f64()?;
+                    let at = w.get("resets_at")?.as_f64()?;
+                    Some((num(r, "observed_at"), pct, at))
+                })
+                .collect();
+            let latest = max(&mut all.iter().filter_map(|c| c.0));
+            let cands: Vec<(f64, f64)> = all
+                .into_iter()
+                .filter(|c| !by_time || c.0 == latest)
+                .map(|(_, p, a)| (p, a))
+                .collect();
+            let reset = max(&mut cands.iter().map(|c| c.1))?;
+            let pct = max(&mut cands
+                .iter()
+                .filter(|c| reset - c.1 <= WINDOW_MATCH_SECONDS)
+                .map(|c| c.0))?;
+            #[allow(clippy::cast_possible_truncation)]
+            let at = reset as i64;
+            (pct >= 100.0 && at > now).then_some(at)
+        })
+        .max()
+}
+
 /// The windows the gauge draws (gauge.js WINDOW_ORDER); no other reaches the phone.
-pub const WINDOWS: [&str; 3] = ["five_hour", "seven_day", "spend_limit"];
+pub const WINDOWS: [&str; 8] = [
+    "five_hour",
+    "seven_day",
+    "spend_limit",
+    "gemini",
+    "claude_gpt",
+    "ai_credits",
+    "personal",
+    "ldqis",
+];
 
 /// The readings as the phone gets them, one per session, unmerged (gauge.js
 /// reconciles them): each cut to its label, its times and each of `WINDOWS`'
@@ -129,6 +207,9 @@ pub fn phone_view(readings: &[Value]) -> Value {
             o.insert("account".into(), Value::from(format!("a{n}")));
             if let Some(label) = r.get("label").filter(|v| v.is_string()) {
                 o.insert("label".into(), label.clone());
+            }
+            if let Some(harness) = harness_of(r) {
+                o.insert("harness".into(), Value::from(harness));
             }
             for k in STAMPS {
                 if let Some(t) = r.get(k).filter(|v| v.is_number()) {
@@ -158,6 +239,25 @@ pub fn phone_view(readings: &[Value]) -> Value {
     Value::Array(out)
 }
 
+fn harness_of(reading: &Object) -> Option<String> {
+    if let Some(harness) = reading.get("harness").and_then(Value::as_str) {
+        return Some(harness.to_string());
+    }
+    if let Some(engine) = reading.get("engine").and_then(Value::as_str) {
+        return Some(engine.to_string());
+    }
+    let account = account_key(reading);
+    if account.starts_with("agy") {
+        Some("agy".to_string())
+    } else if account.starts_with("copilot") {
+        Some("copilot".to_string())
+    } else if account.starts_with("api") {
+        Some("api".to_string())
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,7 +269,7 @@ mod tests {
 
     fn reading(account: &str, label: &str, session: &str, pct: u32) -> Value {
         json!({
-            "account": account, "label": label, "session": session,
+            "account": account, "label": label, "harness": "claude", "session": session,
             "written_at": 1_800_000_000, "observed_at": 1_800_000_000, "api_ms": 41_234,
             "windows": {
                 "five_hour": {"used_percentage": pct, "resets_at": 1_800_003_600, "extra": "x"},
@@ -222,12 +322,95 @@ mod tests {
     }
 
     #[test]
+    fn an_account_is_spent_only_by_its_newest_reading_and_only_until_the_reset() {
+        let r = |account: &str, at: i64, five: f64, week: f64| {
+            json!({"account": account, "observed_at": at, "windows": {
+                "five_hour": {"used_percentage": five, "resets_at": 2_000},
+                "seven_day": {"used_percentage": week, "resets_at": 9_000}}})
+        };
+        let all = [r(PERSONAL, 100, 100.0, 40.0), r(TEAM, 100, 10.0, 100.0)];
+        assert_eq!(
+            spent_until(&all, PERSONAL, 1_000),
+            Some(2_000),
+            "its session is spent"
+        );
+        assert_eq!(
+            spent_until(&all, TEAM, 1_000),
+            Some(9_000),
+            "the week binds"
+        );
+        assert_eq!(spent_until(&all, PERSONAL, 2_000), None, "reset by now");
+        assert_eq!(spent_until(&all, "other", 1_000), None, "no reading");
+        let later = [r(PERSONAL, 100, 100.0, 40.0), r(PERSONAL, 200, 3.0, 40.0)];
+        assert_eq!(
+            spent_until(&later, PERSONAL, 1_000),
+            None,
+            "a newer reading has room"
+        );
+        let both = [r(TEAM, 100, 100.0, 100.0)];
+        assert_eq!(
+            spent_until(&both, TEAM, 1_000),
+            Some(9_000),
+            "the later return"
+        );
+        let old_hook = json!({"account": PERSONAL, "written_at": 50, "windows": {
+            "five_hour": {"used_percentage": 100, "resets_at": 2_000}}});
+        assert_eq!(
+            spent_until(&[old_hook], PERSONAL, 1_000),
+            Some(2_000),
+            "written_at when no observed_at"
+        );
+        // An older hook's file newer than every observed reading: no time is
+        // trusted, so the highest reading of the newest window counts (gauge.js).
+        let mixed = [
+            json!({"account": PERSONAL, "observed_at": 100, "windows": {"five_hour": {"used_percentage": 100, "resets_at": 2_000}}}),
+            json!({"account": PERSONAL, "written_at": 200, "windows": {"five_hour": {"used_percentage": 40, "resets_at": 2_000}}}),
+        ];
+        assert_eq!(
+            spent_until(&mixed, PERSONAL, 1_000),
+            Some(2_000),
+            "an old hook's newer file"
+        );
+        let next = [
+            json!({"account": TEAM, "written_at": 100, "windows": {"five_hour": {"used_percentage": 100, "resets_at": 2_000}}}),
+            json!({"account": TEAM, "written_at": 90, "windows": {"five_hour": {"used_percentage": 5, "resets_at": 20_000}}}),
+        ];
+        assert_eq!(
+            spent_until(&next, TEAM, 1_000),
+            None,
+            "the newer window wins over an older spent one"
+        );
+        // Per window, not per file (gauge.js pickWindow): the newest reading lacks the
+        // week, or carries it as no number, so the older reading's week counts.
+        let week_older = [
+            json!({"account": TEAM, "observed_at": 200, "windows": {"five_hour": {"used_percentage": 3, "resets_at": 2_000}}}),
+            json!({"account": TEAM, "observed_at": 100, "windows": {"seven_day": {"used_percentage": 100, "resets_at": 9_000}}}),
+        ];
+        assert_eq!(
+            spent_until(&week_older, TEAM, 1_000),
+            Some(9_000),
+            "a window only an older reading carries"
+        );
+        let not_a_number = [
+            json!({"account": TEAM, "observed_at": 200, "windows": {"five_hour": {"used_percentage": "3", "resets_at": 2_000}}}),
+            json!({"account": TEAM, "observed_at": 100, "windows": {"five_hour": {"used_percentage": 100, "resets_at": 2_000}}}),
+        ];
+        assert_eq!(
+            spent_until(&not_a_number, TEAM, 1_000),
+            Some(2_000),
+            "a newer reading that carries no number"
+        );
+        let junk = json!({"account": PERSONAL, "observed_at": 1, "windows": {"five_hour": {"used_percentage": "100", "resets_at": 2_000}}});
+        assert_eq!(spent_until(&[junk], PERSONAL, 1_000), None, "a number only");
+    }
+
+    #[test]
     fn the_phone_gets_only_what_the_gauge_draws() {
         let v = phone_view(&[reading(PERSONAL, "Personal", "s1", 57)]);
         assert_eq!(
             v,
             json!([{
-                "account": "a1", "label": "Personal",
+                "account": "a1", "label": "Personal", "harness": "claude",
                 "observed_at": 1_800_000_000, "written_at": 1_800_000_000,
                 "windows": {
                     "five_hour": {"used_percentage": 57, "resets_at": 1_800_003_600},
@@ -239,6 +422,18 @@ mod tests {
         for secret in [PERSONAL, "s1", "api_ms", "session", "extra"] {
             assert!(!text.contains(secret), "{secret} reached the phone: {text}");
         }
+    }
+
+    #[test]
+    fn the_phone_keeps_a_harness_inferred_from_an_old_reading() {
+        let v = phone_view(&[json!({
+            "account": "copilot-primary",
+            "label": "Copilot",
+            "windows": {
+                "ai_credits": {"used_percentage": 10, "resets_at": 1_800_003_600}
+            }
+        })]);
+        assert_eq!(v[0]["harness"], "copilot");
     }
 
     #[test]

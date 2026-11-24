@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WINDOW_ORDER, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING } from "./gauge.js";
+import { WINDOW_ORDER, ROUTE_ORDER, FLEET_ROOM_PCT, rampColor, rampPosition, formatCountdown, formatCountdownShort, formatAge, formatAgeShort, evaluate, formatPct, formatPctShort, ringDash, ringCap, ringStyle, entryText, usageRows, toRows, SHOW_AGE_AFTER_MS, DROP_AFTER_MS, WAITING, harnessOf, harnessGroups, routeLane } from "./gauge.js";
 
 const STOPS = { low: "#3b82f6", mid: "#eab308", high: "#ef4444", midAt: 60, highAt: 85 };
 const NOW = 1_800_000_000_000; // fixed clock
@@ -520,4 +520,175 @@ test("the phone server sends exactly the windows the gauge draws", async () => {
   const rs = readFileSync(new URL("../src-tauri/fleet/src/usage.rs", import.meta.url), "utf8");
   const list = rs.match(/pub const WINDOWS: \[&str; \d+\] = \[([^\]]*)\];/)[1];
   assert.deepEqual([...list.matchAll(/"(\w+)"/g)].map((m) => m[1]), WINDOW_ORDER);
+});
+
+test("the gauge mirrors the fleet's room threshold", async () => {
+  const { readFileSync } = await import("node:fs");
+  const lib = readFileSync(new URL("../fleet/lib.sh", import.meta.url), "utf8");
+  assert.equal(Number(lib.match(/^FLEET_ROOM_PCT=\$\{FLEET_ROOM_PCT:-([0-9]+)\}/m)[1]), FLEET_ROOM_PCT);
+});
+
+test("harnessOf classifies harness from account prefix or engine", () => {
+  assert.equal(harnessOf({ account: "agy-primary" }), "agy");
+  assert.equal(harnessOf({ engine: "agy" }), "agy");
+  assert.equal(harnessOf({ account: "copilot-work" }), "copilot");
+  assert.equal(harnessOf({ engine: "copilot" }), "copilot");
+  assert.equal(harnessOf({ account: "api-anthropic" }), "api");
+  assert.equal(harnessOf({ account: "6f5fe38b" }), "claude");
+  assert.equal(harnessOf({ harness: "custom" }), "custom");
+});
+
+test("legacy AGY Gemini windows stay in the AGY Gemini lane", () => {
+  assert.equal(routeLane({ harness: "agy", window: "gemini" }), "agy_gemini");
+});
+
+test("multi-harness toRows tags rows with harness and route recommendation", () => {
+  const claudeAcct = {
+    account: "6f5fe38b",
+    label: "Personal",
+    written_at: secs(NOW),
+    observed_at: secs(NOW),
+    windows: {
+      five_hour: { used_percentage: 100, resets_at: secs(NOW + 3600e3) },
+      seven_day: { used_percentage: 45, resets_at: secs(NOW + 86400e3) },
+    },
+  };
+  const agyAcct = {
+    account: "agy-account",
+    label: "Antigravity",
+    written_at: secs(NOW),
+    observed_at: secs(NOW),
+    windows: {
+      five_hour: { used_percentage: 20, resets_at: secs(NOW + 7200e3) },
+      seven_day: { used_percentage: 30, resets_at: secs(NOW + 7200e3) },
+      claude_gpt: { used_percentage: 60, resets_at: secs(NOW + 7200e3) },
+    },
+  };
+
+  const rows = toRows([claudeAcct, agyAcct], NOW);
+  assert.equal(rows.length, 5);
+
+  // Claude rows
+  const claude5h = rows.find((r) => r.key === "6f5fe38b:five_hour");
+  assert.equal(claude5h.harness, "claude");
+  assert.equal(claude5h.isCapped, true);
+  assert.equal(claude5h.isBestRoute, false);
+
+  // AGY rows
+  const agyGemini = rows.find((r) => r.key === "agy-account:five_hour");
+  assert.equal(agyGemini.harness, "agy");
+  assert.equal(agyGemini.isCapped, false);
+  assert.equal(rows.find((r) => r.key === "agy-account:seven_day").isBestRoute, true, "AGY is uncapped and recommended route when Claude is capped");
+
+  const agyClaudeGpt = rows.find((r) => r.key === "agy-account:claude_gpt");
+  assert.equal(agyClaudeGpt.note, undefined, "no date typed into the code (#421): the reading says whether the window lives");
+  assert.equal(agyClaudeGpt.isBestRoute, false, "only the selected row gets the badge");
+  assert.equal(rows.filter((r) => r.isBestRoute).length, 1);
+
+  // Groups
+  const groups = harnessGroups(rows);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].harness, "claude");
+  assert.equal(groups[0].isCapped, false); // seven_day is 45% so not all capped, but Claude's bottleneck is 100%
+  assert.equal(groups[1].harness, "agy");
+  assert.equal(groups[1].isBestRoute, true);
+});
+
+test("routing is free-first, judges model groups independently, and marks one row", () => {
+  assert.deepEqual(ROUTE_ORDER, ["agy_gemini", "agy_claude_gpt", "copilot", "api_credit", "claude_subscription"]);
+  assert.equal(routeLane({ harness: "agy", window: "five_hour" }), "agy_gemini");
+  assert.equal(routeLane({ harness: "agy", window: "seven_day" }), "agy_gemini");
+  assert.equal(routeLane({ harness: "agy", window: "claude_gpt" }), "agy_claude_gpt");
+  assert.equal(routeLane({ harness: "copilot", window: "ai_credits" }), "copilot");
+  assert.equal(routeLane({ harness: "api", window: "ai_credits" }), "api_credit");
+  assert.equal(routeLane({ harness: "claude", window: "five_hour" }), "claude_subscription");
+
+  const account = (id, harness, window, pct) => ({
+    account: id,
+    harness,
+    label: id,
+    written_at: secs(NOW),
+    observed_at: secs(NOW),
+    windows: { [window]: { used_percentage: pct, resets_at: secs(NOW + 3600e3) } },
+  });
+  const rows = toRows([
+    {
+      ...account("agy", "agy", "five_hour", 0),
+      windows: {
+        five_hour: { used_percentage: 0, resets_at: secs(NOW + 3600e3) },
+        seven_day: { used_percentage: 10, resets_at: secs(NOW + 3600e3) },
+      },
+    },
+    account("agy", "agy", "claude_gpt", 100),
+    account("copilot", "copilot", "ai_credits", 1),
+    account("api", "api", "ai_credits", 2),
+    account("claude", "claude", "five_hour", 3),
+  ], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["agy:seven_day"]);
+
+  const noGemini = toRows([
+    {
+      ...account("agy", "agy", "five_hour", 100),
+      windows: {
+        five_hour: { used_percentage: 100, resets_at: secs(NOW + 3600e3) },
+        seven_day: { used_percentage: 10, resets_at: secs(NOW + 3600e3) },
+      },
+    },
+    account("copilot", "copilot", "ai_credits", 1),
+    account("api", "api", "ai_credits", 2),
+    account("claude", "claude", "five_hour", 3),
+  ], NOW);
+  assert.deepEqual(noGemini.filter((r) => r.isBestRoute).map((r) => r.key), ["copilot:ai_credits"]);
+});
+
+test("routing rejects a spent coupled window and follows real AGY windows", () => {
+  const account = (id, harness, windows) => ({
+    account: id, harness, label: id, written_at: secs(NOW), observed_at: secs(NOW), windows,
+  });
+  const rows = toRows([
+    account("agy", "agy", {
+      five_hour: win(0),
+      seven_day: win(100),
+      claude_gpt: win(10),
+    }),
+    account("claude", "claude", {
+      five_hour: win(20),
+      seven_day: win(30),
+    }),
+  ], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["agy:claude_gpt"]);
+});
+
+test("routing ranks a group by its tightest window", () => {
+  const account = (id, five, seven) => ({
+    account: id, harness: "claude", label: id, written_at: secs(NOW), observed_at: secs(NOW),
+    windows: { five_hour: win(five), seven_day: win(seven) },
+  });
+  const rows = toRows([account("tight-week", 0, 94), account("balanced", 10, 10)], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["balanced:five_hour"]);
+});
+
+test("fleet thresholds floor remaining room at the five-hour and weekly boundaries", () => {
+  const account = (id, windows) => ({
+    account: id, harness: "claude", label: id, written_at: secs(NOW), observed_at: secs(NOW), windows,
+  });
+  for (const [id, windows] of [
+    ["session-89.5", { five_hour: win(89.5), seven_day: win(10) }],
+    ["session-90", { five_hour: win(90), seven_day: win(10) }],
+    ["week-94.5", { five_hour: win(10), seven_day: win(94.5) }],
+    ["week-95", { five_hour: win(10), seven_day: win(95) }],
+  ]) {
+    assert.deepEqual(toRows([account(id, windows)], NOW).filter((r) => r.isBestRoute), [], `${id} is spent`);
+  }
+  const rows = toRows([account("room", { five_hour: win(10), seven_day: win(10) })], NOW);
+  assert.deepEqual(rows.filter((r) => r.isBestRoute).map((r) => r.key), ["room:five_hour"]);
+});
+
+test("desktop and phone classify a harness-less Copilot reading alike", () => {
+  const reading = { ...acct("copilot-primary", "Copilot", { ai_credits: win(10) }) };
+  delete reading.harness;
+  const desktop = toRows([reading], NOW);
+  const phone = usageRows({ usage: [{ ...reading, account: "a1", harness: "copilot" }] }, NOW);
+  assert.equal(desktop[0].harness, phone[0].harness);
+  assert.equal(desktop[0].isBestRoute, phone[0].isBestRoute);
 });

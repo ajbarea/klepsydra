@@ -29,6 +29,9 @@ export function castFiles(character, cast) {
   return typeof dir === "string" && SEGMENT.test(dir) && typeof face === "string" && SEGMENT.test(face) ? `${FACES}/${dir}/${face}` : null;
 }
 
+/** Where the face files of `cast`'s keeper start (see castFiles), or null: the one lookup behind the wall's empty state and the strip's resting face. */
+export const keeperBase = (cast) => castFiles(castCharacter(cast?.keeper, cast), cast);
+
 /** A character's accent when it is a #rrggbb colour; else null. */
 export const castAccent = (character) =>
   typeof character?.accent === "string" && /^#[0-9a-f]{6}$/i.test(character.accent) ? character.accent : null;

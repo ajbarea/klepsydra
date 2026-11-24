@@ -144,7 +144,7 @@ branch_of() { # gitdir
   esac
 }
 
-# --- proc stat: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-launch.sh ---
+# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and hooks/klepsydra-browser.sh ---
 # Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
 # `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
 # The name sits in parentheses and may itself contain spaces or ")".
@@ -163,6 +163,14 @@ proc_is() { # pid start
   [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
   proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
 }
+
+# The kernel's release string ("...microsoft-standard-WSL2" under WSL), into the
+# caller's `osrelease`; fails when it cannot be read.
+proc_osrelease() {
+  osrelease=""
+  { IFS= read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+  [[ -n $osrelease ]]
+}
 # --- end proc stat ---
 
 # Whether `pid` is Claude Code: by name, or an npm install's
@@ -171,12 +179,12 @@ is_claude() { # pid
   local comm="" arg part
   local -a argv=() parts=()
   { IFS= read -r comm <"$PROC_ROOT/$1/comm"; } 2>/dev/null
-  [[ $comm == claude || $comm == claude-code ]] && return 0
+  [[ $comm == claude || $comm == claude-code || $comm == agy || $comm == antigravity || $comm == antigravity-cli ]] && return 0
   { mapfile -d '' -t -n 2 argv <"$PROC_ROOT/$1/cmdline"; } 2>/dev/null || return 1
   for arg in "${argv[@]}"; do
     IFS=/ read -r -a parts <<<"$arg"
     for part in "${parts[@]}"; do
-      [[ $part == claude || $part == claude-code ]] && return 0
+      [[ $part == claude || $part == claude-code || $part == agy || $part == antigravity || $part == antigravity-cli ]] && return 0
     done
   done
   return 1
@@ -198,6 +206,15 @@ claude_ancestor() { # pid
     (( pid >= 1 )) || return 1
   done
   return 1
+}
+
+# Whether Claude Code process `pid` runs under another one: a `claude -p` that
+# a session starts from its Bash tool. It inherits that session's environment
+# (TMUX_PANE, KLEPSYDRA_AGENT) but has no pane of its own (#333).
+nested_claude() { # pid
+  local -a stat=()
+  proc_stat "$1" || return 1
+  (claude_ancestor "${stat[1]}")
 }
 
 # How many Bash tool calls Claude Code process `pid` runs now: its child
@@ -467,9 +484,26 @@ prune_hourly() { # stamp prune dir now
 # which Claude Code re-appends every few lines with the bridge's id: it has no
 # timestamp, so it is given the one of the line before it. A tail and one awk,
 # never a full read; nothing for a path that is not an absolute, readable .jsonl file.
+# The tail also harvests the newest assistant narration in the current turn,
+# separated from the Remote Control lines by a record separator (\x1e).
+# The context the last request carried (#515): input, cache reads and cache
+# writes of the main thread's last assistant usage, from the transcript's tail
+# (a subagent's lines carry their own, smaller context).
+context_tokens() { # transcript
+  [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
+  tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null |
+    LC_ALL=C awk 'index($0, "\"type\":\"assistant\"") && index($0, "\"usage\"") && !index($0, "\"isSidechain\":true") { l = $0 } END { if (l != "") print l }' |
+    jq -r '.message.usage | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0) | floor | select(. > 0)' 2>/dev/null
+}
+
 remote_lines() { # transcript
   [[ $1 == /*.jsonl && -f $1 && -r $1 ]] || return 0
   tail -c "$REMOTE_TAIL" -- "$1" 2>/dev/null | LC_ALL=C awk -v keep="$REMOTE_LINES" -v max="$REMOTE_LINE_MAX" '
+    ((index($0, "\"type\":\"user\"") && !index($0, "\"tool_result\"") && !index($0, "\"isMeta\":true") && !index($0, "\"isMeta\": true")) || index($0, "\"type\":\"USER_INPUT\"")) { said = "" }
+    (index($0, "\"type\":\"assistant\"") && index($0, "\"type\":\"text\"")) \
+      || (index($0, "\"type\":\"PLANNER_RESPONSE\"") && (index($0, "\"type\":\"text\"") || (index($0, "\"content\":\"") && !index($0, "\"content\":\"\"") && !index($0, "\"content\":null") && !index($0, "\"content\": null")))) {
+      if (length($0) <= 32768) said = $0
+    }
     length($0) > max { next }
     index($0, "\"subtype\":\"bridge_status\"") || index($0, "\"type\":\"remote_session_change\"") \
       || (index($0, "\"type\":\"system\"") && index($0, "\"content\":\"Remote Control disconnected")) { seen[n++ % keep] = $0 }
@@ -478,6 +512,7 @@ remote_lines() { # transcript
     END {
       for (i = (n > keep ? n - keep : 0); i < n; i++) print seen[i % keep]
       if (bridge != "" && bridge_at != "") { sub(/}[[:space:]]*$/, ",\"timestamp\":\"" bridge_at "\"}", bridge); print bridge }
+      if (said != "") printf "\x1e%s\n", said
     }'
   return 0
 }
@@ -505,6 +540,15 @@ cleared_link() { # fleet pid start self
   printf '%s\x1f%s\x1f%s' "$link" "$kept" "$id"
   return 0
 }
+
+# State rules the hook and the ask watcher share.
+read -r -d '' STATE_DEFS <<'JQ' || true  # read returns 1 at the end of input
+# The session's turn is over: Stop ran (or the prompt sat idle) with work still out.
+def turn_over: .reason == "background" or (.needs.turn_over // false) == true;
+# AJ answered the ask: working, or after the turn ended working in background, or done.
+def answered: if turn_over | not then {state: "working", reason: null}
+  elif (.background // []) != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end;
+JQ
 
 # The face a new orchestrator session wears (#244): Hephaestus and Athena are
 # equal, so it is the one no other orchestrator on the wall wears, live ones
@@ -551,9 +595,23 @@ free_face() { # fleet self cleared hint [clear_pane] [succeeds]
   printf '%s' "$4"
 }
 
+# The face free_face gives a new orchestrator session SID now, with SUCCEEDS
+# the session a move replaces: launch.sh starts it with this voice, so the
+# voice it speaks in is the face its card wears.
+face_now() { # sid [succeeds]
+  local name="" hint=$HEPH_VOICE succeeds=""
+  [[ $1 =~ $UUID_RE ]] || return 0
+  [[ ${2:-} =~ $UUID_RE ]] && succeeds=$2
+  { read -r name <"${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/orchestrator.face"; } 2>/dev/null
+  name=${name//[$'\r\t ']/}
+  [[ ${name,,} == athena ]] && hint=$ATHENA_VOICE
+  host_facts
+  free_face "$KLEPSYDRA_DIR/fleet" "$1" "" "$hint" "" "$succeeds"
+}
+
 # The session file after one event, as compact JSON, or nothing when no field
 # changed. `$old` is the current file's text (empty for none).
-read -r -d '' APPLY <<'JQ' || true  # read returns 1 at the end of input
+read -r -d '' APPLY <<'JQ' || true
 def clip: if type == "string" and length > 0 then .[0:$chars] else null end;
 def text: if type == "string" and length > 0 then . else null end;
 def need_reason($tool): if $tool == "AskUserQuestion" then "question"
@@ -575,8 +633,6 @@ def watcher: type == "string"
 def watched: [sub("\\A.*watch-panes\\.sh"; "") | scan("%[0-9]+")];
 # A status that means the task is over; any other, or none, still runs.
 def finished: IN("completed", "finished", "failed", "killed", "stopped", "cancelled", "canceled");
-# The session's turn is over: Stop ran (or the prompt sat idle) with work still out.
-def turn_over: .reason == "background" or (.needs.turn_over // false) == true;
 # Needs you, asked by a subagent still out: nothing but its answer ends that.
 # Who asks AJ and for what; a request made once the turn is over remembers that.
 def asked($by; $tool): {by: $by, tool: $tool} + (if turn_over then {turn_over: true} else {} end);
@@ -606,6 +662,28 @@ def rc_word:
 # The task and tool-use ids of every <task-notification> block in a prompt.
 def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</task-notification>")
   | scan("<(?:task-id|tool-use-id)>\\s*([^<\\s]+)\\s*</(?:task-id|tool-use-id)>") | .[0]] else [] end;
+# The latest text an assistant or planner line says.
+def assistant_text($line):
+  try (
+    if ($line | type) != "string" or ($line | length) == 0 then null
+    else
+      ($line | try fromjson catch null) as $j
+      | if $j != null then
+          if $j.type == "assistant" then
+            ($j.message.content // $j.content) as $c
+            | if ($c | type) == "string" then $c
+              elif ($c | type) == "array" then
+                ([$c[] | select((objects | .type) == "text" and (.text | type) == "string") | .text] | last)
+              else null end
+          elif $j.type == "PLANNER_RESPONSE" then
+            if ($j.content | type) == "string" then $j.content
+            elif ($j.content | type) == "array" then
+              ([$j.content[] | select((objects | .type) == "text" and (.text | type) == "string") | .text] | last)
+            else null end
+          else null end
+        else null end
+    end
+  ) catch null;
 
 . as $ev
 | $ev.hook_event_name as $event
@@ -619,9 +697,10 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
             launch_dir: ($ev.cwd | text), claude: null, tmux: null, host: null, voice: null, voice_from: null,
             state: (if $event | IN("PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop") then "working" else "new" end),
             reason: null, needs: null, state_at: $now,
-            where: null, touched: [], prompt: null, reply: null, error: null,
+            where: null, touched: [], prompt: null, reply: null, said: null, error: null,
             ended: null, turns: 0, written_at: $now}) as $s
   | $s
+  | .engine = (($ev.engine | strings | select(test("^[A-Za-z0-9._-]{1,32}$"))) // .engine // "claude")
   | .name = (($ev.session_title | text) // .name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
@@ -641,9 +720,12 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   # Remote Control: the newest word on it since this process started wins; a
   # tail with none keeps what the file knew. A new process starts with none,
   # and its transcript's older lines (a resumed session's) are the last one's.
+  | ($remote | split("\u001e")) as $r_parts
+  | ($r_parts[0] // "") as $rc_remote
+  | ($r_parts[1] // "") as $said_line
   | (if $fresh then $now - 30 else (.remote_since | numbers) // 0 end) as $rc_since
   | (if $fresh then .remote_since = $rc_since else . end)
-  | [$remote | split("\n")[] | try fromjson catch empty | objects
+  | [$rc_remote | split("\n")[] | try fromjson catch empty | objects
       | select((rc_time // 0) >= $rc_since) | (rc_time // 0) as $at | rc_word + {at: $at}] as $words
   # Remote Control on from startup and /remote-control answered at its menu
   # write no link of their own; the bridge record then names it, until this
@@ -807,10 +889,9 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
      elif $event == "Notification" and ($ev.notification_type | IN("elicitation_dialog", "elicitation_url_dialog")) then
        {state: "needs_you", reason: "question", needs: asked($agent; null)}
      elif ($event | IN("PostToolUse", "PostToolUseFailure")) and .state == "needs_you" and (.needs.by // "") == $agent
-          and (.needs.tool == null or .needs.tool == $ev.tool_name) then
-       # Answered after the turn ended: back to working in background, or done.
-       if turn_over | not then {state: "working", reason: null}
-       elif .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+          and (.needs.tool == null or .needs.tool == $ev.tool_name) then answered
+     # A subagent that stops has no ask left, answered or denied (#217).
+     elif $event == "SubagentStop" and ($agent | text) != null and .state == "needs_you" and .needs.by == $agent then answered
      # A subagent still waiting on AJ outranks the turn's end, by Stop or by the idle prompt.
      elif ($event == "Stop" or ($event == "Notification" and $ev.notification_type == "idle_prompt")) and crew_asks then
        {state: .state, reason: .reason, needs: (.needs + {turn_over: true})}
@@ -836,9 +917,15 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
   # as a prompt starting <task-notification>; it is not AJ's.
   | if $event == "UserPromptSubmit" then
       # Every prompt starts a turn, a background task's notification too.
-      .error = null | .turn_at = $now
+      .error = null | .turn_at = $now | del(.said)
       | if ($ev.prompt // "" | test("^\\s*<task-notification>")) then .
         else .prompt = (($ev.prompt | clip) as $p | if $p then {text: $p, at: $now} else .prompt end) end
+    elif ($event | IN("PostToolUse", "PostToolUseFailure")) and $agent == "" then
+      ((assistant_text($said_line) // $ev.last_assistant_message) | clip) as $narration
+      | if $narration then
+          if .said.text == $narration then .
+          else .said = {text: $narration, at: $now} end
+        else . end
     elif $event == "Stop" then
       (($ev.last_assistant_message | clip) as $r | if $r then .reply = {text: $r, at: $now} else . end)
       # Turns ended so far; Stop is the only event that ends one.
@@ -847,6 +934,11 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
       .error = ([$ev.last_assistant_message, $ev.error_details, $ev.error] | map(clip | select(. != null)) | .[0])
     elif $event == "SessionEnd" then .ended = {reason: ($ev.reason // "other"), at: $now}
     elif $event == "SessionStart" and $ev.source != "compact" then .ended = null | .error = null
+    else . end
+
+  | if ($call_tokens | test("^[0-9]+$")) then .call_tokens = ($call_tokens | tonumber)
+    elif $event == "SessionStart" then del(.call_tokens)
+    elif ($was | type) == "object" and $was.call_tokens != null then .call_tokens = $was.call_tokens
     else . end
 
   | if .background == [] then del(.background) else . end
@@ -861,6 +953,7 @@ def notified: if type == "string" then [scan("<task-notification>[\\s\\S]*?</tas
     else .written_at = $now | .turns_at = $now end
   end
 JQ
+APPLY=$STATE_DEFS$'\n'$APPLY
 
 # Replace the file with `text` through a temp file in the same directory, so a
 # reader never sees half of it.
@@ -905,7 +998,7 @@ queue_cmd() { # queue|needs args...
       [[ $path != -* ]] || { echo "$usage" >&2; return 2; }
       [[ $path == /* ]] || path=$PWD/$path
       [[ ! -d $path ]] || { echo "klepsydra: $2 is a folder; name the $noun" >&2; return 2; }
-      { read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+      proc_osrelease
       if [[ $osrelease == *[Mm]icrosoft* ]] && command -v wslpath >/dev/null; then
         path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
       fi
@@ -1005,6 +1098,64 @@ colour_window() { # voice
   return 0
 }
 
+# Claude Code's permission dialog (2.1.302, hooks/fixtures/pane-permission-*):
+# its question, and its first option. Both, so a reply quoting one is not it.
+ASK_QUESTION=$'(^|\n)[[:space:]]*Do you want to [^\n]*\?'
+ASK_OPTION=$'\n[[:space:]]*(❯[[:space:]]*)?1\. Yes'
+ASK_TICK=${KLEPSYDRA_ASK_TICK:-2}
+# A watcher gives up after this long, whatever the ask.
+ASK_MAX=${KLEPSYDRA_ASK_MAX:-43200}
+
+# `klepsydra-fleet.sh watch-ask SID`: no hook fires when AJ answers a
+# permission prompt (#217), so this watches the session's tmux pane while its
+# file says it waits on AJ for a tool. A dialog it saw, then missed on two looks
+# in a row, was answered: the file gets the change a PostToolUse would make. A
+# dialog it never saw (another wording) is never cleared. One watcher per
+# session, following each new ask; it ends when no ask is left or the pane goes.
+watch_ask() { # sid
+  local sid=$1 file lock text row at socket pane screen asked="" seen=0 misses=0 began now
+  [[ $sid =~ $UUID_RE && -n ${KLEPSYDRA_DIR:-} ]] || return 0
+  file=$KLEPSYDRA_DIR/fleet/$sid.json
+  { exec {lock}>>"${XDG_RUNTIME_DIR:-/tmp}/klepsydra-ask-$UID-$sid.lock"; } 2>/dev/null || return 0
+  # A watcher on its way out still holds the lock; one still watching keeps it.
+  flock -w 10 "$lock" || return 0
+  began=$SECONDS
+  while (( SECONDS - began < ASK_MAX )); do
+    text=""
+    { text=$(<"$file"); } 2>/dev/null
+    row=$(jq -r 'select(.state == "needs_you" and (.needs.tool | type) == "string"
+        and (.needs.tool | IN("AskUserQuestion", "ExitPlanMode") | not))
+      | [.state_at, .tmux.socket, .tmux.pane] | map(tostring) | join("\t")' <<<"$text" 2>/dev/null) || row=""
+    IFS=$'\t' read -r at socket pane <<<"$row"
+    [[ $at =~ ^[0-9]+$ && $socket =~ ^/[A-Za-z0-9._/-]{1,255}$ && $pane =~ ^%[0-9]{1,9}$ ]] || break
+    [[ $at == "$asked" ]] || { asked=$at seen=0 misses=0; }
+    screen=$(timeout 2 tmux -S "$socket" capture-pane -p -J -t "$pane" 2>/dev/null) || break
+    if [[ $screen =~ $ASK_QUESTION && $screen =~ $ASK_OPTION ]]; then
+      seen=1 misses=0
+    elif (( seen )) && (( ++misses >= 2 )); then
+      now=${KLEPSYDRA_NOW:-}
+      [[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
+      ask_answered "$file" "$asked" "$now" && seen=0 misses=0
+    fi
+    sleep "$ASK_TICK"
+  done
+  return 0
+}
+
+# The ask made at ASKED_AT, if the file still waits on it, is answered. Fails
+# when the fleet lock stays busy, so the watcher tries again on its next look.
+ask_answered() { # file asked_at now
+  local lock new
+  { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
+  flock -w 5 "$lock" || { exec {lock}>&-; return 1; }
+  new=$(jq -c --argjson asked "$2" --argjson now "$3" "$STATE_DEFS"'
+    select(.state == "needs_you" and .state_at == $asked) | answered as $t
+    | .state = $t.state | .reason = $t.reason | .needs = null | .state_at = $now | .written_at = $now | .turns_at = $now' "$1" 2>/dev/null) || new=""
+  [[ -n $new ]] && write_atomic "$1" "$new"
+  { exec {lock}>&-; } 2>/dev/null
+  return 0
+}
+
 # The fleet registry follows a session at the event (#261), through the
 # installed fleet's registry-event.sh, under the registry lock: a final end
 # records the finish of the agent whose row names it, a start (not a compact)
@@ -1021,16 +1172,16 @@ fleet_registry_event() { # state event session source input cleared_sid
 }
 
 main() {
-  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine="" call_tokens=""
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
     [ (.session_id | s), (.hook_event_name | s), (.cwd | s),
       (if .hook_event_name == "PostToolUse" and (.tool_name | IN("Edit", "Write", "NotebookEdit"))
        then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end),
-      (.transcript_path | s), (.source | s)
+      (.transcript_path | s), (.source | s), (.engine | s)
     ] | join("\u001f")' 2>/dev/null) || return 0
-  IFS=$'\x1f' read -r session event cwd edited transcript source <<<"$fields"
+  IFS=$'\x1f' read -r session event cwd edited transcript source engine <<<"$fields"
   [[ $session =~ $UUID_RE && " $EVENTS " == *" $event "* ]] || return 0
 
   now=${KLEPSYDRA_NOW:-}
@@ -1045,13 +1196,22 @@ main() {
   fi
   local live=""
   if claude_ancestor "${KLEPSYDRA_PID:-$$}"; then
+    # What keryx speaks (a `keryx voice` pick outranks the launch's voice), else
+    # the voice the session was launched to ask for.
     voice=$(holder_voice "$found_pid" "$found_start") || voice=""
+    [[ -z $voice && ${KERYX_VOICE:-} =~ ^[a-z0-9_+().-]+$ ]] && voice=$KERYX_VOICE
     live=$(live_shells "$found_pid" "${KLEPSYDRA_PID:-$$}")
   fi
   [[ -n $voice ]] || homes=$(home_voices "$now")
 
   host_facts
   tmux_facts
+  # A session under another names no pane, so it never stands for its
+  # parent's (live_session, the registry, the window's colour) and is never
+  # the orchestrator, whose flag and face it would otherwise inherit (#333).
+  local is_nested=0
+  [[ -n $found_pid ]] && nested_claude "$found_pid" && is_nested=1
+  (( is_nested )) && tmux_socket="" tmux_pane=""
   # Who the session is in the fleet (#172): the agent name launch.sh starts it
   # with, and whether it is Heph, whom only Heph's face is ever given. Started
   # as "heph" (a move, a recovery) it is; started as any other agent it is
@@ -1067,16 +1227,22 @@ main() {
   orch_name=${orch_name//[$'\r\t ']/}
   local orch_face=$HEPH_VOICE cleared_face=""
   [[ ${orch_name,,} == athena ]] && orch_face=$ATHENA_VOICE
+  # A launch names the face it asked free_face for (face_now): on a tie it wins.
+  case ${KERYX_VOICE:-} in "$HEPH_VOICE" | "$ATHENA_VOICE") orch_face=$KERYX_VOICE ;; esac
   [[ $agent =~ ^[A-Za-z0-9._-]{1,64}$ ]] || agent=""
-  if [[ ${tmux_socket##*/} == "${KLEPSYDRA_TMUX_SOCKET:-klepsydra}" && -n $tmux_pane ]]; then
-    { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
-    { read -r orch_pane <"$orch_state/orchestrator.pane"; } 2>/dev/null
-    if [[ $agent == heph ]]; then
-      orchestrator=true
-    elif [[ -n $agent ]]; then
-      orchestrator=false
-    elif [[ -n $orch_sid ]]; then
-      [[ $orch_sid == "$session" || ($event == SessionStart && $source == clear && $orch_pane == "$tmux_pane") ]] && orchestrator=true
+  { read -r orch_sid <"$orch_state/orchestrator.session"; } 2>/dev/null
+  { read -r orch_pane <"$orch_state/orchestrator.pane"; } 2>/dev/null
+  if (( is_nested )); then
+    orchestrator=false
+  elif [[ $agent == heph ]]; then
+    orchestrator=true
+  elif [[ -n $agent ]]; then
+    orchestrator=false
+  elif [[ -n $orch_sid && $orch_sid == "$session" ]]; then
+    orchestrator=true
+  elif [[ ${tmux_socket##*/} == "${KLEPSYDRA_TMUX_SOCKET:-klepsydra}" && -n $tmux_pane ]]; then
+    if [[ -n $orch_sid ]]; then
+      [[ $event == SessionStart && $source == clear && $orch_pane == "$tmux_pane" ]] && orchestrator=true
     else
       [[ $orch_pane == "$tmux_pane" ]] && orchestrator=true
     fi
@@ -1086,15 +1252,22 @@ main() {
   mkdir -p "$fleet" 2>/dev/null || return 0
   # Read before the lock: no other session waits on this one's transcript.
   [[ $event == SessionEnd ]] || remote=$(remote_lines "$transcript")
+  [[ $event == Stop ]] && call_tokens=$(context_tokens "$transcript")
   # The account the session runs on, named as the statusLine names it, from
   # the global config CLAUDE_CONFIG_DIR picks: at its start and each prompt.
   if [[ $event == SessionStart || $event == UserPromptSubmit ]]; then
-    account=$(jq -cn 'first(inputs) | (.oauthAccount | objects) // {}
-      | select(.accountUuid | strings | test("^[0-9A-Za-z-]{1,64}$"))
-      | {id: .accountUuid, label: (if .organizationType == "claude_team"
-          then ((.organizationName | strings | gsub("[\u0001-\u001f\u007f-\u009f]"; "") | select(length > 0) | .[0:80]) // "Team") else "Personal" end)}' \
-      "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" 2>/dev/null) || account=""
-    [[ -n $account ]] || account=null
+    if [[ $engine == "agy" ]]; then
+      account='{"id":"agy-primary","label":"Google AI Pro"}'
+    elif [[ $engine == "copilot" ]]; then
+      account='{"id":"copilot-primary","label":"GitHub Copilot"}'
+    else
+      account=$(jq -cn 'first(inputs) | (.oauthAccount | objects) // {}
+        | select(.accountUuid | strings | test("^[0-9A-Za-z-]{1,64}$"))
+        | {id: .accountUuid, label: (if .organizationType == "claude_team"
+            then ((.organizationName | strings | gsub("[\u0001-\u001f\u007f-\u009f]"; "") | select(length > 0) | .[0:80]) // "Team") else "Personal" end)}' \
+        "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" 2>/dev/null) || account=""
+      [[ -n $account ]] || account=null
+    fi
   fi
   { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
   flock -w 5 "$lock" || return 0
@@ -1105,14 +1278,18 @@ main() {
   [[ -f $file ]] && { old=$(<"$file"); } 2>/dev/null
   # Heph by a /clear stays Heph on later events in the orchestrator's pane,
   # before orchestrator.session names the new session.
-  [[ $orchestrator == false && -z $agent && -n $orch_sid && $orch_pane == "$tmux_pane" && $old == *'"orchestrator":true'* ]] && orchestrator=true
+  [[ $orchestrator == false && -z $agent && -n $orch_sid && ($orch_pane == "$tmux_pane" || $orch_sid == "$session") && $old == *'"orchestrator":true'* ]] && orchestrator=true
   # Under the lock, so two orchestrators starting together never take one face.
   if [[ $orchestrator == true && $old != *'"orchestrator_face"'* ]]; then
     local clear_pane=""
     [[ $event == SessionStart && $source == clear && -z $cleared_face ]] && clear_pane=$tmux_pane
     local succeeds=""
     [[ $agent == heph && ${KLEPSYDRA_SUCCEEDS:-} =~ ^[0-9a-f-]{36}$ ]] && succeeds=$KLEPSYDRA_SUCCEEDS
-    orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$succeeds")
+    if [[ $agent == heph && -z $cleared_face && ( ${KERYX_VOICE:-} == "$HEPH_VOICE" || ${KERYX_VOICE:-} == "$ATHENA_VOICE" ) ]]; then
+      orch_face=$KERYX_VOICE
+    else
+      orch_face=$(free_face "$fleet" "$session" "$cleared_face" "$orch_face" "$clear_pane" "$succeeds")
+    fi
   fi
   # The git dir the file last named (an escaped path is not read): gone means the checkout was removed.
   old_git=""
@@ -1124,6 +1301,7 @@ main() {
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \
     --arg fleet_agent "$agent" --argjson orchestrator "$orchestrator" --arg orch_face "$orch_face" --arg heph_face "$HEPH_VOICE" --arg athena_face "$ATHENA_VOICE" \
+    --arg call_tokens "$call_tokens" \
     "$APPLY" 2>/dev/null) || new=""
   # A cast newer than this session's file: the theme changed under it. The
   # file's time is moved past the cast's, so one switch recolours it once.
@@ -1141,6 +1319,11 @@ main() {
   # tmux can hang for its timeout; no other hook waits on it, so drop the lock first.
   { exec {lock}>&-; } 2>/dev/null
   fleet_registry_event "$orch_state" "$event" "$session" "$source" "$input" "$cleared_sid"
+  # A permission prompt in a tmux pane gets a watcher for its answer (#217),
+  # started after the lock is let go: a child holding its fd would keep it.
+  if [[ $event == PermissionRequest && -n $tmux_pane && ${KLEPSYDRA_ASK_WATCH:-1} == 1 && ${new:-$old} == *'"state":"needs_you"'* ]]; then
+    setsid -f bash "${BASH_SOURCE[0]}" watch-ask "$session" </dev/null >/dev/null 2>&1
+  fi
   (( recolour )) && colour_window "$now_voice"
   return 0
 }
@@ -1149,6 +1332,14 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   if [[ ${1:-} == queue || ${1:-} == needs ]]; then
     queue_cmd "$@"
     exit
+  fi
+  if [[ ${1:-} == face ]]; then
+    face_now "${2:-}" "${3:-}"
+    exit 0
+  fi
+  if [[ ${1:-} == watch-ask ]]; then
+    (watch_ask "${2:-}") >/dev/null 2>&1
+    exit 0
   fi
   (main) >/dev/null 2>&1 # a subshell, so no failure inside can end this shell non-zero
   exit 0
