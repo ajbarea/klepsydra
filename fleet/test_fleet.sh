@@ -3106,10 +3106,14 @@ t kill-window -t "$abl"
 p=$(pane relold '{"above":["idle"]}'); settle
 live "$p"
 printf '%s\trel\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
-printf '%s' '{"above":["Claude Code"],"input":"the brief, never sent"}' >"$work/relnew.json"; : >"$work/relnew.log"
+printf '%s' '{"above":["Claude Code"],"input":"the brief, never sent","exit_on_exit":true}' >"$work/relnew.json"; : >"$work/relnew.log"
 cat >"$work/launch-rel.sh" <<EOF
 #!/usr/bin/env bash
 new=\$(tmux -L "$FLEET_SOCK" new-window -d -P -F '#{pane_id}' -t fleet: "python3 -I $fake $work/relnew.json $work/relnew.log")
+for _ in \$(seq 100); do
+  tmux -L "$FLEET_SOCK" capture-pane -p -t "\$new" 2>/dev/null | grep -q 'the brief, never sent' && break
+  sleep 0.05
+done
 sed -i "s|^$p\t\(.*\)\t$work/cfg-a\$|\$new\t\1\t$work/cfg-b|" "$REGISTRY"
 echo "pane=\$new session=x account=$work/cfg-b avail=1MiB brief=NOT-DELIVERED"
 EOF
