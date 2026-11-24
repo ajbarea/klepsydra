@@ -4,6 +4,8 @@
 set -uo pipefail
 # A fleet session runs with its own KERYX_VOICE; no test may inherit it.
 unset KERYX_VOICE
+# Nor the host's Copilot folder: cases that read it name their own (#513).
+unset COPILOT_HOME
 
 here=$(cd "$(dirname "$0")" && pwd)
 fake="$here/tests/fake_pane.py"

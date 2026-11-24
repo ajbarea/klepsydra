@@ -48,7 +48,7 @@ Copilot's from the list its CLI cached at its last start (`~/.copilot/data.db`).
 It asks at most every 6 hours (`FLEET_MODELS_EVERY_S`). A change is a warning for
 3 days (`FLEET_MODELS_WARN_S`), so the doctor timer does not clear it unread:
 
-    warn models agy: changed 11-25 09:10: +gemini-4-neon: review routing in docs/engines.md
+    warn models agy: changed 11-25 +gemini-4-neon: review routing in docs/engines.md
 
 When a new model appears:
 1. **Measure it on our own work first.** A vendor's benchmarks are not evidence
