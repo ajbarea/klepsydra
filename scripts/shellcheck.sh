@@ -22,11 +22,26 @@ small_need_mib=${FLEET_SHELLCHECK_SMALL_NEED_MIB:-1600}
 big_lines=${FLEET_SHELLCHECK_BIG_LINES:-3000}
 
 # Whether a short-option group (-x, -s, -xs) takes its value from the next word:
-# its first value-taking letter is its last (-sbash carries its own value).
+# its first value-taking letter is its last (-sbash carries its own value), and -C
+# takes only an attached value (-Calways), so the rest of the group is that value.
 short_takes_next() { # GROUP
   local g=${1#-} i
   for (( i = 0; i < ${#g}; i++ )); do
-    case ${g:i:1} in [iefoPsSW]) (( i == ${#g} - 1 )); return ;; esac
+    case ${g:i:1} in
+      C) return 1 ;;
+      [iefoPsSW]) (( i == ${#g} - 1 )); return ;;
+    esac
+  done
+  return 1
+}
+
+# Whether a long option takes its value from the next word, written whole or
+# shortened as ShellCheck accepts it (--sev for --severity).
+long_takes_next() { # OPTION
+  local o
+  [[ $1 == *=* ]] && return 1
+  for o in include exclude extended-analysis format rcfile enable source-path shell severity wiki-link-count; do
+    [[ --$o == "$1"* ]] && return 0
   done
   return 1
 }
@@ -39,9 +54,7 @@ while (( $# )); do
   elif (( !ends )) && [[ $f == -?* ]]; then
     opts+=("$f")
     case $f in
-      --include | --exclude | --extended-analysis | --format | --rcfile | --enable | --source-path | --shell | --severity | --wiki-link-count)
-        (( $# )) && { opts+=("$1"); shift; } ;;
-      --*) ;;
+      --*) long_takes_next "$f" && (( $# )) && { opts+=("$1"); shift; } ;;
       *) short_takes_next "$f" && (( $# )) && { opts+=("$1"); shift; } ;;
     esac
   elif (( $( { wc -l <"$f"; } 2>/dev/null || echo 0) > big_lines )); then

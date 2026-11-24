@@ -92,6 +92,13 @@ rc=0"
 check "a long option's value word stays with it (--rcfile)" \
   "$(run FLEET_CGROUP_ROOT="$open" -- --rcfile my.rc "$big")" "checked: --rcfile my.rc -- $big
 rc=0"
+check "-C takes only an attached value, so the next word is a file" \
+  "$(run FLEET_CGROUP_ROOT="$open" -- -Calways "$big")" "checked: -Calways -- $big
+rc=0"
+check "a shortened long option takes its value word (--sev error)" \
+  "$(run FLEET_CGROUP_ROOT="$open" -- --sev error "$big")" "checked: --sev error -- $big
+rc=0"
+check "a missing file is quiet: no shell error before the checker's own" "$(run -- -x "$work/no-such.sh" | grep -c 'No such file')" "0"
 check "after --, every word is a file, and the reduced flags stay before it" \
   "$(run -- -x -- "$big" | grep -c "^checked: $R -x -- $big\$")" "1"
 check "no file at all goes to shellcheck, which reports it" "$(run -- -x)" "checked: -x
