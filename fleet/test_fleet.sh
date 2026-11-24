@@ -4898,6 +4898,11 @@ check "#517: FLEET_RUNTIME_WAIT=0 gives up at once" "$(wr XDG_RUNTIME_DIR="$work
 # Waiting cannot make a folder ours: warned at once, whatever the timeout.
 check "#517 N4: a foreign folder is no runtime folder, and no wait" "$(wr XDG_RUNTIME_DIR=/usr FLEET_RUNTIME_WAIT=5)" \
   "1|WARN the runtime folder is not this user's own; launching anyway dir=/usr|now"
+( sleep 0.3; ln -s "$work/wr-own" "$work/wr-late-link" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-late-link" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517 N4: one that comes as a symlink ends the wait at once, warned" "${out#*;}" \
+  "WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-late-link|now"
 ln -s "$work/wr-own" "$work/wr-link"
 check "#517 N4: nor a symlink, even to a folder of ours" "$(wr XDG_RUNTIME_DIR="$work/wr-link" FLEET_RUNTIME_WAIT=5)" \
   "1|WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-link|now"
@@ -4906,7 +4911,7 @@ for v in abc 1.5 -3 1234567; do
     "0|WARN FLEET_RUNTIME_WAIT is not a whole number of seconds; waiting 180 value=$v|now"
 done
 check "#517 N1: a leading zero is still seconds" "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_RUNTIME_WAIT=08)" "0||now"
-rm -rf -- "${work:?}/wr-own" "${work:?}/wr-late" "${work:?}/wr-link"
+rm -rf -- "${work:?}/wr-own" "${work:?}/wr-late" "${work:?}/wr-link" "${work:?}/wr-late-link"
 
 echo "the suite's own isolation"
 check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""
