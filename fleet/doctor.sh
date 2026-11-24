@@ -22,6 +22,8 @@
 # its headless job (#260).
 # Open Playwright MCP browsers (pid, owning session, idle time), with a warning
 # past FLEET_BROWSER_IDLE_MIN or for one whose MCP server is gone (#379).
+# The lock folder the hooks and launcher share (FAIL with the reason when they
+# cannot lock; a warning when the fleet hook could not in the last hour).
 # Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
@@ -752,6 +754,28 @@ elif [[ -n $differ ]]; then
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
+# The lock folder (#517, #518): without one the fleet hook records no session
+# and the launcher refuses every click. The installed hook's own lock_dir block
+# says whether it can lock now and why not; the line the hook leaves when it
+# could not (KLEPSYDRA_DIR/lock-refused) says when it last failed this boot.
+lock_check() {
+  local src=$FLEET_HOOK_DIR/klepsydra-fleet.sh live rc t="" why="" btime="" key val trace=${KLEPSYDRA_DIR:-}/lock-refused
+  grep -q '^# --- lock dir' "$src" 2>/dev/null || src=$root/hooks/klepsydra-fleet.sh
+  # shellcheck disable=SC2016 # the inner shell expands its own variables
+  live=$(bash -c 'eval "$(sed -n "/^# --- lock dir/,/^# --- end lock dir ---\$/p" "$1")"
+    if lock_dir; then printf "%s" "$LOCK_DIR"; else printf "%s" "$LOCK_WHY"; exit 1; fi' _ "$src" 2>/dev/null </dev/null)
+  rc=$?
+  [[ -n ${KLEPSYDRA_DIR:-} && -f $trace && ! -L $trace ]] && { read -r t why <"$trace"; } 2>/dev/null
+  { while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done </proc/stat; } 2>/dev/null
+  if (( rc )); then
+    report FAIL "lock folder" "${live:-lock_dir did not run}: until it is fixed the fleet hook records no session and the launcher refuses clicks" why="$live"
+  elif [[ $t =~ ^[0-9]{1,12}$ && $btime =~ ^[0-9]+$ ]] && (( t >= btime && t <= now && now - t < 3600 )); then
+    report warn "lock folder" "the fleet hook could not lock at $(date -d "@$t" +%H:%M) ($why), so it recorded no session then; it can now, in $live" refused_at="$t" why="$why"
+  else
+    report ok "lock folder" "$live"
+  fi
+}
+lock_check
 # tmux 3.4 dies on a focus event to a dead pane (#290): the fleet's server must
 # carry the pane-died hook, which a server reads from its conf only at start.
 if t has-session 2>/dev/null; then

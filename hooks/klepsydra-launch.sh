@@ -52,42 +52,72 @@ AGY_ASK=${KLEPSYDRA_AGY_ASK:-30} # seconds for one agy listing; a launch asks wi
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
 # --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
-# The folder for the locks and stamps every caller must share: one per boot in
-# ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and used only
-# while it and the folder above it are ours and not symlinks, and the folder
-# above it is writable by no one else. Sets LOCK_DIR, or empties it and fails;
-# never waits, never prints. Not XDG_RUNTIME_DIR: a WSL boot sets it before
-# logind makes it, and the overlay's shells may lack it, so callers would split
-# between two locks (#517). Making a known boot's folder removes the folders of
-# boots that ended, the only ones last changed before this boot began (btime).
+# The folder for the locks and stamps every caller must share: one per host and
+# boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
+# used only while it and the folder above it are ours, not symlinks and the
+# folder above it is writable by no one else. Sets LOCK_DIR, or empties it,
+# says why in LOCK_WHY and fails; never waits, never prints. Not
+# XDG_RUNTIME_DIR: a WSL boot sets it before logind makes it, and the overlay's
+# shells may lack it, so callers would split between two locks (#517). Making
+# this boot's folder removes this host's folders last changed before this boot
+# began (btime), which only ended boots can be. Another host's are never
+# touched, so a HOME two machines share (NFS) keeps each one's live folder.
+# The host is the kernel's hostname, so renaming a host mid-boot moves its lock.
+lock_why() { # PATH [w]: fails with LOCK_WHY set when PATH is no folder of ours (w: or not writable)
+  local mode
+  if [[ -L $1 ]]; then LOCK_WHY="$1 is a symlink"
+  elif [[ ! -e $1 ]]; then LOCK_WHY="$1 is missing"
+  elif [[ ! -d $1 ]]; then LOCK_WHY="$1 is not a folder"
+  elif [[ ! -O $1 ]]; then LOCK_WHY="$1 belongs to another user"
+  elif [[ -n ${2:-} && ! -w $1 ]]; then
+    mode=$(stat -c %A -- "$1" 2>/dev/null)
+    if [[ ${mode:2:1} == w ]]; then LOCK_WHY="$1 is on a read-only file system"
+    else LOCK_WHY="$1 is not writable (mode ${mode:-unknown})"; fi
+  else return 0; fi
+  return 1
+}
+# shellcheck disable=SC2034 # LOCK_WHY is for the caller
 lock_dir() {
-  local base=${KLEPSYDRA_STATE:-} boot="" run old mode key val btime="" m
-  LOCK_DIR=""
+  local base=${KLEPSYDRA_STATE:-} boot="" host="" run old name mode key val btime="" m err prune=1
+  LOCK_DIR="" LOCK_WHY=""
   if [[ -z $base ]]; then
     if [[ -n ${HOME:-} ]]; then base=$HOME
     else local HOME; unset HOME; base=~; fi # bash reads the password file's home
     base=$base/.local/state/klepsydra
   fi
   while [[ $base == */ ]]; do base=${base%/}; done
-  [[ $base == /* ]] || return 1
-  { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null # builtin: no process
-  [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown
-  run=$base/run-$boot
+  [[ $base == /* ]] || { LOCK_WHY="the state folder '$base' is not an absolute path"; return 1; }
+  # builtin reads: no process
+  { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null
+  [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown prune=0
+  { read -r host <"${KLEPSYDRA_HOSTNAME:-/proc/sys/kernel/hostname}"; } 2>/dev/null
+  [[ $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || host=unknown prune=0
+  run=$base/run-$host-$boot
   if [[ ! -e $run && ! -L $run ]]; then
-    [[ -e $base || -L $base ]] || { mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>/dev/null
-    [[ -d $base && -O $base && ! -L $base ]] || return 1
+    if [[ ! -e $base && ! -L $base ]]; then
+      err=$({ mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>&1) ||
+        { LOCK_WHY="cannot make $base${err:+: ${err##*: }}"; return 1; }
+    fi
+    lock_why "$base" || return 1
     mode=$(stat -c %a -- "$base" 2>/dev/null) # once a boot: others could plant links
-    [[ $mode =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 8#022) == 0 )) || return 1
-    if mkdir -m 700 -- "$run" 2>/dev/null && [[ $boot != unknown ]]; then
-      while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done 2>/dev/null </proc/stat
-      for old in "$base"/run-*; do
-        [[ $btime =~ ^[0-9]+$ && ${old##*/} =~ ^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ &&
-          $old != "$run" && -d $old && ! -L $old ]] || continue
-        m=$(stat -c %Y -- "$old" 2>/dev/null) && [[ $m =~ ^[0-9]+$ ]] && (( m < btime )) && rm -rf -- "${old:?}" 2>/dev/null
-      done
+    if [[ ! $mode =~ ^[0-7]{3,4}$ ]] || (( (8#$mode & 8#022) != 0 )); then
+      LOCK_WHY="$base is writable by its group or others (mode ${mode:-unknown})"; return 1
+    fi
+    if err=$(mkdir -m 700 -- "$run" 2>&1); then
+      if (( prune )); then
+        while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done 2>/dev/null </proc/stat
+        for old in "$base/run-$host-"*; do
+          name=${old##*/}; name=${name#"run-$host-"}
+          [[ $btime =~ ^[0-9]+$ && $name =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ &&
+            $old != "$run" && -d $old && ! -L $old ]] || continue
+          m=$(stat -c %Y -- "$old" 2>/dev/null) && [[ $m =~ ^[0-9]+$ ]] && (( m < btime )) && rm -rf -- "${old:?}" 2>/dev/null
+        done
+      fi
+    elif [[ ! -e $run && ! -L $run ]]; then # not another caller's mkdir winning
+      LOCK_WHY="cannot make $run${err:+: ${err##*: }}"; return 1
     fi
   fi
-  [[ -d $base && -O $base && ! -L $base && -d $run && -O $run && ! -L $run ]] || return 1
+  lock_why "$base" && lock_why "$run" w || return 1
   LOCK_DIR=$run
 }
 # --- end lock dir ---
@@ -113,10 +143,10 @@ need() { command -v "$1" >/dev/null 2>&1 || fail "$2"; }
 
 has_client() { [[ -n $(tmux "${@:2}" list-clients -t "$1" -F x 2>/dev/null) ]]; } # target socket-args...
 
-# Stop when lock_dir found no folder of ours to lock in.
-no_lock_dir() {
+# Stop when lock_dir found no folder of ours to lock in, saying why.
+no_lock_dir() { # [what the click did already] [what it then did not]
   [[ -n $LOCK_DIR ]] && return 0
-  fail "klepsydra's lock folder (${KLEPSYDRA_STATE:-~/.local/state/klepsydra}) is missing, a symlink, not yours or writable by others, so this click went no further."
+  fail "${1:+$1, but }klepsydra has no lock folder (${LOCK_WHY:-reason unknown}), so ${2:-this click went no further}."
 }
 
 # Serialise launches: one tab per fleet even for back-to-back clicks.
@@ -572,6 +602,7 @@ jump() { # socket pane pid start
     fail "tmux could not select the window."
   # An attached tab needs no lock; one missing is checked again under it.
   has_client "=$session" "${t[@]}" && { printf "Selected the session's tmux window.\n"; return 0; }
+  no_lock_dir "Selected the session's tmux window" "no terminal tab opened for it"
   take_lock "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
   if ! has_client "=$session" "${t[@]}"; then
     tab_preflight

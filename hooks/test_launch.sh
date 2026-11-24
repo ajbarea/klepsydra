@@ -67,7 +67,9 @@ export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" WSL_DIS
 # Locks live in this boot's folder in the (test) home's state folder, whatever
 # the runtime folder: here one a WSL boot has not made yet (#517).
 export XDG_RUNTIME_DIR="$work/no-runtime"
-ld="$HOME/.local/state/klepsydra/run-$(</proc/sys/kernel/random/boot_id)"
+printf 'testhost\n' >"$work/hostname"
+export KLEPSYDRA_HOSTNAME="$work/hostname"
+ld="$HOME/.local/state/klepsydra/run-testhost-$(</proc/sys/kernel/random/boot_id)"
 export KLEPSYDRA_TMUX_SOCKET="$sock" KLEPSYDRA_TMUX_CONF="$here/klepsydra-tmux.conf"
 export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
 # Never the host's systemd: an agent's own scope sets INVOCATION_ID, which
@@ -739,6 +741,15 @@ check "jump behind a held lock: says no launch" "$out" \
   "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
 check "jump behind a held lock: window selected" "$(t display -p -t =fleet: '#{pane_id}')" "$first"
 check "jump behind a held lock: no tab" "$(tabs)" "0"
+# #518 N5: with no lock folder the window is still selected, and the message
+# says so and that no tab opened.
+t select-window -t "$(t list-windows -t =fleet -F '#{window_id}' | tail -1)"
+ln -s "$HOME/.local/state/klepsydra" "$work/jstate-link"
+out=$(export KLEPSYDRA_STATE="$work/jstate-link"; jmp "$first" "$fpid" "$fstart" 2>&1); rc=$?
+check "#518 N5: jump with no lock folder says the window changed and no tab opened" "$rc|$out" \
+  "1|Selected the session's tmux window, but klepsydra has no lock folder ($work/jstate-link is a symlink), so no terminal tab opened for it."
+check "#518 N5: and the window is selected, with no tab" "$(t display -p -t =fleet: '#{pane_id}') $(tabs)" "$first 0"
+rm -f -- "$work/jstate-link"
 
 echo "one lock folder for every launch (#517)"
 # At a WSL boot XDG_RUNTIME_DIR names a folder logind makes minutes later, and
@@ -779,7 +790,7 @@ stop_server; detach_all; : >"$WT_LOG"
 ln -s "$HOME/.local/state/klepsydra" "$work/state-link"
 out=$(KLEPSYDRA_STATE="$work/state-link" bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "#517: no lock folder of its own: new is refused and says why" "$rc|$out|$(windows) $(tabs)" \
-  "1|klepsydra's lock folder ($work/state-link) is missing, a symlink, not yours or writable by others, so this click went no further.|0 0"
+  "1|klepsydra has no lock folder ($work/state-link is a symlink), so this click went no further.|0 0"
 rm -f -- "$work/state-link"
 # A lock wait that is no number of seconds is the 10 s default, not "another launch".
 out=$(KLEPSYDRA_LOCK_WAIT=abc bash "$launch" new "$work/repos" 2>&1); rc=$?

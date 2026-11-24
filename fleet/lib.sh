@@ -100,6 +100,16 @@ plain() { sed -E $'s/\e\\][^\a\e]*(\a|\e\\\\)//g; s/\e\\[[0-9;?]*[A-Za-z]//g'; }
 # symlink, will not change by waiting: warned at once. Unset: no wait. Fails
 # when it gave up; the launches go ahead either way. Polling, since
 # `systemctl --user is-system-running --wait` has no timeout of its own.
+# uptime_cs: sets UPTIME_CS to the centiseconds since boot. /proc/uptime runs
+# on CLOCK_BOOTTIME, which a WSL clock step does not move, unlike
+# EPOCHREALTIME; read by a builtin. Fails when it does not read (FLEET_UPTIME:
+# tests' file).
+uptime_cs() {
+  local up=""
+  { read -r up _ <"${FLEET_UPTIME:-/proc/uptime}"; } 2>/dev/null
+  [[ $up =~ ^([0-9]{1,12})\.([0-9]{2})$ ]] || return 1
+  UPTIME_CS=$((10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]}))
+}
 runtime_state() { # DIR BUS: sets RT_STATE to ready, missing, foreign or nobus
   if [[ -L $1 || ( -e $1 && ! ( -d $1 && -O $1 ) ) ]]; then RT_STATE=foreign
   elif [[ ! -e $1 ]]; then RT_STATE=missing
@@ -107,8 +117,11 @@ runtime_state() { # DIR BUS: sets RT_STATE to ready, missing, foreign or nobus
   else RT_STATE=ready; fi
 }
 wait_runtime_dir() {
-  local d=${XDG_RUNTIME_DIR:-} wait=${FLEET_RUNTIME_WAIT:-180} tick=${FLEET_RUNTIME_TICK:-1} deadline bus=""
+  local d=${XDG_RUNTIME_DIR:-} wait=${FLEET_RUNTIME_WAIT:-180} tick=${FLEET_RUNTIME_TICK:-1} deadline left tick_ms bus=""
   [[ $tick =~ ^[0-9]{1,3}(\.[0-9]{1,3})?$ && ! $tick =~ ^0+(\.0+)?$ ]] || tick=1
+  [[ $tick =~ ^([0-9]+)(\.([0-9]+))?$ ]]
+  local frac=${BASH_REMATCH[3]}000
+  tick_ms=$(( 10#${BASH_REMATCH[1]} * 1000 + 10#${frac:0:3} ))
   while [[ $d == */ ]]; do d=${d%/}; done
   [[ -n $d ]] || return 0
   if [[ ! $wait =~ ^[0-9]{1,6}$ ]]; then
@@ -120,11 +133,21 @@ wait_runtime_dir() {
   runtime_state "$d" "$bus"
   if [[ $RT_STATE == missing || $RT_STATE == nobus ]] && (( wait > 0 )); then
     flog INFO "waiting for the runtime folder before launching" dir="$d" timeout_s="$wait" ${bus:+user_manager="$bus"}
-    deadline=$(( ${EPOCHREALTIME//[!0-9]/} + wait * 1000000 )) # microseconds: SECONDS ticks whole seconds
-    while [[ $RT_STATE == missing || $RT_STATE == nobus ]] && (( ${EPOCHREALTIME//[!0-9]/} < deadline )); do
-      sleep "$tick"
-      runtime_state "$d" "$bus"
-    done
+    if uptime_cs; then
+      deadline=$(( UPTIME_CS + wait * 100 ))
+      while [[ $RT_STATE == missing || $RT_STATE == nobus ]] && uptime_cs && (( UPTIME_CS < deadline )); do
+        sleep "$tick"
+        runtime_state "$d" "$bus"
+      done
+    else # no /proc/uptime: count the ticks instead, never the wall clock
+      deadline=$(( wait * 1000 ))
+      left=$deadline
+      while [[ $RT_STATE == missing || $RT_STATE == nobus ]] && (( left > 0 )); do
+        sleep "$tick"
+        runtime_state "$d" "$bus"
+        left=$(( left - tick_ms ))
+      done
+    fi
   fi
   case $RT_STATE in
     ready) return 0 ;;

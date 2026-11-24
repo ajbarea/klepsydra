@@ -13,7 +13,9 @@ trap 'rm -rf "$work"' EXIT
 export KLEPSYDRA_NOW=1788990000
 export KLEPSYDRA_STATE="$work/state" KLEPSYDRA_BOOT_ID="$work/boot_id" XDG_RUNTIME_DIR="$work/no-runtime"
 printf '%s\n' 5170b001-1111-4222-8333-444455556666 >"$KLEPSYDRA_BOOT_ID"
-rd="$KLEPSYDRA_STATE/run-5170b001-1111-4222-8333-444455556666"
+printf 'testhost\n' >"$work/hostname"
+export KLEPSYDRA_HOSTNAME="$work/hostname"
+rd="$KLEPSYDRA_STATE/run-testhost-5170b001-1111-4222-8333-444455556666"
 
 pass=0 fail=0
 

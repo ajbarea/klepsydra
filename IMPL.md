@@ -1,30 +1,26 @@
-# IMPL: #517 launch lock before /run/user exists (PR #518, review r1 fixes)
+# IMPL: #517 launch lock before /run/user exists (PR #518, review r2 fixes)
 
 ## Task
-PR #518 review r1 (~/.local/state/fleet-orchestrator/reports/launch-518-r1.md) was NOT CLEAN:
-B1-B3, S1-S4, N1-N5. Design (Heph, option b): the launch lock, tab-pending stamp, pane
-locks, the fleet hook's write and ask locks and the statusline's prune lock and stamp
-live in one folder that always exists and is ours; only `fleet recover` waits.
+PR #518 review r2 (~/.local/state/fleet-orchestrator/reports/launch-518-r2.md) was NOT CLEAN:
+S1 (a refused lock folder is silent and undiagnosable) and N1-N6. Design from r1 stands:
+one lock folder per host and boot under ~/.local/state/klepsydra; only `fleet recover` waits.
 
 ## Shape
-- `lock_dir` (hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh,
-  statusline/klepsydra-statusline.sh, identical block, test-checked): LOCK_DIR =
-  `~/.local/state/klepsydra/run-<boot id>` (KLEPSYDRA_STATE, KLEPSYDRA_BOOT_ID seams);
-  mkdir -m 700; -O and ! -L on it and its parent; parent writable by no one else (checked
-  once a boot); a known boot's new folder removes run-<uuid> folders last changed before
-  btime. No wait, no output, no lib.sh, no XDG_RUNTIME_DIR.
-- `wait_runtime_dir` (fleet/lib.sh), only from recover.sh under its lock: waits while the
-  folder is missing or, where systemd booted, its systemd/private socket is; foreign or
-  symlink warned at once; FLEET_RUNTIME_WAIT validated. No systemctl --wait (no timeout).
+- `lock_dir` + `lock_why` (identical block in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh,
+  statusline/klepsydra-statusline.sh, test-checked): LOCK_DIR = `run-<host>-<boot>` (seams
+  KLEPSYDRA_STATE, KLEPSYDRA_BOOT_ID, KLEPSYDRA_HOSTNAME); on refusal LOCK_WHY names the
+  reason (symlink, missing, not a folder, another user's, not writable / read-only, group or
+  other writable, mkdir's own error text). Prune touches only this host's `run-<host>-<uuid>`.
+- Hook: `lock_trace` writes `<epoch> <why>` to `$KLEPSYDRA_DIR/lock-refused`, at most every
+  600 s, builtins only; also when the lock file will not open.
+- Launcher: the message carries LOCK_WHY; jump says the window changed and no tab opened.
+- `fleet doctor` "lock folder": runs the installed hook's block (else the checkout's): FAIL with
+  the reason, warn on a trace from this boot in the last hour, else ok with the folder.
+- recover's wait: deadline on /proc/uptime (FLEET_UPTIME seam); tick count if unreadable.
 
 ## State
-- Done: code; tests in all four suites; own Opus review (0 Blocking, 3 Should-fix, 6 Nit),
-  its Should-fix 1-2 and Nits 1, 2, 4, 5 (lock wait), 6 (jump message) fixed in e0c3ccd.
-- Open by choice: no doctor check for an unusable lock folder (Nit 5); old design spec
-  keeps its historical XDG_RUNTIME_DIR text.
-- Done at 40e38b9: CI green; 30 mutants, 25 killed, 5 survivors by design (PR body);
-  make test-fleet 1007/0; latency table in the PR body.
-- Next: Heph's r2 review and merge; after merge, update the main checkout before
-  `fleet install`.
-- Verify: `bash hooks/test_fleet.sh`, `bash statusline/test_statusline.sh`, `make test-launch`,
-  `make test-fleet`; shellcheck per file (whole-tree `make shellcheck` OOMs, klepsydra#503).
+- Done: code and tests (hooks 649, statusline 142, wrapup 98, make test-launch 289).
+- Next: make test-fleet, mutation run (scratchpad mutate.py, 23 mutants), commit, push,
+  PR body, CI, `fleet done`; Heph runs round 3.
+- Verify: `bash hooks/test_fleet.sh`, `bash statusline/test_statusline.sh`, `bash hooks/test_wrapup.sh`,
+  `make test-launch`, `make test-fleet`; shellcheck per file (fleet/test_fleet.sh OOMs locally, #503).

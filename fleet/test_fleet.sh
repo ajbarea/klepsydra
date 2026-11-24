@@ -1347,6 +1347,25 @@ printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "#244: a hook copy older than the checkout fails, and only it is named" \
   "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
 cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
+# #518: the lock folder, from the installed hook's own block.
+lkrun="$KLEPSYDRA_STATE/run-$(</proc/sys/kernel/hostname)-$(</proc/sys/kernel/random/boot_id)"
+check "#518: a lock folder the hooks can use is ok, and named" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"
+ln -s "$KLEPSYDRA_STATE" "$work/lk-link"
+check "#518: one they cannot use fails with the reason" "$(KLEPSYDRA_STATE="$work/lk-link" doctor | grep 'lock folder' | cut -d: -f1-2)" \
+  "FAIL lock folder: $(tilde "$work/lk-link") is a symlink"
+rm -f -- "$work/lk-link"
+lkbt=$(awk '$1 == "btime" { print $2 }' /proc/stat); lknow=$(date +%s)
+printf '%s %s\n' $((lknow - 60)) "cannot make x: No space left on device" >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: a refusal the hook traced in the last hour is a warning, with its reason" \
+  "$(doctor | grep 'lock folder' | grep -c '^warn lock folder: the fleet hook could not lock at [0-9:]* (cannot make x: No space left on device), so it recorded no session then; it can now')" "1"
+printf '%s old\n' $((lkbt - 10)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: one from before this boot is not" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+printf '%s old\n' $((lknow - 3700)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: nor one over an hour old" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+rm -f -- "$KLEPSYDRA_DIR/lock-refused"
+printf '#!/usr/bin/env bash\n# an old hook with no lock folder of its own\n' >"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
+check "#518: an installed hook with no lock_dir is checked with the checkout's" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"
+cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "the phone wall and its Tailscale twin answer" "$(grep -c '^ok   phone wall.*: answers at ' <<<"$out")" "2"
 check "#246: and the usage readings are fresh" "$(grep -c '^ok   usage readings: observed 3[0-9] s ago' <<<"$out")" "1"
 : >"$work/flaky"
@@ -4927,6 +4946,15 @@ for v in abc 1.5 -3 1234567; do
     "0|WARN FLEET_RUNTIME_WAIT is not a whole number of seconds; waiting 180 value=$v|now"
 done
 check "#517 N1: a leading zero is still seconds" "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_RUNTIME_WAIT=08)" "0||now"
+# #518 N2: the wait runs on the time since boot (/proc/uptime), which a WSL
+# clock step does not move: uptime jumping 200 s ends a 5 s wait at once.
+printf '1000.00 5.00\n' >"$work/wr-uptime"
+( sleep 0.3; printf '1200.00 5.00\n' >"$work/wr-uptime" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1 FLEET_UPTIME="$work/wr-uptime")
+wait
+check "#518 N2: the deadline is uptime's, not the wall clock's" "${out%%|*}|${out##*|}" "1|now"
+check "#518 N2: without /proc/uptime it counts its ticks, still to the timeout" \
+  "$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1 FLEET_UPTIME="$work/no-uptime" | sed 's/.*|//')" "1-3s"
 rm -rf -- "${work:?}/wr-own" "${work:?}/wr-late" "${work:?}/wr-link" "${work:?}/wr-late-link"
 
 echo "the suite's own isolation"
