@@ -56,9 +56,10 @@ KLEPSYDRA_DIR = Path(
     )
 )
 TECHNE_TOML = Path(os.environ.get("TECHNE_TOML", HOME / ".claude/techne.toml"))
-QUEUE = Path(
-    os.environ.get("FLEET_QUEUE", "/mnt/c/Users/ajbar/fleet-briefing/needs-you.md")
-)
+# The briefing folder lib.sh resolves (#531), passed in by the unit install.sh writes;
+# the WSL clone for a bare run.
+BRIEFING = Path(os.environ.get("FLEET_BRIEFING") or "/mnt/c/Users/ajbar/fleet-briefing")
+QUEUE = Path(os.environ.get("FLEET_QUEUE", BRIEFING / "needs-you.md"))
 SWEEP_HOUR = int(os.environ.get("CI_SWEEP_HOUR", "6"))
 ESCALATE_S = int(os.environ.get("CI_ESCALATE_S", "1800"))
 ALERTS_MAX = 1 << 20

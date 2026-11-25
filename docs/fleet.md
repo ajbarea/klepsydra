@@ -48,7 +48,12 @@ and keeps four old files. `jq 'select(.level == "ERROR")'` lists failures.
 
 More timers run beside the resume service. `fleet-sync-briefing` commits and
 pushes the private fleet-briefing repo every 5 minutes after a gitleaks scan, and
-mirrors it to Drive when `FLEET_BRIEFING_DRIVE` names an rclone remote.
+mirrors it to Drive when `FLEET_BRIEFING_DRIVE` names an rclone remote, only while
+the clone holds origin's commit. The briefing folder is `FLEET_BRIEFING` when set,
+else `/mnt/c/Users/ajbar/fleet-briefing` when it exists (WSL), else
+`~/fleet-briefing` when it exists (Debian), else the WSL path; `fleet/lib.sh` resolves it, briefs and fresh-start
+prompts name it, and `fleet install` writes it into the CI watch unit, so rerun
+the install after cloning the briefing on a new machine.
 `fleet-tmux-watch` checks the fleet's tmux server every minute. `fleet-accounts-sync` runs `fleet accounts sync`
 hourly and whenever `~/.claude`'s settings or plugin lists change. `fleet-memfrag-log`
 logs WSL memory fragmentation every 30 minutes to `memfrag.log`. `fleet-doctor`
