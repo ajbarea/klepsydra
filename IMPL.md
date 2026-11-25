@@ -1,28 +1,37 @@
-# IMPL: #460 Debian Linux launch parity (PR #458, branch feat/linux-launch-parity)
+# IMPL: fleet close refuses at-rest panes, the /exit menu wraps (#483)
 
-Issue: https://github.com/ajbarea/klepsydra/issues/460. The Windows/WSL path must not change.
+Brief: fleet worker close-menu (task-close-menu.src). Branch fix/close-slash-menu, worktree
+.claude/worktrees/close-menu. Push only `git push -u origin HEAD:refs/heads/fix/close-slash-menu`.
+Do not merge: Heph reviews and merges. PR #496.
 
-## Slice
-Live check on the Debian 13 / XFCE PC (RIT), and fix what it finds.
+## Cause
+- Typing /exit opens Claude Code 2.1.316's command menu over the transcript's last rows. At 84
+  columns two descriptions wrap and main's filter refused every close; at 160 nothing wraps.
 
-## Done
-- Earlier: review fixes for the Linux launcher, `launch.rs` Linux argv, xdg-open verbs, pane-died on tmux 3.8 (see `git log`).
-- Live check found every card action dead on native Linux: the hook records `"distro": null` there, and five readers (Rust `launch::target`, `folder_of`, `github_of`; JS `jumpable`, `inFleet`) required one. Now one Rust helper, `distro_words(distro, native)`, needs a distro only through wsl.exe; `recorded_distro` is the one reader; JS shares `paneKnown` (end.js). On Windows a record without a distro still gets no pane target (`target_on`), as before.
-- Open terminal did not restore a minimized terminal: xfwm4 unmaps it, so `xdotool search --onlyvisible` missed it. `managed_window` picks the window with WM_STATE (xprop); without xprop, the old visible-only search.
-- A missing `KLEPSYDRA_TERMINAL` is named in the error (`no_terminal`).
-- README Linux: the wall buttons' tools and terminal order.
-- Each fix has a test that fails without it (mutation-checked: 4 Rust, 2 JS, 1 shell, plus the Windows arm).
-- Delta review r1 (Heph, 11-23, `reports/linux-458-delta-r1.md`): S1, the wall lost the platform and offered End/Interrupt, a typed wrap-up and an unnamed Jump to a null-distro session on Windows. The app now adds `native` (launch.rs `NATIVE`) to the wall's snapshot (fleet.rs `for_wall`; the phone gets none), and `paneKnown(s, native)` needs `str(s.distro) || native`. N1: `session_distro(s, native)` is the one reader for `target_on`, `folder_of`, `github_of`, so Folder/GitHub on Windows say again that klepsydra does not know the folder/page. N2: `managed_window` falls back to the visible-only search when no window reports WM_STATE. Six JS mutants killed.
-- Delta review r2 (Heph, 11-23, `reports/linux-458-delta-r2.md`): S1, `jumpStyle` read jumpability again without `native`, so an unnamed native session's Open terminal lost its needs fill and accent marker; it now takes the card's `jump`. S2, the flag's path was unpinned: `hand_out` (fleet.rs) gives the phone the bare snapshot and the windows `for_wall`'s; `folder_request` / `github_request` (launch.rs) read the snapshot for Folder/GitHub as this build does; a browser case feeds a null-distro snapshot with `native: true` and without it. N1: `wrapupLine` takes the flag too.
+## Design
+- close types `/exit ` (trailing space: no menu; Enter still exits, submit trims). The screen above
+  the box must equal the pre-quiet-window screen byte for byte, after typing, after the settle and
+  at the last look. If the menu opens anyway: check `menu`. back_out erases our /exit only.
 
-## Verified
-Live, Debian 13 XFCE X11: + New session (cold and warm), Open terminal (switches tmux window; restores a minimized terminal), `KLEPSYDRA_TERMINAL=nope` (error on + and on Open terminal, nothing created). Suites: cargo fmt/clippy/test workspace, node 508, test-launch 285, test_fleet 599, test-headless 125, statusline, shellcheck, Biome.
+## Done (11-20)
+- Merged main (#500 screen_parse in lib.sh) at 3065376: CI green; suite 1018/0.
+- Round 5 (fresh Opus): 0 Blocking; Should-fix = stale PR body (rewritten); minors fixed in
+  95b1edc (menu check replayed on 16 real menu screens + 6 "/exit " screens; comment rename).
+- Live proof (private socket, haiku, 2.1.316), branch: rest and 60-line reply closed at 84 and
+  160; busy refused `busy`; background shell and wrap-up refused `session_file`. main: rest
+  refused at 84, closed at 160. A close within seconds of a turn can refuse at quiet_screen when
+  a usage notice vanishes (safe).
+- ns477 (%48) and tech-labels (%4) panes were gone before a real close could be run.
+- Suite on 95b1edc: one run failed only the keryx isolation check (keryx turned off mid-run,
+  filed #516); rerun 1018/0.
 
-Merged main (15 commits) at 1619197; IMPL.md kept as the branch's. On the merged tree: cargo 113+439+7, node 584, test-launch 321, test_fleet 599, test-headless 125, statusline 143, browser 33, shellcheck, Biome; live after a reboot: + New session twice from cold, Open terminal restores a minimized terminal.
+- Review-batch3 (11-25): main merged twice (5774651, then after #497). Round 6 (fresh Opus):
+  1 Should-fix: a refusal after AJ typed past our "/exit " kept "/exit " at the box's head
+  without saying so; 1320a64 adds a note to the refusal and the #483 review 2 case checks it.
+  Verify pass clean (551/0 to the end of the close section; the case fails without the note).
+  Deferred Minors: type_exactly's and back_out's blind backspaces (sub-second race), no test
+  that the note stays silent on a backed-out refusal.
 
 ## Next
-1. ✅ Delta r1 fixes (S1, N1, N2) pushed.
-2. 📋 Delta r2 fixes (S1, S2, N1): suites, mutants, push, CI.
-3. 📋 Heph runs round 3 and merges; do not merge here.
-4. Not done live: End, Interrupt, wrap-up typing, unnamed Jump style, Folder, GitHub on native Linux (tests only; AJ's next Debian session, needs-you).
-5. Follow-ups filed, not in this PR: #527 deb dependencies, #528 "wsl" log lines on Linux, #529 multi-window terminal, #530 xdotool BadWindow, #531 hardcoded fleet-briefing path.
+1. 📋 CI on the final head green, then merge (review-batch3).
+2. After merge (Heph): HEPH.md lines 14 and 19 still describe the pre-fix close (kill-pane advice).
