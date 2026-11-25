@@ -79,10 +79,9 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash hooks/test_fleet.sh`: the fleet hook's states, where, identity,
   pruning (every refusal first) and the README settings block.
 - `bash scripts/test_measure_memory.sh`: the release memory rule.
-- `make test-fleet` (it takes the heavy lock): the fleet engine against fake Claude Code panes
+- `make test-fleet` (it takes the heavy lock; `SHARD=<area>` runs one shard, as CI does on a pull request): the fleet engine against fake Claude Code panes
   on a private tmux socket (limits, reset parsing, typed lines, launch
-  delivery, doctor, install). One shard of it, as CI runs it on a pull
-  request: `make test-shard SHARD=<area>`; the shards a change reaches:
+  delivery, doctor, install). The shards a change reaches:
   `git diff --name-only main... | bash scripts/split-fleet-suite.sh --select`.
 - `python3 -I scripts/test_split_fleet_suite.py`: the suite's split into shards
   (deterministic, every check in one shard, drift stops the split, path selection).
@@ -177,7 +176,8 @@ files belong to: the JS guards scan hooks and scripts too.
   Biome and ruff (the logging lints, as annotations), and the
   install-directory guard. On a pull request, `Pick fleet shards` asks
   `scripts/split-fleet-suite.sh --select` which shards of `fleet/test_fleet.sh`
-  the change reaches, and `Fleet shard (<area>)` runs each as its own job
+  the change reaches (every shard unless the change is app code that no
+  fleet script names), and `Fleet shard (<area>)` runs each as its own job
   (one that is not needed passes at once, so none sits pending); on main,
   nightly and by hand every shard runs, and `Fleet engine tests` runs the
   whole suite in one job as well. The `ci:full` label runs every shard

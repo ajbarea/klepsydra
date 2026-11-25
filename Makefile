@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-shard test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck test-shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck test-shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -21,15 +21,11 @@ HEAVY = $(if $(filter 1,$(FLEET_HEAVY_HELD)),,FLEET_HEAVY_HELD=1 bash fleet/heav
 SHELLCHECK ?= bash scripts/shellcheck.sh
 SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 
+# SHARD=<area> runs one shard of it, as CI runs a pull request (#547); the shards a
+# change reaches: git diff --name-only main... | bash scripts/split-fleet-suite.sh --select
 test-fleet:
-	$(HEAVY) bash fleet/test_fleet.sh
-
-# One shard of the fleet suite, as CI runs it: make test-shard SHARD=launch.
-# The shards a change reaches: git diff --name-only main... | bash scripts/split-fleet-suite.sh --select
-test-shard:
-	@test -n "$(SHARD)" || { echo "usage: make test-shard SHARD=<$$(bash scripts/split-fleet-suite.sh --list)>"; exit 2; }
-	bash scripts/split-fleet-suite.sh
-	$(HEAVY) bash fleet/tests/$(SHARD).sh
+	$(if $(SHARD),bash scripts/split-fleet-suite.sh)
+	$(HEAVY) bash $(if $(SHARD),fleet/tests/$(SHARD).sh,fleet/test_fleet.sh)
 
 test-launch:
 	$(HEAVY) bash hooks/test_launch.sh

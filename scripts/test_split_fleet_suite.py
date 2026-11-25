@@ -27,9 +27,9 @@ def check(name: str, got: object, want: object) -> None:
 
 
 def copy_repo(dst: Path) -> None:
-    """The generator, the suite and the files it can reach, as a git repo."""
+    """Every tracked file the selection reads, as a git repo."""
     files = subprocess.run(
-        ["git", "-C", str(REPO), "ls-files", "fleet", "hooks", "statusline", "scripts"],
+        ["git", "-C", str(REPO), "ls-files"],
         capture_output=True,
         text=True,
         check=True,
@@ -37,11 +37,32 @@ def copy_repo(dst: Path) -> None:
     files += ["scripts/split_fleet_suite.py", "scripts/split-fleet-suite.sh"]
     for f in set(files):
         src = REPO / f
-        if src.is_file():
+        if src.is_file() and src.suffix.lower() not in (
+            ".png",
+            ".webp",
+            ".jpg",
+            ".ico",
+            ".icns",
+        ):
             (dst / f).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst / f)
     subprocess.run(["git", "init", "-q", str(dst)], check=True)
     subprocess.run(["git", "-C", str(dst), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(dst),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "copy",
+        ],
+        check=True,
+    )
 
 
 def run(repo: Path, *args: str, stdin: str = "") -> subprocess.CompletedProcess[str]:
@@ -131,11 +152,64 @@ def main() -> None:
         check(
             "the generator runs every shard", sel("scripts/split_fleet_suite.py"), every
         )
-        check("a page of the app runs none", sel("src/wall.js"), [])
-        check("the README runs none", sel("README.md"), [])
+        check("app art no fleet code names runs none", sel("assets/new-icon.png"), [])
         check("no change runs none", sel(), [])
-        launch = sel("fleet/launch.sh")
-        check("launch.sh reaches the launch shard", "launch" in launch, True)
+        check(
+            "the README, which the suite reads, runs every shard",
+            sel("README.md"),
+            every,
+        )
+        check(
+            "an IMPL.md runs the shard that sweeps the docs",
+            "brief" in sel("IMPL.md"),
+            True,
+        )
+        check(
+            "the wall's Rust view, which the suite reads, runs a shard",
+            sel("src-tauri/fleet/src/view.rs") != [],
+            True,
+        )
+        check(
+            "a file outside the app that nothing names runs every shard",
+            sel("notes.txt"),
+            every,
+        )
+        check(
+            "launch.sh reaches the launch shard",
+            "launch" in sel("fleet/launch.sh"),
+            True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "rm", "-q", "fleet/headless-rules.md"], check=True
+        )
+        check(
+            "a deleted file the suite read still runs every shard",
+            sel("fleet/headless-rules.md"),
+            every,
+        )
+        subprocess.run(["git", "-C", str(repo), "reset", "-q", "--hard"], check=True)
+
+        # The prelude's EXIT trap keeps the shard's abort note (one EXIT trap per shell).
+        check(
+            "the prelude's EXIT trap runs the abort note first",
+            "trap 'shard_abort_trap; cleanup' EXIT" in a["prelude.sh"],
+            True,
+        )
+        head = a["misc.sh"].split('. "$shard_dir/prelude.sh"')[0]
+        probe = (
+            head
+            + "cleanup() { :; }\ntrap 'shard_abort_trap; cleanup' EXIT\n_group_name=probe _group_orig_line=7\necho \"$unbound\"\n"
+        )
+        r = subprocess.run(["bash", "-c", probe], capture_output=True, text=True)
+        check(
+            "a shard that aborts says where",
+            (
+                r.returncode != 0,
+                "shard misc aborted" in r.stdout + r.stderr,
+                "test_fleet.sh:7" in r.stdout + r.stderr,
+            ),
+            (True, True, True),
+        )
 
         # Drift fails loudly instead of running a stale copy.
         src = repo / "fleet" / "test_fleet.sh"
@@ -152,16 +226,32 @@ def main() -> None:
             (r.returncode, "fixture line" in r.stderr),
             (1, True),
         )
-        src.write_text(text.replace("check_keryx_isolation\n\necho\n", "\necho\n"))
+        src.write_text(text.replace("(( fail == 0 ))", "exit 0"))
         r = run(repo)
         check(
-            "a tail the shards no longer mirror stops the split",
-            (r.returncode, "tail" in r.stderr),
+            "a suite that no longer ends with its verdict stops the split",
+            (r.returncode, "verdict" in r.stderr),
             (1, True),
         )
-        src.write_text(text + '\ncheck "after the summary" a a\n')
+        src.write_text(
+            text.replace(
+                "check_keryx_isolation\n",
+                'check_keryx_isolation\ncheck "a tail check" a a\n',
+            )
+        )
         r = run(repo)
-        check("a check added to the suite needs no edit here", r.returncode, 0)
+        check(
+            "a check added to the suite's tail runs in every shard",
+            (
+                r.returncode,
+                all(
+                    'check "a tail check" a a' in t
+                    for t in shards(repo).values()
+                    if "_shard_finished" in t
+                ),
+            ),
+            (0, True),
+        )
         src.write_text(text)
 
     print(f"\n{'all passed' if not failures else f'{failures} failed'}")

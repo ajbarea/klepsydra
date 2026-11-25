@@ -198,9 +198,12 @@ jobs:
           all=$(bash scripts/split-fleet-suite.sh --list)
           echo "all=$all" >>"$GITHUB_OUTPUT"
           run=$all
-          # Labels are read live, so "Re-run all jobs" after adding ci:full sees it.
-          if [[ $EVENT == pull_request ]] && ! gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name' | grep -qx 'ci:full'; then
-            if changed=$(git diff --name-only HEAD^1 HEAD); then
+          # Labels are read live, so "Re-run all jobs" after adding ci:full sees it;
+          # labels that cannot be read run every shard.
+          if [[ $EVENT == pull_request ]] && labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name') \
+            && ! grep -qx 'ci:full' <<<"$labels"; then
+            # --no-renames: a renamed file is listed under its old name too.
+            if changed=$(git diff --name-only --no-renames HEAD^1 HEAD); then
               printf 'changed:\n%s\n' "$changed"
               run=$(printf '%s\n' "$changed" | bash scripts/split-fleet-suite.sh --select)
             else
@@ -227,10 +230,12 @@ jobs:
           RUN: ${{ needs.shards.outputs.run }}
           SHARD: ${{ matrix.shard }}
         run: |
-          if jq -e --arg s "$SHARD" 'index($s) != null' <<<"$RUN" >/dev/null; then
-            echo "run=true" >>"$GITHUB_OUTPUT"
-          else
+          # jq -e exits 1 only for "not in the list"; any other failure runs the shard.
+          jq -e --arg s "$SHARD" 'index($s) != null' <<<"$RUN" >/dev/null && rc=0 || rc=$?
+          if (( rc == 1 )); then
             echo "skipped: this change reaches no file the $SHARD shard runs"
+          else
+            echo "run=true" >>"$GITHUB_OUTPUT"
           fi
       - name: Set Git's default branch name
         if: steps.need.outputs.run == 'true'

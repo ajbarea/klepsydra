@@ -13,6 +13,8 @@ Run: python3 -I scripts/split_fleet_suite.py            write fleet/tests/*.sh
 
 from __future__ import annotations
 
+import collections
+import fnmatch
 import json
 import re
 import shlex
@@ -36,8 +38,14 @@ CORE = (
     ".github/workflows/ci.yml",
     "Makefile",
 )
-# Folders whose tracked files the suite can reach.
-REACHABLE = ("fleet/", "hooks/", "statusline/", "scripts/", "src/fleet/")
+# The app's own code, which no fleet script runs: a change here that no shard
+# names runs no shard. Any other change no shard names runs every shard.
+APP_ONLY = ("src/", "src-tauri/", "assets/")
+NOT_APP_ONLY = ("src/fleet/", "src-tauri/fleet/")
+# Values a pure assignment may not copy: they differ from run to run.
+VOLATILE_RE = re.compile(
+    r"\$\{?(?:[!?$#@*0-9-]|RANDOM\b|SECONDS\b|BASHPID\b|LINENO\b|EPOCH)"
+)
 
 TABLE = [
     (
@@ -276,7 +284,9 @@ def pure_assignment(line: str) -> list[str] | None:
     if not ASSIGN_RE.match(s):
         return None
     stripped = DATE_SUB_RE.sub("0", s)
-    if any(tok in stripped for tok in ("$(", "`", ";", "&&", "||", "|", ">", "<")):
+    if VOLATILE_RE.search(stripped) or any(
+        tok in stripped for tok in ("$(", "`", ";", "&&", "||", "|", ">", "<")
+    ):
         return None
     try:
         words = shlex.split(stripped, comments=True)
@@ -342,6 +352,8 @@ def find_defs(lines: list[str], mask: list[bool]) -> list[Def]:
 def uses(text: str) -> tuple[set[str], set[str], set[str]]:
     """Variables, words (function calls) and $work files a text reads."""
     code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    # \$x in a heredoc body is text the heredoc writes, not a read of x.
+    code = code.replace("\\$", "")
     return (
         set(VAR_USE_RE.findall(code)),
         set(WORD_RE.findall(code)),
@@ -401,7 +413,8 @@ def adjust_prelude(prelude: list[str]) -> list[str]:
     out = []
     anno = "printf '::error file=fleet/test_fleet.sh,line=%s,title=fleet test failed::%s\\n' \"${BASH_LINENO[0]}\""
     here_line = 'here=$(cd "$(dirname "$0")" && pwd)'
-    seen_here = seen_anno = False
+    trap_line = "trap cleanup EXIT"
+    seen_here = seen_anno = seen_trap = False
     for n, ln in enumerate(prelude):
         if n == 0 and ln.startswith("#!"):
             out.append(ln)
@@ -409,6 +422,10 @@ def adjust_prelude(prelude: list[str]) -> list[str]:
         elif ln.startswith(here_line):
             out.append('here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)\n')
             seen_here = True
+        elif ln.strip() == trap_line:
+            # One EXIT trap per shell: the shard's abort note runs before the cleanup.
+            out.append(ln.replace(trap_line, "trap 'shard_abort_trap; cleanup' EXIT"))
+            seen_trap = True
         elif anno in ln:
             indent = ln[: len(ln) - len(ln.lstrip())]
             out.append(
@@ -422,6 +439,10 @@ def adjust_prelude(prelude: list[str]) -> list[str]:
             out.append(ln)
     if not seen_here:
         fail(f"the prelude no longer sets here with {here_line!r}")
+    if not seen_trap:
+        fail(
+            f"the prelude no longer sets {trap_line!r}, which the shard's abort note joins"
+        )
     if not seen_anno:
         fail(
             "check() no longer prints the ::error annotation this script maps to suite lines"
@@ -442,7 +463,6 @@ shard_abort_trap() {{
       "$shard_name" "$rc" "${{_group_orig_line:-1}}" "${{_group_name:-setup}}"
   fi
 }}
-trap shard_abort_trap EXIT
 shard_dir=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=fleet/tests/prelude.sh
 . "$shard_dir/prelude.sh"
@@ -450,7 +470,9 @@ shard_dir=$(cd "$(dirname "$0")" && pwd)
 """
 
 
-def render(area: str, groups: list[Group], defs: list[Def], first_group: int) -> str:
+def render(
+    area: str, groups: list[Group], defs: list[Def], first_group: int, tail: list[str]
+) -> str:
     out = [SHARD_HEAD.format(area=area)]
     out += [ln + "\n" for ln in PLUMBING + FIXTURES]
     if area.startswith("accounts-"):
@@ -471,15 +493,11 @@ def render(area: str, groups: list[Group], defs: list[Def], first_group: int) ->
             'printf \'%sgroup %s %ds\\n\' "${GITHUB_ACTIONS:+::notice::}" "$_group_name" '
             '"$(( SECONDS - _group_t0 ))"\n'
         )
-    out.append(
-        f"\n{TAIL_HEADER}\n"
-        'check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""\n'
-        "# shellcheck disable=SC2119\n"
-        "check_keryx_isolation\n\n"
-        'echo\necho "$pass passed, $fail failed"\n'
-        "_shard_finished=1\n"
-        "(( fail == 0 ))\n"
-    )
+    # The suite's own tail, verbatim, marked finished before its verdict.
+    out.append("\n")
+    out += tail[:-1]
+    out.append("_shard_finished=1\n")
+    out.append(tail[-1])
     return "".join(out)
 
 
@@ -504,13 +522,11 @@ def split() -> dict[str, str]:
             )
     if TAIL_HEADER not in src_lines:
         fail("tail header missing")
-    tail_text = "".join(lines[tail:])
-    for needed in (
-        'check "#265 review: no case reached a systemctl',
-        "check_keryx_isolation",
-    ):
-        if needed not in tail_text:
-            fail(f"the suite's tail no longer runs {needed!r}; update the shard tail")
+    tail_lines = lines[tail:]
+    while tail_lines and not tail_lines[-1].strip():
+        tail_lines.pop()
+    if not tail_lines or tail_lines[-1].strip() != "(( fail == 0 ))":
+        fail("the suite no longer ends with its verdict, (( fail == 0 ))")
 
     # Coverage: the groups tile the lines between the prelude and the tail,
     # each lands in exactly one shard, and every check line is in one place.
@@ -536,7 +552,7 @@ def split() -> dict[str, str]:
     )
     for area in SHARDS:
         mine = [g for g in groups if g.area == area]
-        files[f"{area}.sh"] = render(area, mine, defs, first_group)
+        files[f"{area}.sh"] = render(area, mine, defs, first_group, tail_lines)
         print(
             f"  {area:16s} {len(mine):3d} groups {sum(g.checks for g in mine):4d} checks",
             file=sys.stderr,
@@ -550,16 +566,38 @@ def write(files: dict[str, str]) -> None:
         (OUT / name).write_text(text, encoding="utf-8")
 
 
+BINARY = (
+    ".png",
+    ".webp",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".icns",
+    ".pdf",
+    ".woff",
+    ".woff2",
+)
+BINARY += (".ttf", ".mp3", ".wav", ".zip", ".gz")
+
+
 def tracked() -> list[str]:
     out = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=True
     )
-    return [p for p in out.stdout.splitlines() if p.startswith(REACHABLE)]
+    return [p for p in out.stdout.splitlines() if not p.lower().endswith(BINARY)]
 
 
-def mentions(text: str, path: str) -> bool:
-    name = path.rsplit("/", 1)[-1]
-    if name in text:
+def mentions(
+    text: str, path: str, here: str = "", shared: frozenset[str] = frozenset()
+) -> bool:
+    """Whether TEXT, a file in folder HERE, names PATH. A name SHARED by several
+    tracked files counts only with its folder, or beside the file that names it."""
+    folder, _, name = path.rpartition("/")
+    if name in shared:
+        if f"{folder}/{name}" in text or (folder == here and name in text):
+            return True
+    elif name in text:
         return True
     stem = name.rsplit(".", 1)[0]
     # A Python module is named without its .py when imported.
@@ -569,13 +607,31 @@ def mentions(text: str, path: str) -> bool:
     )
 
 
-def select(changed: list[str], files: dict[str, str]) -> list[str]:
-    """The shards whose run can reach a changed file.
+CODE = (".sh", ".py", ".js", ".mjs", ".rs")
 
-    A shard reaches a file its text names, and then every tracked file that
-    file names, transitively. A file the prelude reaches runs every shard.
-    Over-selecting costs a runner; under-selecting hides a red, so a name
-    match is enough.
+
+def runs_others(path: str) -> bool:
+    """Whether a file is code, which can run or load the files it names."""
+    name = path.rsplit("/", 1)[-1]
+    return (
+        name.endswith(CODE)
+        or name == "Makefile"
+        or (path.startswith("fleet/") and "." not in name)
+    )
+
+
+LS_GLOB_RE = re.compile(r"ls-files\b[^\n]*?'(\*\.[A-Za-z0-9]+)'")
+
+
+def select(changed: list[str], files: dict[str, str]) -> list[str]:
+    """The shards a change can reach, failing closed.
+
+    A shard reaches what its text names, then what each of those files names,
+    transitively, and whatever a `git ls-files '*.ext'` in it lists. A path
+    the prelude reaches runs every shard. A path no shard reaches runs none
+    only when it is the app's own code (APP_ONLY); anything else runs every
+    shard. Paths are matched by name, so a deleted or renamed file is found
+    in the texts that still name it.
     """
     changed = [c for c in changed if c]
     if any(
@@ -585,28 +641,68 @@ def select(changed: list[str], files: dict[str, str]) -> list[str]:
     ):
         return list(SHARDS)
     paths = tracked()
-    text_of = {}
-    for p in paths:
-        try:
-            text_of[p] = (ROOT / p).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text_of[p] = ""
-    # Who names whom, built once: a closure is then a walk over this graph.
-    names = {p: [q for q in paths if q != p and mentions(text_of[p], q)] for p in paths}
+    counts = collections.Counter(p.rpartition("/")[2] for p in paths)
+    shared = frozenset(n for n, k in counts.items() if k > 1)
 
-    def closure(seed: str) -> set[str]:
+    def names(t: str, path: str, here: str) -> bool:
+        return mentions(t, path, here, shared)
+
+    text_of: dict[str, str] = {}
+    named: dict[str, list[str]] = {}
+
+    def text(p: str) -> str:
+        if p not in text_of:
+            try:
+                text_of[p] = (ROOT / p).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text_of[p] = ""
+        return text_of[p]
+
+    def reach(seed: str) -> list[tuple[str, str]]:
+        """(folder, text) of the seed, a shard of fleet/test_fleet.sh, and of
+        every code file it reaches. A file read as data is reached, but the
+        files it names are not run, so it passes nothing on."""
         seen: set[str] = set()
-        todo = [p for p in paths if mentions(seed, p)]
+        todo = [p for p in paths if names(seed, p, "fleet")]
         while todo:
             p = todo.pop()
-            if p not in seen:
-                seen.add(p)
-                todo += names[p]
-        return seen
+            if p in seen:
+                continue
+            seen.add(p)
+            if runs_others(p):
+                if p not in named:
+                    here = p.rpartition("/")[0]
+                    named[p] = [q for q in paths if q != p and names(text(p), q, here)]
+                todo += named[p]
+        code = [(p.rpartition("/")[0], text(p)) for p in sorted(seen) if runs_others(p)]
+        return [("fleet", seed)] + code + [("", p) for p in sorted(seen)]
 
-    if set(changed) & closure(files["prelude.sh"]):
-        return list(SHARDS)
-    return [a for a in SHARDS if set(changed) & closure(files[f"{a}.sh"])]
+    def hits(reached: list[tuple[str, str]], path: str) -> bool:
+        """Whether a reached file is PATH (the last entries hold the reached
+        paths themselves), or a reached code file names it or lists it."""
+        name = path.rpartition("/")[2]
+        for here, t in reached:
+            if here == "" and t == path:
+                return True
+            if here == "":
+                continue
+            if names(t, path, here) or any(
+                fnmatch.fnmatch(name, g) for g in LS_GLOB_RE.findall(t)
+            ):
+                return True
+        return False
+
+    prelude = reach(files["prelude.sh"])
+    shard_texts = {a: reach(files[f"{a}.sh"]) for a in SHARDS}
+    chosen: set[str] = set()
+    for c in changed:
+        if hits(prelude, c):
+            return list(SHARDS)
+        hit = {a for a in SHARDS if hits(shard_texts[a], c)}
+        if not hit and not (c.startswith(APP_ONLY) and not c.startswith(NOT_APP_ONLY)):
+            return list(SHARDS)
+        chosen |= hit
+    return [a for a in SHARDS if a in chosen]
 
 
 def main(argv: list[str]) -> None:
