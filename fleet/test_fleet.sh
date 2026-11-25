@@ -502,23 +502,31 @@ b_cla=$(cat "$KLEPSYDRA_DIR/fleet/$CLA_SID.beat" 2>/dev/null || echo none)
 check "#416: Claude pane with fresh status-line beat is untouched" "$b_cla" "claude-tab"$'\t'"$(((noon + 220) / 10))"
 
 # Pass 8 at noon+240: live child process under agy session -> WORKING (waiting on a task) (#416 Heph 11-24)
-fake_pid=78910
-fake_child=78911
-f_proc=${FLEET_PROC:-/proc}
-mkdir -p "$f_proc/$fake_pid/task/$fake_pid" "$f_proc/$fake_child"
-printf '%s (agy) S 1 1\n' "$fake_pid" >"$f_proc/$fake_pid/stat"
-printf 'agy\n' >"$f_proc/$fake_pid/comm"
-printf '%s (make) S %s 1\n' "$fake_child" "$fake_pid" >"$f_proc/$fake_child/stat"
-printf 'make\n' >"$f_proc/$fake_child/comm"
-printf 'make\0test-fleet\0' >"$f_proc/$fake_child/cmdline"
-printf '%s ' "$fake_child" >"$f_proc/$fake_pid/task/$fake_pid/children"
-
+# The process tree lives in a private fake /proc, passed only to this pass; never the real one.
+aproc=$work/agyproc fake_pid=78910 fake_child=78911
+aproc_ok=no
+if mkdir -p "$aproc/$fake_pid/task/$fake_pid" "$aproc/$fake_child" &&
+  printf '%s (agy) S 1 %s\n' "$fake_pid" "$(seq -s ' ' 1 48)" >"$aproc/$fake_pid/stat" &&
+  printf 'agy\n' >"$aproc/$fake_pid/comm" &&
+  printf '%s (make) S %s %s\n' "$fake_child" "$fake_pid" "$(seq -s ' ' 1 48)" >"$aproc/$fake_child/stat" &&
+  printf 'make\n' >"$aproc/$fake_child/comm" &&
+  printf 'make\0test-fleet\0' >"$aproc/$fake_child/cmdline" &&
+  printf '%s ' "$fake_child" >"$aproc/$fake_pid/task/$fake_pid/children"; then
+  aproc_ok=yes
+fi
+check "#416 (live child process under agy): fake proc root built at $aproc" "$aproc_ok" yes
 jq -n --arg p "$p_agy" --argjson pid "$fake_pid" \
   '{session_id: "aaaaaaaa-4444-4111-8222-333333333333", engine: "agy", state: "done", reason: null, claude: {pid: $pid}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.json"
 state agybeat '{"above":["Done! Everything resolved."],"below":["? for shortcuts"]}'
-resume "$(( noon + 240 ))"
+FLEET_PROC=$aproc resume "$(( noon + 240 ))"
 check "#416 (live child process under agy): reads working in background" "$(jq -r '[.state, .reason, .shells_live] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "working,background,1"
-rm -rf "$f_proc/$fake_pid" "$f_proc/$fake_child"
+# The same child once it has exited but is not yet reaped (a zombie) is no live task:
+# the card the pass above left working goes done at the next screen change.
+printf '%s (make) Z %s %s\n' "$fake_child" "$fake_pid" "$(seq -s ' ' 1 48)" >"$aproc/$fake_child/stat"
+state agybeat '{"above":["Done! The task finished."],"below":["? for shortcuts"]}'
+FLEET_PROC=$aproc resume "$(( noon + 250 ))"
+check "#416 (zombie child under agy): is no live task, so the card reads done" "$(jq -r '[.state, .reason] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "done,"
+rm -rf -- "${aproc:?}"
 
 t kill-window -t "$p_agy"
 t kill-window -t "$p_cla"

@@ -1860,11 +1860,12 @@ FLEET_CONTEXT_BUDGET=${FLEET_CONTEXT_BUDGET:-300000}
 
 # proc_stat PID: stat array from /proc/PID/stat (stat[0]=state, stat[1]=ppid, ...)
 proc_stat() { # pid
-  local text
+  local raw=""
   stat=()
-  { IFS= read -r -d '' text <"${FLEET_PROC:-/proc}/$1/stat"; } 2>/dev/null || return 1
-  text=${text#*) }
-  read -r -a stat <<<"$text"
+  { IFS= read -r raw <"${FLEET_PROC:-/proc}/$1/stat"; } 2>/dev/null
+  [[ $raw == *") "* ]] || return 1
+  read -r -a stat <<<"${raw##*") "}"
+  (( ${#stat[@]} > 19 ))
 }
 
 # live_shells PID ME: count live child tool/task calls under PID, excluding ME and MCP servers
