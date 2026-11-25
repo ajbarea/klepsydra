@@ -87,7 +87,7 @@ while :; do
     put_seen "$WAKE_SEEN"
     exit 0
   fi
-  panes_info=$(t list-panes -s -t "$FLEET_SESSION" -F $'#{pane_id}\t#{pane_dead}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{pane_current_command}\t#{@klepsydra_dead}' 2>/dev/null)
+  panes_info=$(t list-panes -s -t "$FLEET_SESSION" -F "#{pane_id}"$'\t'"$PANE_DEAD_FMT" 2>/dev/null)
   declare -A pane_lines=()
   while IFS= read -r _line; do
     [[ -n $_line ]] && pane_lines[${_line%%$'\t'*}]=$_line
@@ -99,8 +99,8 @@ while :; do
     # Open but with no agent in it (#288): a crash at once, a shell in front on
     # the second look in a row (a starting command shows one for a moment).
     if [[ ${pane_lines[$p]} == *$'\t'* ]]; then
-      IFS=$'\t' read -r _ dead st sig cmd mark <<<"${pane_lines[$p]}"
-      if pane_dead_reason "$dead" "$st" "$sig" "$cmd" "$mark"; then
+      IFS=$'\t' read -r _ dead st sig pid cmd mark <<<"${pane_lines[$p]}"
+      if pane_dead_reason "$dead" "$st" "$sig" "$pid" "$cmd" "$mark"; then
         if [[ $DEAD_WHY == *prompt* && -z ${shell_seen[$p]:-} ]]; then
           shell_seen[$p]=1
           flog INFO "watched pane shows a shell in front; looking again next tick" pane="$p" reason="$DEAD_WHY"

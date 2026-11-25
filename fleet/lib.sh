@@ -739,16 +739,23 @@ in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) ==
 # what a pane shows for a moment while its command starts, so callers confirm
 # that one on a second look.
 SHELLS=" sh bash dash zsh fish ksh "
+# The fields pane_dead_reason reads, tab-separated (tmux prints other control
+# characters as octal) with "-" for a field that can be empty (tab is IFS
+# whitespace, so an empty field would shift the rest; tmux 3.8 prints no pid
+# for a dead pane), @klepsydra_dead last since it holds spaces.
+PANE_DEAD_FMT=$'#{pane_dead}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{?pane_pid,#{pane_pid},-}\t#{pane_current_command}\t#{@klepsydra_dead}'
 # Sets DEAD_WHY and returns 0 when the fields read from tmux say the pane's
 # agent is dead (pane_dead, @klepsydra_dead, or a shell in front); 1 otherwise.
-pane_dead_reason() { # DEAD ST SIG CMD MARK
-  local dead=$1 st=$2 sig=$3 cmd=$4 mark=$5
+pane_dead_reason() { # DEAD ST SIG PID CMD MARK
+  local dead=$1 st=$2 sig=$3 pid=$4 cmd=$5 mark=$6
   [[ $st == - ]] && st=""
   [[ $sig == - ]] && sig=""
   DEAD_WHY=""
-  # Started again on its saved screen by the pane-died hook (#290), which notes why.
-  if [[ -n $mark ]]; then
-    DEAD_WHY=$mark
+  # Started again on its saved screen by the pane-died hook (#290), which marks
+  # it "<viewer pid> <reason>". Only that viewer's own mark counts: one left
+  # behind after the pane was started again by hand is the hook's to clear.
+  if [[ -n $mark && ${mark%% *} == "$pid" ]]; then
+    DEAD_WHY=${mark#* }
     return 0
   fi
   if [[ $dead == 1 ]]; then
@@ -761,11 +768,9 @@ pane_dead_reason() { # DEAD ST SIG CMD MARK
 }
 
 pane_dead_why() { # PANE
-  local dead st sig cmd mark
-  # Tab-separated (tmux prints other control characters as octal), "-" for an
-  # empty field, @klepsydra_dead last.
-  IFS=$'\t' read -r dead st sig cmd mark < <(t display-message -p -t "$1" $'#{pane_dead}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{pane_current_command}\t#{@klepsydra_dead}' 2>/dev/null) || return 1
-  pane_dead_reason "$dead" "$st" "$sig" "$cmd" "$mark" || return 1
+  local dead st sig pid cmd mark
+  IFS=$'\t' read -r dead st sig pid cmd mark < <(t display-message -p -t "$1" "$PANE_DEAD_FMT" 2>/dev/null) || return 1
+  pane_dead_reason "$dead" "$st" "$sig" "$pid" "$cmd" "$mark" || return 1
   printf '%s' "$DEAD_WHY"
 }
 

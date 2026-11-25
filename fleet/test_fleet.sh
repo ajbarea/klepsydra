@@ -5364,10 +5364,17 @@ check "#288: a shell seen once, then the agent's command, wakes nobody" \
   "$(grep -c 'looking again next tick' "$FLEET_LOG") $(kill -0 "$wjob" 2>/dev/null && echo watching || echo "woke: $(cat "$work/wdead.out")")" "1 watching"
 kill "$wjob" 2>/dev/null; wait "$wjob" 2>/dev/null
 check "#288: a live pane and a gone one are not dead" "$(pane_dead_why "$gp" || echo alive) $(pane_dead_why %9999 || echo none)" "alive none"
-# #290's pane-died hook starts a dead pane again on its saved screen and marks it.
-t set -p -t "$gp" @klepsydra_dead "its process ended on signal 6"
+# #290's pane-died hook starts a dead pane again on its saved screen and marks it
+# "<viewer pid> <reason>"; a mark another pid left (the pane started again by hand) is stale.
+t set -p -t "$gp" @klepsydra_dead "1 its process ended on signal 6"
+check "#314 review: a mark left by another pid does not make a live pane dead" "$(pane_dead_why "$gp" || echo alive)" "alive"
+t set -p -t "$gp" @klepsydra_dead "$(t display -p -t "$gp" '#{pane_pid}') its process ended on signal 6"
+check "#314 review: the viewer's own mark reads dead, its pid left out" "$(pane_dead_why "$gp")" "its process ended on signal 6"
 IDLE_S=600 WATCH_TICK=0.1 timeout 20 bash "$here/watch-panes.sh" "$gp" >"$work/wdead.out" 2>/dev/null
 check "#288: a pane the pane-died hook marked is dead at once, with the hook's reason" "$(cat "$work/wdead.out")" "DEAD $gp (its process ended on signal 6)"
+t set -p -t "$gp" @klepsydra_dead "1 its process ended on signal 6"
+IDLE_S=600 WATCH_TICK=0.2 timeout 1 bash "$here/watch-panes.sh" "$gp" >"$work/wdead.out" 2>/dev/null
+check "#314 review: the watcher wakes on no stale mark" "$(cat "$work/wdead.out")" ""
 # The doctor: a row whose session file still reads alive, in a dead pane, is
 # gone with the pane named; Heph dead in his pane is his remote control FAIL.
 # The recover section's fake /proc and boot id: process 4242 started at tick 777.
