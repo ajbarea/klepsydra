@@ -25,6 +25,13 @@ Do not merge: Heph reviews and merges. PR #496.
 - Suite on 95b1edc: one run failed only the keryx isolation check (keryx turned off mid-run,
   filed #516); rerun 1018/0.
 
+- Review-batch3 (11-25): main merged twice (5774651, then after #497). Round 6 (fresh Opus):
+  1 Should-fix: a refusal after AJ typed past our "/exit " kept "/exit " at the box's head
+  without saying so; 1320a64 adds a note to the refusal and the #483 review 2 case checks it.
+  Verify pass clean (551/0 to the end of the close section; the case fails without the note).
+  Deferred Minors: type_exactly's and back_out's blind backspaces (sub-second race), no test
+  that the note stays silent on a backed-out refusal.
+
 ## Next
-1. 📋 CI on the final head green; report to Heph; `fleet done`.
+1. 📋 CI on the final head green, then merge (review-batch3).
 2. After merge (Heph): HEPH.md lines 14 and 19 still describe the pre-fix close (kill-pane advice).
