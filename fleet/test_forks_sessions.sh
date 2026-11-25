@@ -18,14 +18,42 @@ check() {
   fi
 }
 
+# A move outlives its pass (#497 review r4): spawn's subshell reads session
+# files fresh, not the rows the pass cached. Here the pane's session changes
+# after the pass began, as a /clear during a move does.
+mv_work=$(mktemp -d)
+mkdir -p "$mv_work/k/fleet" "$mv_work/jobs"
+mv_old=11111111-1111-4111-8111-111111111111 mv_new=22222222-2222-4222-8222-222222222222
+jq -cn '{v: 1, session_id: "o", ended: null, tmux: {pane: "%5"}}' >"$mv_work/k/fleet/$mv_old.json"
+mv_got=$(KLEPSYDRA_DIR="$mv_work/k" JOBS="$mv_work/jobs" OLD=$mv_old NEW=$mv_new bash -c '
+  . fleet/lib.sh
+  eval "$(sed -n "/^spawn() {/,/^}/p" fleet/resume-at-reset.sh)"
+  t() { :; }; flog() { :; }
+  declare -A job=() job_kind=() job_ctx=()
+  FLEET_MAX_MOVES=2 US=$(printf "\037")
+  probe() { live_session %5; }
+  passlike() {
+    local SESSION_ROWS
+    SESSION_ROWS=$(fleet_sessions_tsv)
+    jq -c ".ended = 1" "$KLEPSYDRA_DIR/fleet/$OLD.json" >"$KLEPSYDRA_DIR/fleet/$OLD.tmp" &&
+      mv -- "$KLEPSYDRA_DIR/fleet/$OLD.tmp" "$KLEPSYDRA_DIR/fleet/$OLD.json"
+    jq -cn "{v: 1, session_id: \"n\", ended: null, tmux: {pane: \"%5\"}}" >"$KLEPSYDRA_DIR/fleet/$NEW.json"
+    spawn %5 back ctx probe
+    wait
+  }
+  passlike
+  cut -f2 "$JOBS/5.out"' 2>/dev/null)
+check "a move started in a pass sees a session that began after the pass did" "$mv_got" "$mv_new"
+rm -rf -- "${mv_work:?}"
+
 STRACE=${STRACE:-strace}
 if ! command -v "$STRACE" >/dev/null 2>&1; then
   if [[ -n ${CI:-} ]]; then
     echo "FAIL: strace missing ($STRACE)"
     exit 1
   else
-    echo "SKIP: no strace ($STRACE)"
-    exit 0
+    echo "SKIP: no strace ($STRACE); $pass passed, $fail failed before it"
+    exit $(( fail > 0 ))
   fi
 fi
 
