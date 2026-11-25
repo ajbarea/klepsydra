@@ -16,6 +16,7 @@ from __future__ import annotations
 import collections
 import fnmatch
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -412,8 +413,16 @@ def assign(groups: list[Group]) -> None:
                 g.area = area
                 break
         else:
+            # On CI an annotation: a group that reads an earlier area's fixtures
+            # fails in misc until TABLE names its area.
+            note = (
+                "::warning title=fleet shard::"
+                if os.environ.get("GITHUB_ACTIONS")
+                else ""
+            )
             print(
-                f"split-fleet-suite: group {g.title!r} matches no area; it runs in misc",
+                f"{note}split-fleet-suite: group {g.title!r} matches no area in"
+                " scripts/split_fleet_suite.py TABLE; it runs in misc",
                 file=sys.stderr,
             )
             g.area = "misc"
