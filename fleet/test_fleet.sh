@@ -2727,6 +2727,44 @@ bash "$here/fleet" close wrk_ml >/dev/null 2>&1
 check "#367: fleet close prunes wrk_ml from done-reports.tsv and fleet inbox --all" \
   "$(awk -F'\t' '$2 == "wrk_ml"' "$DONE_REPORTS" | wc -l) $(bash "$here/fleet" inbox --all --json | jq -s '[.[] | select(.name == "wrk_ml")] | length')" "0 0"
 
+# 10. 4-column row written by older fleet versions delivers pointing to queue file
+now_4col=$(date +%s)
+: >"$work/hph367.log"
+printf '%s\twrk_4col\t%%99\tnot-pasted\n' "$now_4col" >>"$DONE_REPORTS"
+out_4col=$(bash "$here/fleet" inbox deliver wrk_4col 2>&1)
+check "#367: 4-column row delivers message pointing to queue file" \
+  "$(grep -c 'delivered: wrk_4col (sent)' <<<"$out_4col") $(grep -c "^SUBMIT wrk_4col finished (see $FLEET_QUEUE_MD)$" "$work/hph367.log")" \
+  "1 1"
+check "#367: 4-column row marked sent in done-reports.tsv" \
+  "$(awk -F'\t' '$2 == "wrk_4col" { print $4 }' "$DONE_REPORTS")" "sent"
+
+# 11. failed paste keeps row pending
+t send-keys -t "$h367" -l "AJ: typing"; settle
+with_registry dr_append "$now_4col" wrk_fail %99 not-pasted "keep pending"
+rc_fail=0
+bash "$here/fleet" inbox deliver wrk_fail >/dev/null 2>&1 || rc_fail=$?
+check "#367: failed delivery to busy pane exits non-zero and keeps row status not-pasted" \
+  "$rc_fail $(awk -F'\t' '$2 == "wrk_fail" { print $4 }' "$DONE_REPORTS")" "1 not-pasted"
+t send-keys -t "$h367" C-u; settle
+
+# 12. same-second dr_set picks pending row over acked
+now_same=$(date +%s)
+with_registry dr_append "$now_same" wrk_same %99 acked "first"
+with_registry dr_append "$now_same" wrk_same %99 pending "second"
+with_registry dr_set "$now_same" wrk_same not-pasted
+check "#367: same-second dr_set updates pending row, leaving acked intact" \
+  "$(awk -F'\t' '$2 == "wrk_same" { printf "%s,", $4 }' "$DONE_REPORTS")" "acked,not-pasted,"
+
+# 13. concurrency lock on inbox ack --all
+now_conc=$(date +%s)
+for i in $(seq 1 20); do
+  ( with_registry dr_append "$now_conc" "ack_c$i" %99 not-pasted "rep $i" ) &
+  ( bash "$here/fleet" inbox ack --all >/dev/null 2>&1 ) &
+done
+wait
+check "#367: concurrent appends and inbox ack --all lose no rows" \
+  "$(awk -F'\t' '$2 ~ /^ack_c[0-9]+$/' "$DONE_REPORTS" | wc -l)" "20"
+
 t kill-window -t "$h367" 2>/dev/null; t kill-window -t "$w_busy" 2>/dev/null
 t kill-window -t "$w_lim" 2>/dev/null; t kill-window -t "$w_gone" 2>/dev/null
 t kill-window -t "$w_ret" 2>/dev/null; t kill-window -t "$w_reup" 2>/dev/null

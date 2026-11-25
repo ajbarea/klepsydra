@@ -138,15 +138,20 @@ case $cmd in
         if [[ -n $rep ]]; then
           msg="$name finished: $rep"
         else
-          msg="$name finished"
+          qfile=${FLEET_QUEUE_MD:-$FLEET_BRIEFING/queue.md}
+          msg="$name finished (see $qfile)"
         fi
         got=$(bash "$here/send.sh" "$orch" - <<<"$msg" 2>/dev/null) || true
         got=${got##*$'\n'}
         if [[ $got == sent || $got == queued ]]; then
-          with_registry dr_deliver_row "$at" "$name" "$res" "$rep" "$got" ||
+          if with_registry dr_deliver_row "$at" "$name" "$res" "$rep" "$got"; then
+            flog INFO "inbox: delivered report" name="$name" result="$got"
+            echo "delivered: $name ($got)"
+          else
             flog ERROR "inbox: done-reports.tsv cannot be updated" file="$DONE_REPORTS"
-          flog INFO "inbox: delivered report" name="$name" result="$got"
-          echo "delivered: $name ($got)"
+            err "could not record delivery for $name"
+            failed=1
+          fi
         else
           flog WARN "inbox: delivery failed" name="$name" result="$got"
           err "could not deliver $name: $got"

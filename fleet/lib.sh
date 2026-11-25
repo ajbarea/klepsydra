@@ -653,9 +653,14 @@ dr_deliver_row() { # AT NAME OLD_RESULT REPORT NEW_RESULT
     BEGIN {
       a = ENVIRON["DR_AT"]; n = ENVIRON["DR_NAME"]
       old = ENVIRON["DR_OLD"]; rep = ENVIRON["DR_REP"]; r = ENVIRON["DR_NEW"]
+      d = 0
     }
-    $1 == a && $2 "" == n "" && $4 "" == old "" && $5 "" == rep "" && !d { $4 = r; d = 1 }
+    $1 == a && $2 "" == n "" && $4 "" == old "" && (rep == "" || $5 "" == rep "") && !d {
+      $4 = r
+      d = 1
+    }
     { print }
+    END { if (!d) exit 2 }
 AWK
 }
 dr_mark_delivered() { # NAME REPORT [AT]
