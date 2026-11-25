@@ -6,6 +6,9 @@ name: CI Pipeline
   pull_request:
     branches:
       - main
+  # Nightly: the whole fleet suite in one run, as on main (#547).
+  schedule:
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       slice_live_repeat:
@@ -104,6 +107,8 @@ jobs:
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests
         run: bash scripts/test_build_windows.sh
+      - name: Fleet suite split tests
+        run: python3 -I scripts/test_split_fleet_suite.py
       - name: Perf fixture tests
         run: python3 -I scripts/perf/test_fixture.py
       - name: CI watch tests
@@ -140,10 +145,11 @@ jobs:
             exit 1
           fi
 
-  # The fleet engine suite takes most of the pipeline's time (38 min on 11-19), so it runs
-  # beside the other suites rather than after them.
+  # The whole fleet engine suite in one run (38 min on 11-19): on main, nightly and by hand.
+  # A pull request runs it as parallel shards instead (fleet-shard below, #547).
   fleet:
     name: Fleet engine tests
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -160,22 +166,110 @@ jobs:
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
           make test-fleet FLEET_HEAVY_HELD=1
 
-  # Branch protection requires this check by name: it passes only when both halves did.
+  # Which shards of fleet/test_fleet.sh a change reaches: every shard on main, nightly,
+  # by hand, with the ci:full label, or when the suite, lib.sh or this file changes.
+  shards:
+    name: Pick fleet shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      all: ${{ steps.pick.outputs.all }}
+      run: ${{ steps.pick.outputs.run }}
+    steps:
+      - name: Set Git's default branch name
+        run: git config --global init.defaultBranch main
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A pull request checks out its merge commit; its first parent is the base.
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Pick the shards this change reaches
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          all=$(bash scripts/split-fleet-suite.sh --list)
+          echo "all=$all" >>"$GITHUB_OUTPUT"
+          run=$all
+          # Labels are read live, so "Re-run all jobs" after adding ci:full sees it.
+          if [[ $EVENT == pull_request ]] && ! gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name' | grep -qx 'ci:full'; then
+            if changed=$(git diff --name-only HEAD^1 HEAD); then
+              printf 'changed:\n%s\n' "$changed"
+              run=$(printf '%s\n' "$changed" | bash scripts/split-fleet-suite.sh --select)
+            else
+              echo "::warning::could not list the changed files; running every shard"
+            fi
+          fi
+          echo "shards to run: $run"
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+
+  # Every shard reports a status, run or not, so the gate never waits on a missing one.
+  fleet-shard:
+    name: Fleet shard (${{ matrix.shard }})
+    needs: shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.shards.outputs.all) }}
+    steps:
+      - name: Is this shard needed
+        id: need
+        env:
+          RUN: ${{ needs.shards.outputs.run }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          if jq -e --arg s "$SHARD" 'index($s) != null' <<<"$RUN" >/dev/null; then
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "skipped: this change reaches no file the $SHARD shard runs"
+          fi
+      - name: Set Git's default branch name
+        if: steps.need.outputs.run == 'true'
+        run: git config --global init.defaultBranch main
+      - name: Checkout code
+        if: steps.need.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the shard
+        if: steps.need.outputs.run == 'true'
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          bash scripts/split-fleet-suite.sh
+          bash "fleet/tests/$SHARD.sh"
+
+  # Branch protection requires this check by name: it passes only when every half did.
   # always(), not !cancelled(): a skipped job reports success, even as a required check.
   gate:
     name: Gauge logic + statusLine hook
-    needs: [test, fleet]
+    needs: [test, fleet, shards, fleet-shard]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Both halves passed
+      - name: Every half passed
         env:
           SUITES: ${{ needs.test.result }}
           FLEET: ${{ needs.fleet.result }}
+          PICK: ${{ needs.shards.result }}
+          SHARDS: ${{ needs.fleet-shard.result }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |
-          if [[ $SUITES != success || $FLEET != success ]]; then
-            echo "::error::hooks, lints and other suites: $SUITES; fleet engine tests: $FLEET"
+          # A pull request runs the shards instead of the whole suite, so there it is skipped.
+          want_fleet=success; [[ $IS_PR == true ]] && want_fleet=skipped
+          if [[ $SUITES != success || $FLEET != "$want_fleet" || $PICK != success || $SHARDS != success ]]; then
+            echo "::error::other suites: $SUITES; whole fleet suite: $FLEET (want $want_fleet); shard pick: $PICK; fleet shards: $SHARDS"
             exit 1
           fi
 

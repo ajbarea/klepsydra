@@ -81,7 +81,11 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash scripts/test_measure_memory.sh`: the release memory rule.
 - `make test-fleet` (it takes the heavy lock): the fleet engine against fake Claude Code panes
   on a private tmux socket (limits, reset parsing, typed lines, launch
-  delivery, doctor, install).
+  delivery, doctor, install). One shard of it, as CI runs it on a pull
+  request: `make test-shard SHARD=<area>`; the shards a change reaches:
+  `git diff --name-only main... | bash scripts/split-fleet-suite.sh --select`.
+- `python3 -I scripts/test_split_fleet_suite.py`: the suite's split into shards
+  (deterministic, every check in one shard, drift stops the split, path selection).
 - `python3 -I fleet/test_ci_watch.py`: the CI watch against a fake GitHub.
 - `python3 -I fleet/test_prune_shots.py`: the briefing's screenshot prune against a fake gh.
 - `bash fleet/test_sync_mirror.sh`: the briefing sync's Drive mirror refusals (no tmux, no lock).
@@ -166,14 +170,20 @@ files belong to: the JS guards scan hooks and scripts too.
 
 ## ci_audit
 
-- workflows: `.github/workflows/ci.yml` (four jobs), and
+- workflows: `.github/workflows/ci.yml` (the jobs below), and
   `.github/workflows/dependabot-auto-merge.yml`.
 - `Hooks, lints and the other suites` runs on `ubuntu-latest` with Node 24: unit
   tests, both hooks' tests, the release memory check's tests, shellcheck,
   Biome and ruff (the logging lints, as annotations), and the
-  install-directory guard. `Fleet engine tests` runs the fleet engine suite beside it
-  (the longest suite). `Gauge logic + statusLine hook` needs both and passes
-  only when both passed; it is the name branch protection requires.
+  install-directory guard. On a pull request, `Pick fleet shards` asks
+  `scripts/split-fleet-suite.sh --select` which shards of `fleet/test_fleet.sh`
+  the change reaches, and `Fleet shard (<area>)` runs each as its own job
+  (one that is not needed passes at once, so none sits pending); on main,
+  nightly and by hand every shard runs, and `Fleet engine tests` runs the
+  whole suite in one job as well. The `ci:full` label runs every shard
+  (re-run the jobs after adding it). `Gauge logic + statusLine hook` needs
+  all of them and passes only when each did; it is the name branch
+  protection requires.
 - `Rust (fmt + clippy, <os>)` is a matrix over `windows-latest` and
   `ubuntu-latest`, for the reason in `## repo`; the Linux leg installs the
   WebKitGTK and tray headers first. Clippy is `-D warnings`, so a warning is a
