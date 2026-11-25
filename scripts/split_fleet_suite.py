@@ -303,6 +303,16 @@ def pure_assignment(line: str) -> list[str] | None:
     return names or None
 
 
+def parses(text: str) -> bool:
+    """Whether bash reads TEXT as complete shell (bash -n: parsed, never run)."""
+    return (
+        subprocess.run(
+            ["bash", "-n"], input=text, text=True, capture_output=True
+        ).returncode
+        == 0
+    )
+
+
 def find_defs(lines: list[str], mask: list[bool]) -> list[Def]:
     defs: list[Def] = []
     i = 0
@@ -312,17 +322,17 @@ def find_defs(lines: list[str], mask: list[bool]) -> list[Def]:
             i += 1
             continue
         if m := FN_RE.match(line):
-            end = i
-            if not re.sub(r"#.*$", "", line[m.end() :]).strip().endswith("}"):
-                for j in range(i + 1, len(lines)):
-                    if mask[j]:
-                        continue
-                    s = re.sub(r"#.*$", "", lines[j]).strip()
-                    if s == "}" or s.endswith("; }") or s.endswith(";}"):
-                        end = j
-                        break
-                else:
-                    fail(f"function {m.group(1)} at line {i + 1} never closes")
+            # The first line ending in } where bash itself reads a whole
+            # function: an inner one-liner (screen() { cat; }) ends nothing.
+            for end in range(i, len(lines)):
+                if (
+                    (end == i or not mask[end])
+                    and re.sub(r"#.*$", "", lines[end]).strip().endswith("}")
+                    and parses("".join(lines[i : end + 1]))
+                ):
+                    break
+            else:
+                fail(f"function {m.group(1)} at line {i + 1} never closes")
             defs.append(Def("fn", m.group(1), i, end, "".join(lines[i : end + 1])))
             i = end + 1
             continue
@@ -562,6 +572,10 @@ def split() -> dict[str, str]:
     for area in SHARDS:
         mine = [g for g in groups if g.area == area]
         files[f"{area}.sh"] = render(area, mine, defs, first_group, tail_lines, tail)
+        if not parses(files[f"{area}.sh"]):
+            fail(
+                f"the {area} shard does not parse (bash -n); a replayed definition was cut wrong"
+            )
         print(
             f"  {area:16s} {len(mine):3d} groups {sum(g.checks for g in mine):4d} checks",
             file=sys.stderr,

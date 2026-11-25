@@ -213,6 +213,24 @@ def main() -> None:
             (True, True, True),
         )
 
+        # A function that defines a one-liner inside it ends at its own brace (bash -n decides).
+        sys.path.insert(0, str(repo / "scripts"))
+        import split_fleet_suite as m
+
+        nested = [
+            "outer() { # A\n",
+            "  ( inner() { cat; }\n",
+            "    inner )\n",
+            "}\n",
+            "x=1\n",
+        ]
+        fns = [d for d in m.find_defs(nested, m.heredoc_mask(nested)) if d.kind == "fn"]
+        check(
+            "a nested one-liner does not end its function",
+            [(d.name, d.end) for d in fns],
+            [("outer", 3)],
+        )
+
         # Drift fails loudly instead of running a stale copy.
         src = repo / "fleet" / "test_fleet.sh"
         text = src.read_text()
