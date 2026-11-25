@@ -64,6 +64,9 @@ export function followList({ command, sample, what }, onMessage) {
 /** Queue file views: the app's queue_subscribe channel, or the ?demo sample. */
 export const followQueue = (onMessage) => followList(LISTS.queue, onMessage);
 
+/** Needs you file views: the app's needs_subscribe channel, or the ?demo sample. */
+export const followNeeds = (onMessage) => followList(LISTS.needs, onMessage);
+
 /**
  * Wire the panel to `dialog`, toggled by `button` and reopened from `tab`,
  * sharing `edge` with the other side panels. It holds two lists, Needs you

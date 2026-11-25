@@ -7,7 +7,8 @@ import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy,
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
 import { DEFAULT_THEME, THEME_LABELS, THEME_SAVE_MS, THEME_WAIT_MS, keeperOf, loadTheme, loadedTheme, themeFile, themeId } from "./theme.js";
 import { createDrawer } from "./drawer.js";
-import { createQueuePanel } from "./queuepanel.js";
+import { createQueuePanel, followNeeds, followQueue } from "./queuepanel.js";
+import { createRooms } from "./rooms.js";
 import { createEdge } from "./sidepanel.js";
 import { showFace } from "./face.js";
 import { MAKER_ICONS } from "./icons.js";
@@ -458,6 +459,32 @@ const queue = createQueuePanel({
   cast: () => cast,
   onResized: () => showDensity(),
 });
+const rooms = createRooms({
+  wallContainer: wall,
+  headerNav: document.querySelector(".rooms-nav"),
+  needsRoomContainer: document.getElementById("needs-room"),
+  phoneTabBar: document.getElementById("phone-tabbar"),
+  getSessions: () => sessions,
+  getCast: () => cast,
+  onTerminal: (id) => request("terminal", id),
+  onSaveNeeds: (text) => {
+    if (inTauri && window.__TAURI__?.core?.invoke) {
+      window.__TAURI__.core.invoke("write_needs_file", { text }).catch(() => {});
+    }
+  },
+  onLayoutChanged: () => {
+    showDensity();
+  },
+});
+followNeeds((view) => rooms.updateNeeds(view));
+followQueue((view) => rooms.updateQueue(view));
+const needsLayoutPicker = document.getElementById("needs-layout");
+if (needsLayoutPicker) {
+  needsLayoutPicker.value = rooms.getLayout();
+  needsLayoutPicker.addEventListener("change", (e) => {
+    rooms.setLayout(e.target.value);
+  });
+}
 let before;
 let wrapupBefore; // each card's wrap-up line at the last render
 let wasSafe = false;
@@ -869,6 +896,7 @@ function render(snapshot) {
   latest = { state, cards };
   cleared = new Set([...cleared].filter((id) => cardOf.has(id)));
   openText = new Set([...openText].filter((id) => cardOf.has(id)));
+  rooms.updateSessions(sessions);
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
   const r = readiness(sessions, request);

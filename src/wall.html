@@ -12,11 +12,24 @@
 <link rel="apple-touch-icon" href="phone/apple-touch-icon.png" />
 <link rel="stylesheet" href="fleet/badge.css" />
 <link rel="stylesheet" href="fleet/wall.css" />
+<link rel="stylesheet" href="fleet/rooms.css" />
 </head>
 <body>
   <header class="bar">
     <div class="lead">
       <div class="tally" role="group" aria-label="Session counts"></div>
+      <nav class="rooms-nav" aria-label="Views">
+        <button type="button" id="btn-needs-room" class="room-pill room-needs is-calm" aria-current="false" aria-keyshortcuts="N" title="Needs you (N)">
+          <span class="rt">Needs you</span>
+          <span class="rc-count count-calm">0</span>
+          <span class="kbd">N</span>
+        </button>
+        <button type="button" id="btn-agents-room" class="room-pill room-agents" aria-current="page" aria-keyshortcuts="A" title="Agents (A)">
+          <span class="rt">Agents</span>
+          <span class="rc">0 working</span>
+          <span class="kbd">A</span>
+        </button>
+      </nav>
       <button type="button" id="ci-open" popovertarget="ci" data-phone hidden>CI</button>
       <button type="button" id="health-open" popovertarget="health" data-phone hidden>Fleet</button>
       <p class="wrapup-bar" hidden>
@@ -37,7 +50,7 @@
       <div class="tools">
         <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
         <button type="button" id="ledger-open" aria-controls="ledger" aria-expanded="false">Ledger</button>
-        <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
+        <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)" hidden>Queue</button>
         <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
       </div>
       <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary"><span class="ico" aria-hidden="true"></span><span class="new-label">+ New session</span><span class="mono" hidden></span></button><button type="button" id="new-kind" class="primary caret" popovertarget="new-menu" aria-expanded="false" aria-label="Other engines" title="Other engines" hidden><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button></span>
@@ -51,6 +64,13 @@
             <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
           </fieldset>
           <label class="theme-pick" title="How each session looks"><span>Characters</span><select id="theme"></select></label>
+          <label class="needs-layout-pick" title="Needs you layout"><span>Needs you layout</span>
+            <select id="needs-layout">
+              <option value="B">Two rooms (B)</option>
+              <option value="D">Inbox and Floor (D)</option>
+              <option value="E">Amber Door (E)</option>
+            </select>
+          </label>
           <label class="opacity-pick" title="The floating gauge's background: 0% shows only its text" hidden><span>Gauge background</span><input id="gauge-opacity" type="range" min="0" max="100" step="5" value="85" aria-valuetext="85%" /><span class="opacity-value" aria-hidden="true">85%</span></label>
         </div>
       </details>
@@ -68,6 +88,7 @@
   </section>
   <h1 id="wall-title" class="visually-hidden">Claude Code sessions</h1>
   <section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"></section>
+  <section id="needs-room" class="needs-room" aria-labelledby="needs-room-title" hidden></section>
   <section id="empty" class="empty" aria-labelledby="empty-title" hidden>
     <img class="keeper" alt="" />
     <h2 id="empty-title" tabindex="-1">All quiet.</h2>
@@ -277,5 +298,6 @@
     <ul class="health-checks"></ul>
     <p class="health-note"></p>
   </section>
+  <nav id="phone-tabbar" class="phone-tabbar" aria-label="Views" hidden></nav>
 </body>
 </html>

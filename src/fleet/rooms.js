@@ -1,0 +1,743 @@
+// Rooms: Needs you and Agents as two experiences, three layouts (#386).
+// Replaces the stacked drawer with dedicated rooms:
+// Layout B: "Two rooms" (chair's pick, default)
+// Layout D: "Inbox and Floor" (vote winner)
+// Layout E: "Amber Door" (right panel over dimmed wall)
+
+import { asksCount, parse, toTree, sections } from "./queue.js";
+
+export const LAYOUTS = ["B", "D", "E"];
+export const DEFAULT_LAYOUT = "B";
+
+/** Parse saved layout preference; default to B. */
+export function parseLayout(val) {
+  return LAYOUTS.includes(val) ? val : DEFAULT_LAYOUT;
+}
+
+const DONE_PREFIX = "✅";
+const PENDING_PREFIX = "📋";
+
+/**
+ * Extract links from a markdown string: [label](url).
+ * Returns array of { label, url, kind }.
+ */
+export function extractLinks(text) {
+  if (!text) return [];
+  const links = [];
+  const re = /\[([^\]]+)\]\(([^)]+)\)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const label = m[1].trim();
+    const url = m[2].trim();
+    let kind = "web";
+    if (/\.(md|txt|rs|js|json|toml|py|sh|pdf)$/i.test(url) || url.startsWith("file://") || url.startsWith("~/")) kind = "file";
+    else if (/\/$/.test(url) || url.includes("folder")) kind = "folder";
+    else if (/#\d+/.test(label) || url.includes("/pull/")) kind = "pr";
+    else if (/issues\/\d+/.test(url)) kind = "issue";
+    links.push({ label, url, kind });
+  }
+  return links;
+}
+
+/**
+ * Clean title and detail from a list item line.
+ * Input: "- 📋 **Title:** detail text [link](url)"
+ */
+export function cleanItemText(raw) {
+  let s = raw.replace(/^[-*+]\s*/, "").trim();
+  s = s.replace(/^(?:📋|✅)\s*/u, "").trim();
+
+  let title = "";
+  let detail = "";
+
+  // Check for bold title at start: **Title** or **Title:**
+  const boldMatch = s.match(/^\*\*([^*]+)\*\*(?::?\s*(.*))?$/s);
+  if (boldMatch) {
+    title = boldMatch[1].trim();
+    detail = (boldMatch[2] || "").trim();
+  } else {
+    // Look for first colon or period
+    const colonIdx = s.indexOf(":");
+    if (colonIdx > 0 && colonIdx < 80) {
+      title = s.slice(0, colonIdx).trim();
+      detail = s.slice(colonIdx + 1).trim();
+    } else {
+      title = s;
+      detail = "";
+    }
+  }
+
+  // Strip trailing colon from title if any
+  if (title.endsWith(":")) title = title.slice(0, -1).trim();
+
+  // Strip markdown link markup from title if present
+  title = title.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`]/g, "").trim();
+  return { title, detail };
+}
+
+/**
+ * Parse needs-you.md markdown text into structured items grouped by section.
+ * Completed items (with ✅) are omitted.
+ */
+export function parseNeedsItems(text) {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  const items = [];
+  let currentSection = "Today";
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("## ")) {
+      currentSection = trimmed.slice(3).trim();
+      continue;
+    }
+
+    if (!trimmed.startsWith("- ") && !trimmed.startsWith("* ") && !/^\d+\.\s/.test(trimmed)) {
+      continue;
+    }
+
+    // Done items are never shown
+    if (trimmed.includes(DONE_PREFIX)) {
+      continue;
+    }
+
+    const links = extractLinks(line);
+    const { title, detail } = cleanItemText(trimmed);
+
+    // Grouping
+    let group = currentSection;
+    if (/today/i.test(currentSection)) group = "Today";
+    else if (/coming up|next 7|this week/i.test(currentSection)) group = "Coming up";
+    else if (/when convenient|later|anytime/i.test(currentSection)) group = "When convenient";
+
+    items.push({
+      lineIndex: i,
+      rawLine: line,
+      title: title || trimmed,
+      detail,
+      links,
+      group,
+      section: currentSection,
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Parse queue.md "Running now" section into items without session cards.
+ */
+export function parseQueueNow(text) {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  const items = [];
+  let inNow = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith("## ")) {
+      inNow = /running now/i.test(line);
+      continue;
+    }
+    if (!inNow) continue;
+    if (!line.startsWith("- ") && !line.startsWith("* ")) continue;
+
+    const links = extractLinks(line);
+    const { title, detail } = cleanItemText(line);
+    let state = "working";
+    if (/review/i.test(line)) state = "review";
+    else if (/scheduled/i.test(line)) state = "scheduled";
+    else if (/parked/i.test(line)) state = "parked";
+    else if (/done/i.test(line) || line.includes(DONE_PREFIX)) state = "done";
+
+    items.push({
+      title: title || line,
+      note: detail,
+      links,
+      state,
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Remove an item from needs-you.md text when marked done.
+ * Returns { newText, removedLine }.
+ */
+export function markItemDone(text, lineIndex) {
+  if (!text) return { newText: "", removedLine: "" };
+  const lines = text.split(/\r?\n/);
+  if (lineIndex < 0 || lineIndex >= lines.length) return { newText: text, removedLine: "" };
+  const removedLine = lines[lineIndex];
+  lines.splice(lineIndex, 1);
+  return { newText: lines.join("\n"), removedLine };
+}
+
+/**
+ * Restore a removed line at lineIndex.
+ */
+export function undoItemDone(text, lineIndex, removedLine) {
+  if (!text && !removedLine) return "";
+  const lines = (text || "").split(/\r?\n/);
+  const idx = Math.max(0, Math.min(lineIndex, lines.length));
+  lines.splice(idx, 0, removedLine);
+  return lines.join("\n");
+}
+
+/**
+ * Compute total needs count: open asks in needs-you.md + sessions blocked on AJ.
+ */
+export function needsCount(needsText, sessions = []) {
+  let asks = 0;
+  if (needsText) {
+    const parsed = sections(toTree(parse(needsText)));
+    asks = asksCount(parsed) ?? parseNeedsItems(needsText).length;
+  }
+  const blocked = sessions.filter((s) => s.status === "needs_you").length;
+  return asks + blocked;
+}
+
+/**
+ * Count working sessions.
+ */
+export function workingCount(sessions = []) {
+  return sessions.filter((s) => s.status === "working").length;
+}
+
+/**
+ * Create the Rooms manager that binds Needs you and Agents views.
+ */
+export function createRooms({
+  wallContainer,
+  headerNav,
+  needsRoomContainer,
+  phoneTabBar,
+  getSessions = () => [],
+  getCast = () => null,
+  onTerminal = () => {},
+  onSaveNeeds = () => {},
+  onLayoutChanged = () => {},
+}) {
+  let currentView = "agents"; // "agents" | "needs"
+  let currentLayout = parseLayout(localStorage.getItem("needs_layout"));
+  let needsText = "";
+  let needsPath = "";
+  let queueText = "";
+  let focusedIndex = 0;
+  let undoTimer = null;
+  let lastUndo = null; // { text, lineIndex, removedLine }
+  let jumpToastTimer = null;
+  let jumpSessionId = null;
+  let lastSessionStatuses = new Map();
+
+  // Storage / Prefs
+  function setLayout(layout) {
+    currentLayout = parseLayout(layout);
+    localStorage.setItem("needs_layout", currentLayout);
+    if (typeof window !== "undefined" && window.__TAURI__?.core?.invoke) {
+      window.__TAURI__.core.invoke("set_needs_layout", { layout: currentLayout }).catch(() => {});
+    }
+    renderViews();
+    onLayoutChanged(currentLayout);
+  }
+
+  function getLayout() {
+    return currentLayout;
+  }
+
+  // Toast notification
+  function showToast(message, actionLabel, onAction, durationMs = 5000) {
+    const existing = document.querySelector(".room-toast");
+    if (existing) existing.remove();
+
+    const toast = document.createElement("div");
+    toast.className = "room-toast";
+    toast.setAttribute("role", "status");
+
+    const textSpan = document.createElement("span");
+    textSpan.textContent = message;
+    toast.append(textSpan);
+
+    if (actionLabel && onAction) {
+      const actBtn = document.createElement("button");
+      actBtn.type = "button";
+      actBtn.className = "toast-action";
+      actBtn.textContent = actionLabel;
+      actBtn.addEventListener("click", () => {
+        onAction();
+        toast.remove();
+      });
+      toast.append(actBtn);
+    }
+
+    document.body.append(toast);
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => {
+      toast.classList.add("toast-leaving");
+      setTimeout(() => toast.remove(), 250);
+    }, durationMs);
+
+    return toast;
+  }
+
+  // Switch between "agents" and "needs" views
+  function switchView(view) {
+    currentView = view === "needs" ? "needs" : "agents";
+    focusedIndex = 0;
+    renderViews();
+  }
+
+  // Build the Header Pills
+  function updateHeader() {
+    if (!headerNav) return;
+    const sessions = getSessions();
+    const n = needsCount(needsText, sessions);
+    const m = workingCount(sessions);
+
+    headerNav.innerHTML = `
+      <button type="button" id="btn-needs-room" class="room-pill room-needs ${n > 0 ? "is-amber" : "is-calm"}" aria-current="${currentView === "needs" ? "page" : "false"}" aria-keyshortcuts="N" title="Needs you (N)">
+        <span class="rt">Needs you</span>
+        <span class="rc-count ${n > 0 ? "count-amber" : "count-calm"}">${n > 0 ? n : (currentLayout === "D" ? "All clear" : "0")}</span>
+        <span class="kbd">N</span>
+      </button>
+      <button type="button" id="btn-agents-room" class="room-pill room-agents" aria-current="${currentView === "agents" ? "page" : "false"}" aria-keyshortcuts="A" title="Agents (A)">
+        <span class="rt">Agents</span>
+        <span class="rc">${m} working</span>
+        <span class="kbd">A</span>
+      </button>
+    `;
+
+    headerNav.querySelector("#btn-needs-room")?.addEventListener("click", () => switchView("needs"));
+    headerNav.querySelector("#btn-agents-room")?.addEventListener("click", () => switchView("agents"));
+
+    // Update phone tabbar
+    if (phoneTabBar) {
+      phoneTabBar.innerHTML = `
+        <button type="button" id="ptab-agents" class="ptab-btn" aria-current="${currentView === "agents" ? "page" : "false"}">
+          <span class="pico">◐</span>
+          <span class="plabel">Agents</span>
+        </button>
+        <button type="button" id="ptab-needs" class="ptab-btn" aria-current="${currentView === "needs" ? "page" : "false"}">
+          <span class="pico">✋${n > 0 ? `<span class="pbadge">${n}</span>` : ""}</span>
+          <span class="plabel">Needs you</span>
+        </button>
+      `;
+      phoneTabBar.querySelector("#ptab-agents")?.addEventListener("click", () => switchView("agents"));
+      phoneTabBar.querySelector("#ptab-needs")?.addEventListener("click", () => switchView("needs"));
+    }
+  }
+
+  // Mark an item done with 5s undo
+  function handleMarkDone(lineIndex) {
+    const { newText, removedLine } = markItemDone(needsText, lineIndex);
+    lastUndo = {
+      prevText: needsText,
+      lineIndex,
+      removedLine,
+    };
+    needsText = newText;
+    onSaveNeeds(newText, needsPath);
+
+    updateHeader();
+    renderNeedsRoom();
+
+    showToast("Marked done", "Undo (5s)", () => {
+      if (lastUndo) {
+        needsText = lastUndo.prevText;
+        onSaveNeeds(needsText, needsPath);
+        lastUndo = null;
+        updateHeader();
+        renderNeedsRoom();
+      }
+    }, 5000);
+  }
+
+  // Trigger undo manually (via key U)
+  function handleUndo() {
+    if (lastUndo) {
+      needsText = lastUndo.prevText;
+      onSaveNeeds(needsText, needsPath);
+      lastUndo = null;
+      updateHeader();
+      renderNeedsRoom();
+      showToast("Restored item", null, null, 2000);
+    }
+  }
+
+  // Render the Needs you view
+  function renderNeedsRoom() {
+    if (!needsRoomContainer) return;
+
+    const sessions = getSessions();
+    const blocked = sessions.filter((s) => s.status === "needs_you");
+    const items = parseNeedsItems(needsText);
+    const total = blocked.length + items.length;
+
+    // Adjust focus index
+    if (focusedIndex >= total) focusedIndex = Math.max(0, total - 1);
+
+    // Group items
+    const groups = new Map();
+    for (const it of items) {
+      const g = it.group || "Other";
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(it);
+    }
+
+    let html = "";
+
+    // Header of Needs you room
+    html += `
+      <div class="needs-room-header">
+        <h1 class="needs-room-title">Needs you</h1>
+        <p class="needs-room-subtitle">${total > 0 ? `${total} open, soonest first. Done removes a line from needs-you.md.` : "Nothing waits on you."}</p>
+      </div>
+    `;
+
+    if (total === 0) {
+      html += `
+        <div class="needs-all-clear">
+          <div class="all-clear-icon">✓</div>
+          <h2>${currentLayout === "D" ? "All clear" : "Nothing waits on you"}</h2>
+          <p class="all-clear-sub">New asks and sessions waiting on your review land here first.</p>
+        </div>
+      `;
+    } else {
+      let currentIndex = 0;
+
+      // 1. Blocked sessions group
+      if (blocked.length > 0) {
+        html += `<div class="needs-group-header">Sessions blocked on you <span class="group-count">${blocked.length}</span></div>`;
+        html += `<ul class="needs-list blocked-list">`;
+        for (const s of blocked) {
+          const isFocused = currentIndex === focusedIndex;
+          const who = s.identity?.name || s.name || "Agent";
+          const epithet = s.identity?.epithet || "";
+          const reason = s.reason || s.needs?.tool || s.task || "Waiting on input";
+          const face = s.identity?.face ? `faces/${s.identity.face}-figure.webp` : "";
+
+          html += `
+            <li class="needs-row blocked-row ${isFocused ? "is-focused" : ""}" data-idx="${currentIndex}" data-session-id="${s.id}">
+              <div class="blocked-portrait">
+                ${face ? `<img src="${face}" alt="" class="blocked-fig" />` : `<div class="blocked-disc">!</div>`}
+              </div>
+              <div class="blocked-body">
+                <div class="blocked-name"><strong>${who}</strong> <span class="blocked-epi">${epithet}</span></div>
+                <div class="blocked-task">${reason}</div>
+              </div>
+              <div class="blocked-actions">
+                <button type="button" class="btn btn-answer" data-act="answer" data-session-id="${s.id}">Answer</button>
+                <button type="button" class="btn btn-term" data-act="terminal" data-session-id="${s.id}">Open terminal</button>
+              </div>
+            </li>
+          `;
+          currentIndex++;
+        }
+        html += `</ul>`;
+      }
+
+      // 2. Sections from needs-you.md
+      for (const [groupName, groupItems] of groups.entries()) {
+        html += `<div class="needs-group-header">${groupName} <span class="group-count">${groupItems.length}</span></div>`;
+        html += `<ul class="needs-list">`;
+        for (const it of groupItems) {
+          const isFocused = currentIndex === focusedIndex;
+          const isToday = /today/i.test(it.group);
+          const linksHtml = it.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener" data-url="${l.url}"><i>${l.kind === "file" ? "▤" : l.kind === "folder" ? "▱" : l.kind === "pr" ? "⑂" : "↗"}</i>${l.label}</a>`).join("");
+
+          html += `
+            <li class="needs-row ${isToday ? "is-today" : ""} ${isFocused ? "is-focused" : ""}" data-idx="${currentIndex}" data-line="${it.lineIndex}">
+              <div class="needs-row-lead">
+                <span class="row-due ${isToday ? "due-today" : ""}">${isToday ? "Today" : it.group}</span>
+              </div>
+              <div class="needs-row-body">
+                <h3 class="row-title">${it.title}</h3>
+                ${it.detail ? `<p class="row-detail">${it.detail}</p>` : ""}
+                ${it.links.length > 0 ? `<div class="row-links">${linksHtml}</div>` : ""}
+              </div>
+              <div class="needs-row-actions">
+                <button type="button" class="done-btn" data-act="done" data-line="${it.lineIndex}" aria-label="Mark done: ${it.title}">Done</button>
+              </div>
+            </li>
+          `;
+          currentIndex++;
+        }
+        html += `</ul>`;
+      }
+    }
+
+    needsRoomContainer.innerHTML = html;
+
+    // Attach event listeners for mouse actions in Needs room
+    needsRoomContainer.querySelectorAll(".done-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const line = Number(btn.dataset.line);
+        handleMarkDone(line);
+      });
+    });
+
+    needsRoomContainer.querySelectorAll("[data-act='terminal']").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onTerminal(btn.dataset.sessionId);
+      });
+    });
+
+    needsRoomContainer.querySelectorAll("[data-act='answer']").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onTerminal(btn.dataset.sessionId);
+      });
+    });
+
+    needsRoomContainer.querySelectorAll(".needs-row").forEach((row) => {
+      row.addEventListener("click", () => {
+        const idx = Number(row.dataset.idx);
+        if (!isNaN(idx)) {
+          focusedIndex = idx;
+          needsRoomContainer.querySelectorAll(".needs-row").forEach((r, i) => {
+            r.classList.toggle("is-focused", i === focusedIndex);
+          });
+        }
+      });
+    });
+
+    // Mobile swipe to mark done
+    needsRoomContainer.querySelectorAll(".needs-row[data-line]").forEach((row) => {
+      let touchStartX = 0;
+      row.addEventListener("touchstart", (e) => {
+        touchStartX = e.touches[0].clientX;
+      }, { passive: true });
+      row.addEventListener("touchend", (e) => {
+        const touchEndX = e.changedTouches[0].clientX;
+        if (touchEndX - touchStartX > 80) { // Swiped right
+          const line = Number(row.dataset.line);
+          handleMarkDone(line);
+        }
+      }, { passive: true });
+    });
+  }
+
+  // Render the Agents view (Lanes + Fleet queue)
+  function renderAgentsView() {
+    if (!wallContainer) return;
+
+    // In Layout B:
+    // Wall displays agents grouped into status lanes: Live / In review / Scheduled / Parked / Done today
+    // Plus fleet queue below
+    const qItems = parseQueueNow(queueText);
+    const existingFq = document.getElementById("fleet-queue-lanes");
+    if (existingFq) existingFq.remove();
+
+    if (qItems.length > 0 && currentLayout === "B") {
+      const fqSec = document.createElement("section");
+      fqSec.id = "fleet-queue-lanes";
+      fqSec.className = "fq-lanes";
+      fqSec.innerHTML = `
+        <div class="fq-head">Fleet queue <em>from queue.md, Running now</em></div>
+        <div class="fq-list">
+          ${qItems.map((q) => `
+            <div class="qrow">
+              <span class="pill ${q.state}">${q.state === "review" ? "In review" : q.state === "scheduled" ? "Scheduled" : q.state === "parked" ? "Parked" : q.state === "done" ? "Done today" : "Working"}</span>
+              <div class="qt"><b>${q.title}</b>${q.note ? `<span>${q.note}</span>` : ""}</div>
+              <div class="links">${q.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>↗</i>${l.label}</a>`).join("")}</div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+      wallContainer.after(fqSec);
+    }
+  }
+
+  // Main render coordinator
+  function renderViews() {
+    updateHeader();
+
+    document.body.dataset.layout = currentLayout;
+    document.body.dataset.view = currentView;
+
+    const fqLanes = document.getElementById("fleet-queue-lanes");
+
+    if (currentLayout === "B" || currentLayout === "D") {
+      // Full screen rooms
+      if (currentView === "needs") {
+        if (wallContainer) wallContainer.hidden = true;
+        if (fqLanes) fqLanes.hidden = true;
+        if (needsRoomContainer) needsRoomContainer.hidden = false;
+        renderNeedsRoom();
+      } else {
+        if (wallContainer) wallContainer.hidden = false;
+        if (fqLanes) fqLanes.hidden = false;
+        if (needsRoomContainer) needsRoomContainer.hidden = true;
+        renderAgentsView();
+      }
+    } else if (currentLayout === "E") {
+      // Amber Door: Wall is always visible; Needs you is 1/3 right panel
+      if (wallContainer) wallContainer.hidden = false;
+      if (fqLanes) fqLanes.hidden = false;
+      renderAgentsView();
+
+      if (currentView === "needs") {
+        if (needsRoomContainer) {
+          needsRoomContainer.hidden = false;
+          needsRoomContainer.classList.add("amber-door-open");
+        }
+        renderNeedsRoom();
+      } else {
+        if (needsRoomContainer) {
+          needsRoomContainer.hidden = true;
+          needsRoomContainer.classList.remove("amber-door-open");
+        }
+      }
+    }
+  }
+
+  // Check for status changes to trigger jump toasts
+  function checkStatusChanges(sessions) {
+    const curStatuses = new Map(sessions.map((s) => [s.id, s.status]));
+    if (lastSessionStatuses.size > 0 && currentView === "needs") {
+      for (const [id, status] of curStatuses) {
+        const prev = lastSessionStatuses.get(id);
+        const s = sessions.find((item) => item.id === id);
+        const name = s?.identity?.name || s?.name || "An agent";
+
+        if (status === "needs_you" && prev !== "needs_you") {
+          jumpSessionId = id;
+          showToast(`${name} needs your answer`, "Enter to jump", () => {
+            switchView("agents");
+          }, 6000);
+          break;
+        } else if (status === "done" && prev !== "done") {
+          jumpSessionId = id;
+          showToast(`${name} finished`, "Enter to jump", () => {
+            switchView("agents");
+          }, 6000);
+          break;
+        }
+      }
+    }
+    lastSessionStatuses = curStatuses;
+  }
+
+  // Global Keyboard Navigation
+  function handleKeyDown(e) {
+    // If typing in input, ignore shortcuts
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+
+    if (e.key === "n" || e.key === "N") {
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        switchView("needs");
+        return;
+      }
+    }
+
+    if (e.key === "a" || e.key === "A") {
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        switchView("agents");
+        return;
+      }
+    }
+
+    if (e.key === "Escape") {
+      if (currentView === "needs") {
+        e.preventDefault();
+        switchView("agents");
+        return;
+      }
+    }
+
+    if (e.key === "Enter") {
+      const activeToast = document.querySelector(".room-toast .toast-action");
+      if (activeToast) {
+        e.preventDefault();
+        activeToast.click();
+        return;
+      }
+    }
+
+    if (currentView === "needs") {
+      const sessions = getSessions();
+      const blocked = sessions.filter((s) => s.status === "needs_you");
+      const items = parseNeedsItems(needsText);
+      const total = blocked.length + items.length;
+
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        focusedIndex = Math.min(focusedIndex + 1, total - 1);
+        renderNeedsRoom();
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        focusedIndex = Math.max(focusedIndex - 1, 0);
+        renderNeedsRoom();
+      } else if (e.key === "e") {
+        e.preventDefault();
+        if (focusedIndex >= blocked.length) {
+          const itemIdx = focusedIndex - blocked.length;
+          const item = items[itemIdx];
+          if (item) handleMarkDone(item.lineIndex);
+        }
+      } else if (e.key === "u") {
+        e.preventDefault();
+        handleUndo();
+      } else if (e.key === "o" || e.key === "Enter") {
+        e.preventDefault();
+        if (focusedIndex < blocked.length) {
+          const s = blocked[focusedIndex];
+          if (s) onTerminal(s.id);
+        } else {
+          const itemIdx = focusedIndex - blocked.length;
+          const item = items[itemIdx];
+          if (item && item.links.length > 0) {
+            window.open(item.links[0].url, "_blank", "noopener");
+          }
+        }
+      } else if (e.key === "c") {
+        e.preventDefault();
+        if (focusedIndex >= blocked.length) {
+          const itemIdx = focusedIndex - blocked.length;
+          const item = items[itemIdx];
+          if (item) {
+            const copyText = item.links[0]?.url || item.title;
+            navigator.clipboard.writeText(copyText).then(() => {
+              showToast("Copied to clipboard", null, null, 1500);
+            }).catch(() => {});
+          }
+        }
+      }
+    }
+  }
+
+  window.addEventListener("keydown", handleKeyDown);
+
+  return {
+    updateSessions(sessions) {
+      checkStatusChanges(sessions);
+      updateHeader();
+      if (currentView === "needs") renderNeedsRoom();
+      else renderAgentsView();
+    },
+    updateNeeds(view) {
+      needsText = view.text || "";
+      needsPath = view.path || "";
+      updateHeader();
+      if (currentView === "needs") renderNeedsRoom();
+    },
+    updateQueue(view) {
+      queueText = view.text || "";
+      if (currentView === "agents") renderAgentsView();
+    },
+    switchView,
+    setLayout,
+    getLayout,
+    getView: () => currentView,
+    destroy() {
+      window.removeEventListener("keydown", handleKeyDown);
+    },
+  };
+}
