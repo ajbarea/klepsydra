@@ -681,6 +681,13 @@ check "#518: a boot folder mkdir cannot make says mkdir's reason" \
     mkdir() { printf "mkdir: cannot create directory %s: No space left on device\n" "${@: -1}" >&2; return 1; }
     lock_dir; printf "%s %s" "$?" "$LOCK_WHY"' _ "$hook")" "1 cannot make $work/s-full/run-testhost-$lb: No space left on device"
 # Another caller's mkdir winning the race is no refusal: the folder is there.
+# State folder race: two callers, the loser sees "File exists" but the folder is there.
+rm -rf "$work/s-base-race"
+# shellcheck disable=SC2016 # the inner shell expands its own variables
+check "#518: a state folder another caller made first is used" \
+  "$(KLEPSYDRA_STATE="$work/s-base-race" bash -c 'eval "$(sed -n "/^# --- lock dir/,/^# --- end lock dir ---\$/p" "$1")"
+    mkdir() { command mkdir "$@"; [[ $1 == -p ]] && return 0; echo "mkdir: cannot create directory: File exists" >&2; return 1; }
+    lock_dir; printf "%s %s|%s" "$?" "$LOCK_DIR" "$LOCK_WHY"' _ "$hook")" "0 $work/s-base-race/run-testhost-$lb|"
 mkdir -m 700 "$work/s-race"
 # shellcheck disable=SC2016 # the inner shell expands its own variables
 check "#518: a boot folder another caller made first is used" \
@@ -772,6 +779,17 @@ printf 'unknown\n' >"$work/host-unknown"; cat /proc/sys/kernel/random/uuid >"$wo
 check "#518 review: a host named unknown leaves the unusable hosts' folders" \
   "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_HOSTNAME="$work/host-unknown" KLEPSYDRA_BOOT_ID="$work/boot-u" | cut -c1-2)$([[ -d $pu/run-_-$(lsid 7) ]] && echo kept)$([[ -d $pu/run-unknown-$(lsid 7) ]] || echo ' own pruned')" \
   "0 kept own pruned"
+# Hostname boundaries: valid hostname with dots and dashes, invalid names fall back to _
+printf 'node-1.example.com\n' >"$work/host-fqdn"
+check "#518: a domain-style hostname is valid" \
+  "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_HOSTNAME="$work/host-fqdn")" "0 $pu/run-node-1.example.com-$lb"
+printf 'trailing-dash-\n' >"$work/host-dash"
+check "#518: a hostname with trailing dash is unusable" \
+  "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_HOSTNAME="$work/host-dash")" "0 $pu/run-_-$lb"
+h254=$(printf 'a%.0s' {1..254})
+printf '%s\n' "$h254" >"$work/host-254"
+check "#518: a 254-character hostname is unusable" \
+  "$(ld KLEPSYDRA_STATE="$pu" KLEPSYDRA_HOSTNAME="$work/host-254")" "0 $pu/run-_-$lb"
 mkdir -m 775 "$work/s-gw"
 check "#517 review: a state folder others can write to is refused, and no boot folder made in it" \
   "$(ld KLEPSYDRA_STATE="$work/s-gw")|$(find "$work/s-gw" -mindepth 1 | wc -l)" "1 |0"

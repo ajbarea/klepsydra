@@ -98,12 +98,15 @@ lock_dir() {
   { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null
   [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown prune=0
   { read -r host <"${KLEPSYDRA_HOSTNAME:-/proc/sys/kernel/hostname}"; } 2>/dev/null
-  [[ $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || host=_ prune=0 # no hostname has a _, so no host's prune reaches it
+  [[ ${#host} -le 253 && $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || host=_ prune=0 # no hostname has a _, so no host's prune reaches it
   run=$base/run-$host-$boot
   if [[ ! -e $run && ! -L $run ]]; then
     if [[ ! -e $base && ! -L $base ]]; then
-      err=$({ mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>&1) ||
-        { LOCK_WHY="cannot make $base${err:+: ${err##*: }}"; return 1; }
+      if ! err=$({ mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>&1); then
+        if [[ ! -e $base && ! -L $base ]]; then # not another caller's mkdir winning
+          LOCK_WHY="cannot make $base${err:+: ${err##*: }}"; return 1
+        fi
+      fi
     fi
     lock_why "$base" || return 1
     mode=$(stat -c %a -- "$base" 2>/dev/null) # once a boot: others could plant links
