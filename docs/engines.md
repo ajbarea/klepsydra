@@ -105,7 +105,8 @@ When a new model appears:
 | Claude Code ignores a hook verdict with a top-level `"decision"` key (agy's shape); a hooks.json written for both runtimes silently stopped blocking in Claude Code | One verdict shape per runtime (`hookSpecificOutput.permissionDecision` for Claude Code) | techne#358 |
 | `fleet send` cannot paste into an agy pane (returns `not-pasted`); text typed into a busy agy pane queues until its turn ends | `tmux send-keys -l TEXT` then Enter; Alt+M (`send-keys M-m`) delivers a queued message now | friction 11-16 |
 | agy's status line pointed at a scratch script, so its sessions never reached the wall | `statusLine.command` = `~/.claude/klepsydra-statusline.sh`, which parses agy's quota schema | #403, #404 |
-| agy's plan loses third-party models (Claude, GPT) from 11-18; Gemini 3.8 Flash remains | Route Claude-quality free work to Copilot; agy for Gemini work | HEPH 11-14 |
+| agy's model list on 11-24: Gemini 4 Hydrogen (low, medium, high, xhigh) and Gemini 3.8 Flash, plus a third-party pool (`claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`) with its own 5-hour quota. The 11-14 expectation that the third-party models would go on 11-18 did not happen | Default `Gemini 4 Hydrogen (High)` (the `model` key in `~/.gemini/antigravity-cli/settings.json`; Hydrogen spends the Gemini quota faster than Flash). When Gemini's 5-hour quota is spent, relaunch on `--model claude-sonnet-4-6`; when both are out, wait for the earlier reset | HEPH 11-24 14:4x, 16:5x |
+| An agy session that hits "Individual quota reached" stays alive at its prompt, so nothing reads it as stopped; the wall shows it only as silent. Three agy panes sat 2 to 3 hours on 11-24 (a quota stop, a hung Windows build, a test shell that ran the resume service loop) | Read the screen for the quota line and for a background job with no CPU or new output; wrap long commands in `timeout` | #427, #558 |
 
 ### What never goes to an engine
 
