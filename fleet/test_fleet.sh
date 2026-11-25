@@ -845,7 +845,7 @@ t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 # #353: the scope in the workers' slice, kept when the kernel kills a job in it,
 # capped hard (no MemoryHigh: it freezes rather than kills); claude at OOM rank
 # 0, and every shell it starts ranked first through BASH_ENV.
-call=$(tail -1 "$work/sdrun.calls")
+call=$(<"$work/sdrun.calls")
 check "#353: a worker's scope sits in the workers' slice and outlives an OOM kill in it" \
   "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]* -p MemoryMax=[^ ]* -p MemorySwapMax=[^ ]*' <<<"$call")" "--slice=fleet-workers.slice -p OOMPolicy=continue -p MemoryMax=5G -p MemorySwapMax=1G"
 check "#353: no MemoryHigh on the scope" "$(grep -c MemoryHigh <<<"$call")" "0"
