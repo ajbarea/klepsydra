@@ -1597,6 +1597,7 @@ bash scripts/test_measure_memory.sh      # the release memory check
 bash scripts/test_build_windows.sh       # the Windows build's stage-name check
 python3 -I scripts/perf/test_fixture.py  # the perf harness's demo fleet
 python3 -I fleet/test_prune_shots.py     # fleet shots, against a fake gh
+bash fleet/test_sync_mirror.sh          # the briefing Drive mirror refusals
 python3 -I fleet/test_ci_watch.py        # CI watch: which runs count, triage once, Dependabot, 304s
 node --test src/*.test.js                # ramp, countdown, reconciliation, fleet model, faces, guards, logger
 npm run lint                             # Biome: no console.log, info or debug; pages log through src/log.js

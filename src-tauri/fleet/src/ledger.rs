@@ -392,7 +392,7 @@ fn days_from(y: i64, m: u32, d: u32) -> i64 {
 fn local_date(now: i64, tz: &TimeZone) -> (i64, u32, u32) {
     match Timestamp::from_second(now) {
         Ok(t) => {
-            let d = t.to_zoned(tz.clone()).date();
+            let d = tz.to_datetime(t).date();
             (
                 i64::from(d.year()),
                 u32::try_from(d.month()).unwrap_or(1),
@@ -1637,6 +1637,38 @@ mod tests {
         dir.write("2026-09-19.json", "{}");
         assert_eq!(prune(&dir.0, late, &ny), ["2026-09-19.json"]);
         assert!(dir.0.join("2026-09-20.json").exists());
+    }
+
+    /// New York's 2026 DST days: the last second before and the first second of
+    /// each local midnight, and both sides of each clock change.
+    const NY_2026_DST: [(i64, &str); 12] = [
+        (1_793_505_599, "2026-10-31"), // 23:59:59 EDT
+        (1_793_505_600, "2026-11-01"), // 00:00:00 EDT, a 25-hour day
+        (1_793_512_799, "2026-11-01"), // 01:59:59 EDT
+        (1_793_512_800, "2026-11-01"), // 01:00:00 EST, clocks fall back
+        (1_793_595_599, "2026-11-01"), // 23:59:59 EST
+        (1_793_595_600, "2026-11-02"),
+        (1_772_945_999, "2026-03-07"), // 23:59:59 EST
+        (1_772_946_000, "2026-03-08"), // 00:00:00 EST, a 23-hour day
+        (1_772_953_199, "2026-03-08"), // 01:59:59 EST
+        (1_772_953_200, "2026-03-08"), // 03:00:00 EDT, clocks spring forward
+        (1_773_028_799, "2026-03-08"), // 23:59:59 EDT
+        (1_773_028_800, "2026-03-09"),
+    ];
+
+    #[test]
+    fn dst_days_by_rule_and_by_tz_database() {
+        // A POSIX rule, and the tz database as the app reads its zone (jiff's
+        // bundled copy on Windows, the system's elsewhere).
+        let zones = [
+            ("posix", TimeZone::posix("EST5EDT,M3.2.0,M11.1.0").unwrap()),
+            ("tzdb", TimeZone::get("America/New_York").unwrap()),
+        ];
+        for (name, tz) in &zones {
+            for (at, day) in NY_2026_DST {
+                assert_eq!(day_name(at, tz), day, "{name} {at}");
+            }
+        }
     }
 
     #[test]
