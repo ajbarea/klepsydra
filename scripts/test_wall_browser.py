@@ -1622,7 +1622,14 @@ NARROW = """() => {
   const whenCut = cards.flatMap((c) => [...c.querySelectorAll('.pill .when')])
     .filter((w) => w.checkVisibility() && w.textContent.trim() && w.scrollWidth > w.clientWidth + 1)
     .map((w) => `${w.closest('.card').querySelector('.name')?.textContent} ${w.clientWidth}px`);
-  return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut, squeezed, overlap,
+  // A slim comfortable card's pill on the name's row (#535): moving it under the name cuts the task.
+  const mid = (e) => { const b = e.getBoundingClientRect(); return b.top + b.height / 2; };
+  const pillMoved = cards.filter((c) => c.matches('.tone-done, .dim')).filter((c) => {
+    const p = c.querySelector('.pill'), n = c.querySelector('.name');
+    return p && n && p.checkVisibility() && Math.abs(mid(p) - mid(n)) > 12;
+  }).map((c) => c.querySelector('.name').textContent);
+  return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut, squeezed, overlap, pillMoved,
+           calcSize: CSS.supports('min-width: calc-size(max-content, size)'),
            density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)], whenCut };
 }"""
 
@@ -1644,9 +1651,11 @@ def narrow_window_keeps_cards_inside(wall):
             tab = " with a queue tab" if tabbed else ""
             # Where main shows every compact pill's time whole, the name's floor cuts none (#535).
             whens_ok = not (density == "compact" and width in (945, 1280, 1920)) or not got["whenCut"]
+            # Where calc-size() sizes the name's floor, a comfortable slim card's pill never leaves the name's row.
+            pills_ok = density == "compact" or not got["calcSize"] or not got["pillMoved"]
             wall.check(got["density"] == density and got["cards"] > 0 and not got["wide"] and not got["out"]
                        and not got["cut"] and not got["overlap"] and not got["squeezed"] and got["jumps"] in ([], ["Open terminal"])
-                       and whens_ok,
+                       and whens_ok and pills_ok,
                        f"{density} at {width} px{tab}: cards in the window, controls in their card and apart, no name squeezed, Open terminal whole", got)
             page.close()
     page = open_app(wall, width=1920, height=1000)

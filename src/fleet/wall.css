@@ -526,19 +526,23 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .pill { margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8)); }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) :is(.epithet, .marks) { display: none; }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .stage { background: var(--grain); }
-/* Narrow comfortable slim cards (#535): name and pill on one row squeeze the name
-   under 90 px once the wall's content is narrower than 360 px (measured on the demo
-   wall, 11-25), so there the pill moves to the task row and the name takes the row. */
-@container wall (max-width: 359.98px) {
-  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header {
-    grid-template-areas: "name name" "task pill";
-  }
-  .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .name {
-    margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8));
-  }
-  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill,
-  .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .pill {
-    margin-right: 0; /* the menu stays on the name's row */
+/* Narrow comfortable slim cards (#535): a name keeps its own width up to 90 px
+   before the pill takes room from it; the pill's age gives way first. Without
+   calc-size() (Chromium 129+), the pill moves to the task row once the wall's
+   content is narrower than 360 px, where the demo wall first squeezes a name. */
+@supports (min-width: calc-size(max-content, size)) {
+  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header { grid-template-columns: minmax(auto, 1fr) minmax(0, auto); }
+  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .name { min-width: calc-size(max-content, min(size, 90px)); }
+  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill { min-width: 0; }
+  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill :is(.mark, .label, .badge) { flex-shrink: 0; }
+  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill .age { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@supports not (min-width: calc-size(max-content, size)) {
+  @container wall (max-width: 359.98px) {
+    .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header { grid-template-areas: "name name" "task pill"; }
+    .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .name { margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8)); }
+    .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill,
+    .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .pill { margin-right: 0; /* the menu stays on the name's row */ }
   }
 }
 
@@ -1032,7 +1036,14 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   [data-density="compact"] .name { min-width: calc-size(max-content, min(size, 90px)); }
 }
 @supports not (min-width: calc-size(max-content, size)) {
-  :root:not(.served) .wall[data-density="compact"] .card { grid-template-columns: var(--wall-face) minmax(min(calc(90px + var(--head-gap)), 100%), 1fr) minmax(0, auto) auto auto; }
+  /* A fixed 90 px floor, only on desktop cards whose content is under 420 px:
+     where the demo wall's long pills first squeeze a name (two columns at 880 to
+     930 px, 11-25). Wider cards keep main's columns and every time whole. */
+  :root:not(.served) .wall[data-density="compact"] .card { container: card / inline-size; }
+  @container card (max-width: 419.98px) {
+    :root:not(.served) [data-density="compact"] .name { min-width: 90px; }
+  }
+  :root:not(.served) .wall[data-density="compact"] .card { grid-template-columns: var(--wall-face) minmax(auto, 1fr) minmax(0, auto) auto auto; }
 }
 [data-density="compact"] .card header,
 [data-density="compact"] .card .actions,
@@ -1084,7 +1095,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
       "menu note note note note";
   }
   /* The pill keeps to its share of the line: its time gives way first ("12m qu…"). */
-  :root:not(.served) [data-density="compact"] .pill { justify-self: start; min-width: 0; max-width: calc(100% - var(--head-gap)); margin-left: var(--head-gap); }
+  :root:not(.served) [data-density="compact"] .pill { justify-self: start; max-width: calc(100% - var(--head-gap)); margin-left: var(--head-gap); }
 }
 [data-density="compact"] .jump,
 [data-density="compact"] .clear {
