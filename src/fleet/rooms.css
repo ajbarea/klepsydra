@@ -1,6 +1,22 @@
 /* Rooms for klepsydra #386: Needs you and Agents as two experiences, three layouts.
    Uses the wall's own dark tokens (bronze near-black, parchment ink, Okabe-Ito amber, green for done). */
 
+:root {
+  --plinth: #0f0c08;
+  --gold: #c9a24a;
+  --needs: #e69f00;
+  --done: #009e73;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not(.served) {
+    --plinth: #e4d8c3;
+    --gold: #8a6a00;
+    --needs: #ac6700;
+    --done: #00805c;
+  }
+}
+
 /* Header Pills Navigation */
 .rooms-nav {
   display: inline-flex;

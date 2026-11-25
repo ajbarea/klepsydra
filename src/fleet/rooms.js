@@ -315,6 +315,7 @@ export function createRooms({
 
     // Update phone tabbar
     if (phoneTabBar) {
+      phoneTabBar.hidden = false;
       phoneTabBar.innerHTML = `
         <button type="button" id="ptab-agents" class="ptab-btn" aria-current="${currentView === "agents" ? "page" : "false"}">
           <span class="pico">◐</span>
@@ -901,6 +902,7 @@ export function createRooms({
   }
 
   window.addEventListener("keydown", handleKeyDown);
+  updateHeader();
 
   return {
     updateSessions(sessions) {
