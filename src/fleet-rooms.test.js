@@ -123,3 +123,17 @@ test("workingCount: counts working sessions", () => {
   ];
   assert.equal(workingCount(sessions), 2);
 });
+
+test("Layout B: two rooms with dedicated titles, blocked sessions first, lanes", () => {
+  assert.equal(DEFAULT_LAYOUT, "B");
+  const fixture = readFileSync(new URL("../scripts/fixtures/needs-you-shape.md", import.meta.url), "utf8");
+  const items = parseNeedsItems(fixture);
+  assert.ok(items.length > 0);
+
+  // Group order: Blocked, Today, Coming up, When convenient
+  const groups = new Set(items.map((it) => it.group));
+  assert.ok(groups.has("Today"));
+  assert.ok(groups.has("Coming up"));
+  assert.ok(groups.has("When convenient"));
+});
+

@@ -398,11 +398,13 @@ export function createRooms({
     `;
 
     if (total === 0) {
+      // Find any future item or first dated item if available
+      const nextItem = items[0];
       html += `
         <div class="needs-all-clear">
           <div class="all-clear-icon">✓</div>
           <h2>${currentLayout === "D" ? "All clear" : "Nothing waits on you"}</h2>
-          <p class="all-clear-sub">New asks and sessions waiting on your review land here first.</p>
+          <p class="all-clear-sub">${nextItem ? `Next item: <strong>${nextItem.title}</strong> (${nextItem.group})` : "New asks and sessions waiting on your review land here first."}</p>
         </div>
       `;
     } else {
@@ -526,30 +528,111 @@ export function createRooms({
   function renderAgentsView() {
     if (!wallContainer) return;
 
-    // In Layout B:
-    // Wall displays agents grouped into status lanes: Live / In review / Scheduled / Parked / Done today
-    // Plus fleet queue below
     const qItems = parseQueueNow(queueText);
     const existingFq = document.getElementById("fleet-queue-lanes");
     if (existingFq) existingFq.remove();
+    const existingPhoneAgents = document.getElementById("phone-agents-list");
+    if (existingPhoneAgents) existingPhoneAgents.remove();
 
-    if (qItems.length > 0 && currentLayout === "B") {
-      const fqSec = document.createElement("section");
-      fqSec.id = "fleet-queue-lanes";
-      fqSec.className = "fq-lanes";
-      fqSec.innerHTML = `
-        <div class="fq-head">Fleet queue <em>from queue.md, Running now</em></div>
-        <div class="fq-list">
-          ${qItems.map((q) => `
-            <div class="qrow">
-              <span class="pill ${q.state}">${q.state === "review" ? "In review" : q.state === "scheduled" ? "Scheduled" : q.state === "parked" ? "Parked" : q.state === "done" ? "Done today" : "Working"}</span>
-              <div class="qt"><b>${q.title}</b>${q.note ? `<span>${q.note}</span>` : ""}</div>
-              <div class="links">${q.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>↗</i>${l.label}</a>`).join("")}</div>
-            </div>
-          `).join("")}
+    const isPhone = typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
+    const sessions = getSessions();
+
+    if (isPhone) {
+      // Phone: Agents is one row per agent with portrait and status
+      const phoneList = document.createElement("section");
+      phoneList.id = "phone-agents-list";
+      phoneList.className = "phone-agents-list";
+      phoneList.innerHTML = `
+        <div class="phone-agents-head">Agents <span class="group-count">${sessions.length}</span></div>
+        <div class="phone-agents-rows">
+          ${sessions.map((s) => {
+            const who = s.identity?.name || s.name || "Agent";
+            const face = s.identity?.face ? `faces/${s.identity.face}-figure.webp` : "";
+            const status = s.status || "idle";
+            const task = s.task || s.reason || "Active session";
+            return `
+              <div class="phone-agent-row" data-id="${s.id}">
+                <div class="phone-agent-pic">
+                  ${face ? `<img src="${face}" alt="" />` : `<div class="blocked-disc">A</div>`}
+                </div>
+                <div class="phone-agent-info">
+                  <div class="phone-agent-title"><b>${who}</b> <span class="pill ${status}">${status}</span></div>
+                  <div class="phone-agent-task">${task}</div>
+                </div>
+              </div>
+            `;
+          }).join("")}
         </div>
       `;
-      wallContainer.after(fqSec);
+      wallContainer.after(phoneList);
+    } else if (currentLayout === "B") {
+      // Desktop Layout B: Lanes Live (wall cards), In review, Scheduled/Parked, Done today (collapsed to a count)
+      const inReview = qItems.filter((q) => q.state === "review");
+      const schedParked = qItems.filter((q) => q.state === "scheduled" || q.state === "parked");
+      const doneToday = qItems.filter((q) => q.state === "done");
+
+      const fqSec = document.createElement("section");
+      fqSec.id = "fleet-queue-lanes";
+      fqSec.className = "fq-lanes lanes-b";
+
+      let lanesHtml = "";
+
+      if (inReview.length > 0) {
+        lanesHtml += `
+          <div class="lane-block">
+            <div class="lane-header"><span class="pill review">In review</span> <span class="group-count">${inReview.length}</span></div>
+            <div class="lane-items">
+              ${inReview.map((q) => `
+                <div class="lane-slim-row">
+                  <span class="slim-title"><b>${q.title}</b>${q.note ? ` <span>${q.note}</span>` : ""}</span>
+                  <div class="links">${q.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>⑂</i>${l.label}</a>`).join("")}</div>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `;
+      }
+
+      if (schedParked.length > 0) {
+        lanesHtml += `
+          <div class="lane-block">
+            <div class="lane-header"><span class="pill scheduled">Scheduled / Parked</span> <span class="group-count">${schedParked.length}</span></div>
+            <div class="lane-items">
+              ${schedParked.map((q) => `
+                <div class="lane-slim-row">
+                  <span class="slim-title"><b>${q.title}</b>${q.note ? ` <span>${q.note}</span>` : ""}</span>
+                  <div class="links">${q.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>↗</i>${l.label}</a>`).join("")}</div>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `;
+      }
+
+      if (doneToday.length > 0) {
+        lanesHtml += `
+          <details class="lane-block done-today-lane">
+            <summary class="lane-header done-summary">
+              <span class="pill done">Done today</span>
+              <span class="group-count">${doneToday.length}</span>
+              <span class="done-hint">collapsed</span>
+            </summary>
+            <div class="lane-items">
+              ${doneToday.map((q) => `
+                <div class="lane-slim-row is-done-row">
+                  <span class="slim-title"><b>${q.title}</b>${q.note ? ` <span>${q.note}</span>` : ""}</span>
+                  <div class="links">${q.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>✓</i>${l.label}</a>`).join("")}</div>
+                </div>
+              `).join("")}
+            </div>
+          </details>
+        `;
+      }
+
+      if (lanesHtml) {
+        fqSec.innerHTML = `<div class="fq-head">Plan & Queue <em>from queue.md</em></div>${lanesHtml}`;
+        wallContainer.after(fqSec);
+      }
     }
   }
 
