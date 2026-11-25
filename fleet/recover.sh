@@ -88,10 +88,9 @@ else
   # Gone: its recorded session (the resume service keeps it), else the newest
   # file naming its pane that is no agent's, for its transcript.
   osid=$rec
-  [[ -z $osid && -n $orch ]] && osid=$(for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-    [[ -f $f && ! -L $f ]] || continue
-    jq -r --arg p "$orch" 'select(.tmux.pane == $p) | "\(.started_at // 0) \(input_filename | split("/") | last | rtrimstr(".json"))"' "$f" 2>/dev/null
-  done | sort -rn | while read -r _ id; do grep -qxF -- "$id" <<<"$agents" || { printf '%s' "$id"; break; }; done)
+  [[ -z $osid && -n $orch ]] && osid=$(while IFS=$'\t' read -r f pane _ _ at _; do
+    [[ $pane == "$orch" ]] && printf '%s %s\n' "$at" "${f%.json}"
+  done < <(fleet_sessions_tsv) | sort -rn | while read -r _ id; do grep -qxF -- "$id" <<<"$agents" || { printf '%s' "$id"; break; }; done)
 fi
 
 # The one session that was alive in PANE before any launch, is not Heph's and
