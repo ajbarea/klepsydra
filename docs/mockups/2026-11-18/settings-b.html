@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings B</title>
+<link rel="stylesheet" href="mock.css">
+<link rel="stylesheet" href="settings.css">
+<script src="icons.js"></script>
+<script src="readings.js"></script>
+<script src="settings.js"></script>
+</head>
+<body>
+<main class="sheet">
+<header>
+  <h1>Settings B: sections and cards</h1>
+  <p class="trade">Windows 11's pattern: a rail of sections with search on top, and each setting on its own card. Faster to jump around, but it is a second navigation system inside a small app.</p>
+  <p class="stamp">Values: today's settings · sisters from ~/.claude/techne.toml, 11-18</p>
+</header>
+<div class="window"><div class="set-b" id="b1"></div></div>
+<p class="cap">Gauges: both homes, docked and floating (11-18).</p>
+<div class="window" style="margin-top:24px"><div class="set-b" id="b3"></div></div>
+<p class="cap">Engines: a switch per harness (11-18).</p>
+<div class="window" style="margin-top:24px"><div class="set-b" id="b2"></div></div>
+<p class="cap">Sisters: the techne.toml editor (11-18).</p>
+</main>
+<script>
+  const { SECTIONS, I } = SETTINGS;
+  const win = (id) => {
+    const cur = SECTIONS.find((s) => s.id === id);
+    const rail = `<nav class="rail" aria-label="Settings sections"><div class="app">Settings</div><div class="search">${I("search")}Find a setting</div>${SECTIONS.map((s) => `<a href="#${s.id}"${s.id === id ? ' aria-current="page"' : ""}>${I(s.icon)}${s.title}</a>`).join("")}</nav>`;
+    const pane = `<div class="pane"><h1>${cur.title}</h1>${cur.lead ? `<p class="section-lead">${cur.lead}</p>` : ""}<div class="cards">${cur.rows.join("")}</div></div>`;
+    return rail + pane;
+  };
+  document.getElementById("b1").innerHTML = win("gauges");
+  document.getElementById("b2").innerHTML = win("sisters");
+  document.getElementById("b3").innerHTML = win("engines");
+</script>
+</body>
+</html>
