@@ -401,6 +401,9 @@ spawn() { # PANE KIND CTX CMD...
   # The tmux server it ran on: after a restart its pane ids belong to others.
   printf '%s%s%s%s%s\n' "$(t display-message -p '#{pid}' 2>/dev/null)" "$US" "$kind" "$US" "$ctx" >"$JOBS/${p#%}.ctx"
   (
+    # A move outlives its pass: it reads session files fresh, not the rows
+    # the pass cached when it began (a /clear meanwhile must show).
+    unset SESSION_ROWS
     new=$(FLEET_KEEP_MARK=1 MOVE_NEW=$out.new "$@")
     rc=$?
     # The new pane's mark goes before the result shows, so a pass that reaps
@@ -931,7 +934,10 @@ pass() {
   # `keryx off` between changes is left alone.
   [[ ${FLEET_VOICES:-1} == 0 ]] || bash "$here/voices.sh" --if-changed >/dev/null 2>&1 </dev/null
   reap
-  local p panes seen
+  local p panes seen SESSION_ROWS
+  # One read of every session file for the whole pass: one() asks it per pane.
+  # shellcheck disable=SC2034 # read by fleet_sessions_tsv
+  SESSION_ROWS=$(fleet_sessions_tsv)
   PASS_LIMITED=()
   panes=$(fleet_panes)
   for p in $panes; do one "$p"; done

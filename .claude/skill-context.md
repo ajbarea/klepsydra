@@ -166,12 +166,14 @@ files belong to: the JS guards scan hooks and scripts too.
 
 ## ci_audit
 
-- workflows: `.github/workflows/ci.yml` (two jobs), and
+- workflows: `.github/workflows/ci.yml` (four jobs), and
   `.github/workflows/dependabot-auto-merge.yml`.
-- `Gauge logic + statusLine hook` runs on `ubuntu-latest` with Node 24: unit
+- `Hooks, lints and the other suites` runs on `ubuntu-latest` with Node 24: unit
   tests, both hooks' tests, the release memory check's tests, shellcheck,
   Biome and ruff (the logging lints, as annotations), and the
-  install-directory guard.
+  install-directory guard. `Fleet engine tests` runs the fleet engine suite beside it
+  (the longest suite). `Gauge logic + statusLine hook` needs both and passes
+  only when both passed; it is the name branch protection requires.
 - `Rust (fmt + clippy, <os>)` is a matrix over `windows-latest` and
   `ubuntu-latest`, for the reason in `## repo`; the Linux leg installs the
   WebKitGTK and tray headers first. Clippy is `-D warnings`, so a warning is a
