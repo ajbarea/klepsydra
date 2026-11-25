@@ -3321,15 +3321,16 @@ check "review 4: pasted as AJ began a line, nothing is sent and none of his line
 t kill-window -t "$p"
 echo "#515: the context budget: checkpoint, then a fresh session"
 login a; login b; reading a Personal 10 5000; reading b RIT 10 4000
-ctx_file() { # PANE TOKENS STAMP [STATE]: the hook's file for the session live in PANE
-  jq -n --arg p "$1" --argjson t "$2" --arg at "$3" --arg st "${4:-done}" \
-    '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: [], call_tokens: $t, prompt: {at: $at}, turn_at: $at}' \
+ctx_file() { # PANE TOKENS STAMP [STATE]: the hook's file for the session live in PANE, one line as the hook writes it
+  jq -cn --arg p "$1" --argjson t "$2" --arg at "$3" --arg st "${4:-done}" \
+    '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: [], call_tokens: $t, prompt: {at: $at}, turn_at: $at}' \
     >"$KLEPSYDRA_DIR/fleet/$SID.json"
 }
 ctx_idle='{"above":["⏺ Done. done 11:50 AM"],"rc":"on"}'
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
 p=$(pane ctx "$ctx_idle"); settle
 ctx_file "$p" 300000 t1
+check "#515: the fixture reads as the pane's live session" "$(live_session "$p")" "$SID"
 printf '%s\tctx\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
 mover "$noon"
@@ -3382,7 +3383,7 @@ printf '%s\tctxlow\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a
 mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
 mover "$noon"; mover "$((noon + 60))"
 check "#515: one token under the budget, nothing is asked or moved" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
-jq 'del(.call_tokens)' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp" && mv -- "$work/ctx.tmp" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c 'del(.call_tokens)' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp" && mv -- "$work/ctx.tmp" "$KLEPSYDRA_DIR/fleet/$SID.json"
 mover "$((noon + 120))"
 check "#515: nor for a session an older hook never measured" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
