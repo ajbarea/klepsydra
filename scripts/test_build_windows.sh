@@ -40,5 +40,52 @@ for path in .claude/ .git/ node_modules/ src-tauri/target/; do
   check "stage copy excludes $path" "$(grep -cF -- "--exclude '$path'" <<<"$excludes")" 1
 done
 
+# Timeout and cleanup tests with a fake powershell.exe (#560).
+mkdir -p "$work/bin"
+cat <<'EOF' > "$work/bin/powershell.exe"
+#!/usr/bin/env bash
+if [[ "$*" =~ Stop-Process ]]; then
+  echo "stopped" >> "${PWSH_LOG:-/dev/null}"
+  exit 0
+fi
+if [[ -n "${PWSH_SLEEP:-}" ]]; then
+  exec sleep "$PWSH_SLEEP"
+fi
+EOF
+chmod +x "$work/bin/powershell.exe"
+
+# A hung powershell is stopped at the time limit and reports the skip line.
+pwsh_hung_log="$work/pwsh_hung.log"
+rc_hung=0
+out_hung=$(
+  PATH="$work/bin:$PATH" \
+  FLEET_WINBUILD_TIMEOUT_S=1 \
+  PWSH_SLEEP=9999 \
+  PWSH_LOG="$pwsh_hung_log" \
+  KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
+  KLEPSYDRA_STAGE="klepsydra-build-test_hung" \
+  timeout 10s bash "$here/build-windows.sh" --check 2>&1
+) || rc_hung=$?
+
+check "hung run exits non-zero" "$rc_hung" 1
+check "hung run prints skip line" "$(grep -cF 'build-windows: hung: no compiler running after 1 min; skip the local Windows check, CI windows-latest covers it' <<<"$out_hung")" 1
+check "hung run stops Windows processes" "$(grep -cF 'stopped' "$pwsh_hung_log" 2>/dev/null || echo 0)" 1
+
+# A normal powershell run finishes cleanly and does not print the hung error.
+pwsh_normal_log="$work/pwsh_normal.log"
+rc_normal=0
+out_normal=$(
+  PATH="$work/bin:$PATH" \
+  PWSH_SLEEP="" \
+  PWSH_LOG="$pwsh_normal_log" \
+  KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
+  KLEPSYDRA_STAGE="klepsydra-build-test_normal" \
+  timeout 10s bash "$here/build-windows.sh" --check 2>&1
+) || rc_normal=$?
+
+check "normal run exits zero" "$rc_normal" 0
+check "normal run prints no hung warning" "$(grep -cF 'build-windows: hung:' <<<"$out_normal")" 0
+check "normal run does not stop processes" "$(grep -cF 'stopped' "$pwsh_normal_log" 2>/dev/null || echo 0)" 0
+
 printf '%d passed, %d failed\n' "$pass" "$fail"
 ((fail == 0))

@@ -21,14 +21,75 @@ check_stage() {
   fi
 }
 
+# Stops any Windows process whose command line contains the stage folder name.
+stop_windows_stage_processes() {
+  local name=$1
+  if [[ ! $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ ]]; then
+    return 0
+  fi
+  # shellcheck disable=SC2016 # PowerShell source: $ variables reach pwsh unexpanded.
+  timeout 15s powershell.exe -NoProfile -Command \
+    "Get-CimInstance Win32_Process | Where-Object { \$_.ProcessId -ne \$PID -and \$_.CommandLine -like '*$name*' } | Stop-Process -Force -ErrorAction SilentlyContinue" 2>/dev/null || true
+}
+
+# Runs powershell under a time limit, stopping stage processes on timeout.
+run_powershell() {
+  local timeout_s=${FLEET_WINBUILD_TIMEOUT_S:-1800}
+  local min=$(( (timeout_s + 59) / 60 ))
+  local stage=${stage_name:-${KLEPSYDRA_STAGE:-klepsydra-build}}
+  local timer_flag; timer_flag=$(mktemp -u /tmp/winbuild_timeout.XXXXXX)
+
+  powershell.exe "$@" &
+  local pwsh_pid=$!
+
+  (
+    sleep "$timeout_s" &
+    wait $!
+    touch "$timer_flag"
+    kill -TERM "$pwsh_pid" 2>/dev/null
+    pkill -P "$pwsh_pid" 2>/dev/null || true
+  ) &
+  local timer_pid=$!
+
+  local rc=0
+  wait "$pwsh_pid" 2>/dev/null || rc=$?
+
+  pkill -P "$timer_pid" 2>/dev/null || true
+  kill -9 "$timer_pid" 2>/dev/null || true
+  wait "$timer_pid" 2>/dev/null || true
+
+  if [[ -f "$timer_flag" ]]; then
+    rm -f "$timer_flag"
+    kill -KILL "$pwsh_pid" 2>/dev/null || true
+    pkill -9 -P "$pwsh_pid" 2>/dev/null || true
+    cleaned_up=1
+    stop_windows_stage_processes "$stage"
+    echo "build-windows: hung: no compiler running after $min min; skip the local Windows check, CI windows-latest covers it" >&2
+    return 1
+  fi
+
+  return "$rc"
+}
+
 # Sourced by scripts/test_build_windows.sh for the check alone.
 [[ ${BASH_SOURCE[0]} != "$0" ]] && return 0
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 stage_name=${KLEPSYDRA_STAGE:-klepsydra-build}
+stage_root=${KLEPSYDRA_STAGE_ROOT:-/mnt/c/Users/$USER}
 stage_win="C:\\Users\\$USER\\$stage_name"
-stage="/mnt/c/Users/$USER/$stage_name"
+stage="$stage_root/$stage_name"
 check_stage "$stage_name" "$stage" || exit 2
+
+cleaned_up=0
+cleanup() {
+  local rc=$?
+  if (( rc != 0 && cleaned_up == 0 )); then
+    cleaned_up=1
+    stop_windows_stage_processes "$stage_name"
+  fi
+}
+trap cleanup EXIT INT TERM
 
 mkdir -p "$stage"
 # Everything except build output and VCS; target/ and node_modules/ stay put.
@@ -44,15 +105,15 @@ tools='$env:Path = "C:\\Program Files\\nodejs;$env:USERPROFILE\\.cargo\\bin;" + 
 
 if [[ ${1:-} == --check ]]; then
   echo "==> cargo clippy and cargo test, on Windows"
-  powershell.exe -NoProfile -Command "$tools; cd '$stage_win\\src-tauri'; cargo clippy --workspace --all-targets -- -D warnings; if (\$LASTEXITCODE) { exit \$LASTEXITCODE }; cargo test --workspace; exit \$LASTEXITCODE"
+  run_powershell -NoProfile -Command "$tools; cd '$stage_win\\src-tauri'; cargo clippy --workspace --all-targets -- -D warnings; if (\$LASTEXITCODE) { exit \$LASTEXITCODE }; cargo test --workspace; exit \$LASTEXITCODE"
   exit $?
 fi
 
 echo "==> installing frontend tooling"
-powershell.exe -NoProfile -Command "$tools; cd '$stage_win'; npm install --no-fund --no-audit" 2>&1 | tail -5
+run_powershell -NoProfile -Command "$tools; cd '$stage_win'; npm install --no-fund --no-audit" 2>&1 | tail -5
 
 echo "==> cargo tauri build"
-powershell.exe -NoProfile -Command "$tools; cd '$stage_win'; npx --yes tauri build" 2>&1 | tail -60
+run_powershell -NoProfile -Command "$tools; cd '$stage_win'; npx --yes tauri build" 2>&1 | tail -60
 
 exe="$stage/src-tauri/target/release/klepsydra.exe"
 if [[ -f "$exe" ]]; then
