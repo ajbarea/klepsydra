@@ -153,22 +153,18 @@ lock_dir() {
 # Every session's hooks run as separate processes, so writes take one lock.
 # Without its folder (lock_dir) the hook writes nothing, but leaves one line,
 # "<epoch> <why>", in <KLEPSYDRA_DIR>/lock-refused at most every LOCK_TRACE_S
-# seconds, which fleet doctor shows (#518).
+# seconds, which fleet doctor shows (#518). Builtins only, only when
+# own_data_dir (dev.ajsoftworks.klepsydra) holds, and only to a regular file.
 LOCK_TRACE_S=600
 lock_trace() { # WHY
-  local file=${KLEPSYDRA_DIR:-}/lock-refused now t="" tmp
+  local file=${KLEPSYDRA_DIR:-}/lock-refused now t=""
   [[ -n ${KLEPSYDRA_DIR:-} ]] && own_data_dir "$KLEPSYDRA_DIR" || return 0
   [[ -d $KLEPSYDRA_DIR && ! -L $file && ( ! -e $file || -f $file ) ]] || return 0
   now=${KLEPSYDRA_NOW:-}
   [[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
   { read -r t _ <"$file"; } 2>/dev/null
   [[ $t =~ ^[0-9]{1,12}$ ]] && (( t <= now && now - t < LOCK_TRACE_S )) && return 0
-  tmp=$file.$$.tmp
-  if printf '%s %s\n' "$now" "$1" >"$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
-  else
-    rm -f "$tmp" 2>/dev/null
-  fi
+  { printf '%s %s\n' "$now" "$1"; } 2>/dev/null >"$file"
   return 0
 }
 lock_dir || lock_trace "$LOCK_WHY"

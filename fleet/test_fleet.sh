@@ -1426,6 +1426,8 @@ check "#518: one from before this boot is not" "$(doctor | grep 'lock folder' | 
 printf 'btime %s\n' $((lknow - 7200)) >"$work/dproc/stat"
 printf '%s old\n' $((lknow - 3700)) >"$KLEPSYDRA_DIR/lock-refused"
 check "#518: nor one over an hour old" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+printf '%s future\n' $((lknow + 600)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: nor one stamped in the future" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
 rm -f -- "$KLEPSYDRA_DIR/lock-refused" "$work/dproc/stat"
 printf '#!/usr/bin/env bash\n# an old hook with no lock folder of its own\n' >"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "#518: an installed hook with no lock_dir is checked with the checkout's" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"

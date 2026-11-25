@@ -70,6 +70,7 @@ export XDG_RUNTIME_DIR="$work/no-runtime"
 printf 'testhost\n' >"$work/hostname"
 export KLEPSYDRA_HOSTNAME="$work/hostname"
 ld="$HOME/.local/state/klepsydra/run-testhost-$(</proc/sys/kernel/random/boot_id)"
+pending="$ld/klepsydra-tab-pending-$UID"
 export KLEPSYDRA_TMUX_SOCKET="$sock" KLEPSYDRA_TMUX_CONF="$here/klepsydra-tmux.conf"
 export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
 # Never the host's systemd: an agent's own scope sets INVOCATION_ID, which
@@ -119,7 +120,7 @@ check "first: one window" "$(windows)" "1"
 check "first: one tab" "$(tabs)" "1"
 check "first: the tab attaches by the socket's path" "$(head -1 "$WT_LOG")" \
   "-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe -d Test -e tmux -S $(t display -p '#{socket_path}') attach -t =fleet"
-check "first: an attached tab leaves no pending stamp" "$([[ -e $ld/klepsydra-tab-pending-$UID ]] && echo left)" ""
+check "first: an attached tab leaves no pending stamp" "$([[ -e $pending ]] && echo left)" ""
 check "first: conf loaded" "$(t show -gv automatic-rename-format)" "#{pane_title}"
 check "first: focus events on" "$(t show -gv focus-events)" "on"
 attach
@@ -779,11 +780,11 @@ stop_server; detach_all; : >"$WT_LOG"
 export WT_DELAY=never
 out=$(XDG_RUNTIME_DIR="$work/run-not-yet" bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "#517 B2: a cold tab before the folder exists stamps this boot's folder" \
-  "$rc $([[ -f $ld/klepsydra-tab-pending-$UID ]] && echo stamped)" "0 stamped"
+  "$rc $([[ -f $pending ]] && echo stamped)" "0 stamped"
 out=$(XDG_RUNTIME_DIR="$work/run-made" bash "$launch" new "$work/repos" 2>&1); rc=$?
 check "#517 B2: and a launch after it sees the stamp: one tab, two windows" "$rc $(tabs) $(windows)" "0 1 2"
 unset WT_DELAY
-rm -f -- "$ld/klepsydra-tab-pending-$UID" # or the next cases' first tab waits on it
+rm -f -- "$pending" # or the next cases' first tab waits on it
 
 # No lock folder of its own: nothing starts, and it says why.
 stop_server; detach_all; : >"$WT_LOG"
@@ -821,7 +822,6 @@ unset WT_DELAY
 
 echo "a tab that has not attached yet"
 stop_server; detach_all; : >"$WT_LOG"
-pending="$ld/klepsydra-tab-pending-$UID"
 # A cold WSL: the tab attaches after the launcher stops waiting. The launcher's
 # poll runs longer on a loaded machine, so any fixed delay can land inside it
 # and leave no pending stamp; this tab never attaches.
@@ -965,7 +965,6 @@ EOF
 chmod +x "$lbin/.xdg" "$lbin/.xdotool" "$lbin/.xprop"
 export TERM_LOG="$work/term.log" XDG_LOG="$work/xdg.log" XDO_LOG="$work/xdo.log"
 lx() { env -u WSL_DISTRO_NAME KLEPSYDRA_PROC="$lproc" PATH="$lbin:$lbase" "$@"; }
-pending="$work/klepsydra-tab-pending-$UID"
 stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
 
 out=$(lx bash "$launch" new "$work/repos" 2>&1); rc=$?
@@ -997,6 +996,10 @@ sp=$(t display -p '#{socket_path}')
 want_tail="tmux -S $sp attach -t =fleet"
 check "linux: xterm gets title, -e and the attach" "$(head -1 "$TERM_LOG")" "xterm -T klepsydra sessions -e $want_tail"
 check "linux: an attached tab: windows 1, pending stamp gone" "$(windows) $([[ -e $pending ]] && echo left)" "1 "
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+mkfifo "$pending"
+lx env KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" >/dev/null 2>&1; rc=$?
+check "linux: a FIFO at the shared pending stamp is removed, not ignored" "$rc|$([[ -p $pending ]] && echo fifo)" "0|"
 stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
 lx bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "linux: gnome-terminal gets a titled tab" "$(head -1 "$TERM_LOG")" "gnome-terminal --tab --title=klepsydra sessions -- $want_tail"
@@ -1235,6 +1238,10 @@ check "#260: and no fleet session was made" "$(tmux -L "$sock5" has-session -t =
 tmux -L "$sock5" kill-server 2>/dev/null
 
 check "#292 review 2: no case reached the host's systemd-run" "$(cat "$work/systemd-run-guard.calls" 2>/dev/null)" ""
+# shellcheck disable=SC2016 # literal pattern checked against the source
+check "#518 r4: pending stamp path defined once from \$ld" \
+  "$(grep -E 'klepsydra-tab[-]pending|[/][^[:space:]]*tab[-]pending' "$here/test_launch.sh")" \
+  'pending="$ld/klepsydra-tab''-pending-$UID"'
 
 echo "cleanup"
 cleanup; trap - EXIT

@@ -327,8 +327,9 @@ in `fleet/` need it whenever your Windows user is not `ajbar`. These want a WSL
 path (`/mnt/c/...`); the overlay
 reads the same setting as a Windows path (`C:\...`), so exporting one value
 to both sides gives the overlay a path it cannot resolve. The hooks prune
-their old files only when the last folder of that path is
-`dev.ajsoftworks.klepsydra`; any other name leaves them in place.
+their old files and trace refused locks only when the last folder of that path
+is `dev.ajsoftworks.klepsydra`; any other name writes no trace and leaves old
+files in place.
 
 A second copy of the overlay, run to test a build beside the installed one,
 takes its own `KLEPSYDRA_DIR` and `KLEPSYDRA_NO_AUTOSTART` set to any
