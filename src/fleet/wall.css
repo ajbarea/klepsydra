@@ -526,18 +526,19 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .pill { margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8)); }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) :is(.epithet, .marks) { display: none; }
 .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .stage { background: var(--grain); }
-/* Narrow comfortable cards (#535): when a card is narrow, putting name and pill on
-   one row squeezes the name down to a few pixels. Move the pill to the task row so
-   the name has the full row width before ellipsizing. */
-@container wall (max-width: 419.98px) {
+/* Narrow comfortable slim cards (#535): name and pill on one row squeeze the name
+   under 90 px once the wall's content is narrower than 360 px (measured on the demo
+   wall, 11-25), so there the pill moves to the task row and the name takes the row. */
+@container wall (max-width: 359.98px) {
   .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header {
     grid-template-areas: "name name" "task pill";
   }
   .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .name {
     margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8));
   }
-  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill {
-    margin-right: 0;
+  .wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill,
+  .wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .pill {
+    margin-right: 0; /* the menu stays on the name's row */
   }
 }
 
@@ -1011,7 +1012,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 .wall[data-density="compact"] { grid-auto-rows: 1fr; }
 .wall[data-density="compact"] .card {
   display: grid;
-  grid-template-columns: var(--wall-face) minmax(min(calc(90px + var(--head-gap)), 100%), 1fr) minmax(0, auto) auto auto;
+  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto auto auto;
   grid-template-rows: auto auto auto auto 1fr auto;
   grid-template-areas:
     "face name pill clear jump"
@@ -1021,6 +1022,17 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
     "said said said said said"
     "menu note note note note";
   gap: 0;
+}
+/* A name keeps its whole width up to 90 px before the pill takes room from it
+   (#535): a short name stays whole and leaves the rest to the pill's time.
+   calc-size() sizes the floor from the name itself (Chromium 129+); other
+   engines give the desktop wall a fixed 90 px floor and the phone wall none. */
+@supports (min-width: calc-size(max-content, size)) {
+  .wall[data-density="compact"] .card { grid-template-columns: var(--wall-face) minmax(auto, 1fr) minmax(0, auto) auto auto; }
+  [data-density="compact"] .name { min-width: calc-size(max-content, min(size, 90px)); }
+}
+@supports not (min-width: calc-size(max-content, size)) {
+  :root:not(.served) .wall[data-density="compact"] .card { grid-template-columns: var(--wall-face) minmax(min(calc(90px + var(--head-gap)), 100%), 1fr) minmax(0, auto) auto auto; }
 }
 [data-density="compact"] .card header,
 [data-density="compact"] .card .actions,
@@ -1073,8 +1085,6 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   }
   /* The pill keeps to its share of the line: its time gives way first ("12m qu…"). */
   :root:not(.served) [data-density="compact"] .pill { justify-self: start; min-width: 0; max-width: calc(100% - var(--head-gap)); margin-left: var(--head-gap); }
-  :root:not(.served) [data-density="compact"] .pill :is(.mark, .label) { flex-shrink: 0; }
-  :root:not(.served) [data-density="compact"] .pill .when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 [data-density="compact"] .jump,
 [data-density="compact"] .clear {

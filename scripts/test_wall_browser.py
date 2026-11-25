@@ -1618,12 +1618,12 @@ NARROW = """() => {
       && n.clientWidth < Math.min(n.scrollWidth, 90)).map((n) => `${n.textContent} ${n.clientWidth}px`);
   const jumps = cards.map((c) => c.querySelector('.jump')).filter((b) => b && b.checkVisibility())
     .map((b) => b.textContent.trim());
-  const whens = cards.filter((c) => {
-    const w = c.querySelector('.pill .when');
-    return w && w.checkVisibility();
-  }).length;
+  // A pill's time cut short or to nothing; checkVisibility() is true for a 0 px span.
+  const whenCut = cards.flatMap((c) => [...c.querySelectorAll('.pill .when')])
+    .filter((w) => w.checkVisibility() && w.textContent.trim() && w.scrollWidth > w.clientWidth + 1)
+    .map((w) => `${w.closest('.card').querySelector('.name')?.textContent} ${w.clientWidth}px`);
   return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut, squeezed, overlap,
-           density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)], whens };
+           density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)], whenCut };
 }"""
 
 
@@ -1634,7 +1634,7 @@ def narrow_window_keeps_cards_inside(wall):
     no name is squeezed in either density and Open terminal reads whole; at
     full width the columns are as before."""
     for density in ("compact", "comfortable"):
-        for width, tabbed in ((360, False), (390, False), (390, True), (420, True), (450, False), (470, False), (520, False), (530, False), (880, False), (1280, False), (1920, False)):
+        for width, tabbed in ((360, False), (390, False), (390, True), (420, True), (450, False), (470, False), (520, False), (530, False), (880, False), (945, False), (1280, False), (1920, False)):
             page = open_app(wall, width=width, height=900 if width < 1000 else 1000)
             pick(page, f".density label:has([value={density}])")
             if tabbed:
@@ -1642,8 +1642,8 @@ def narrow_window_keeps_cards_inside(wall):
             page.wait_for_timeout(1500)  # past an arrival's spring over the frame
             got = page.evaluate(NARROW)
             tab = " with a queue tab" if tabbed else ""
-            # At 1280 and 1920 px every compact pill whose card has room still shows its time (#535).
-            whens_ok = not (density == "compact" and width in (1280, 1920)) or got["whens"] == got["cards"]
+            # Where main shows every compact pill's time whole, the name's floor cuts none (#535).
+            whens_ok = not (density == "compact" and width in (945, 1280, 1920)) or not got["whenCut"]
             wall.check(got["density"] == density and got["cards"] > 0 and not got["wide"] and not got["out"]
                        and not got["cut"] and not got["overlap"] and not got["squeezed"] and got["jumps"] in ([], ["Open terminal"])
                        and whens_ok,
@@ -1665,6 +1665,8 @@ def narrow_window_keeps_cards_inside(wall):
       return { margin: getComputedStyle(p).marginLeft, sameLine: Math.abs(mid(p) - mid(n)) < 12 };
     }""")
     wall.check(phone["margin"] == "8px" and phone["sameLine"], "the phone wall at 390 px keeps the pill beside the name, as before", phone)
+    got = page.evaluate(NARROW)
+    wall.check(not got["whenCut"] and not got["squeezed"], "the phone wall at 390 px cuts no pill's time and squeezes no name (#535)", got)
     page.close()
 
 
