@@ -31,6 +31,21 @@ prefs_get() { # KEY
 # there): "repo path, installed name" per entry. install.sh copies them, and
 # doctor checks the copies still match the checkout.
 FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
+# The briefing repository (queue, needs-you, screenshots), resolved here only:
+# FLEET_BRIEFING when set, else the WSL clone, else ~/fleet-briefing (Debian),
+# else the WSL path. Exported, so the Python scripts and children read it.
+# BRIEFING_WSL_DEFAULT is the path the committed brief tail names.
+BRIEFING_WSL_DEFAULT=/mnt/c/Users/ajbar/fleet-briefing
+if [[ -z ${FLEET_BRIEFING:-} ]]; then
+  FLEET_BRIEFING=${FLEET_WSL_BRIEFING:-$BRIEFING_WSL_DEFAULT}
+  [[ ! -d $FLEET_BRIEFING && -d $HOME/fleet-briefing ]] && FLEET_BRIEFING=$HOME/fleet-briefing
+fi
+export FLEET_BRIEFING
+# STDIN with the tail's briefing path replaced by FLEET_BRIEFING, as literal text.
+briefing_paths() {
+  OLD=$BRIEFING_WSL_DEFAULT NEW=$FLEET_BRIEFING awk 'BEGIN { o = ENVIRON["OLD"]; n = ENVIRON["NEW"] }
+    { s = $0; out = ""; while ((i = index(s, o)) > 0) { out = out substr(s, 1, i - 1) n; s = substr(s, i + length(o)) } print out s }'
+}
 # shellcheck disable=SC2034 # read by install.sh and doctor.sh
 HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
@@ -50,7 +65,7 @@ HOOK_COPIES=(
 
 # The preamble a fresh session's brief starts with; WHY says why it replaces the last one.
 fresh_preamble() { # WHY
-  printf 'Fresh start: a previous agent with the brief below %s; you replace it. Before acting, rebuild state from disk and GitHub: IMPL.md in the repo and in each worktree, git log and git status per worktree, open PRs with their comments and reviews, and your repo'"'"'s lines under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md. Where those are newer than the brief, they win; never redo merged work. No /code-review high (nor xhigh or max); low or medium is fine.' "$1"
+  printf 'Fresh start: a previous agent with the brief below %s; you replace it. Before acting, rebuild state from disk and GitHub: IMPL.md in the repo and in each worktree, git log and git status per worktree, open PRs with their comments and reviews, and your repo'"'"'s lines under "Running now" in %s/queue.md. Where those are newer than the brief, they win; never redo merged work. No /code-review high (nor xhigh or max); low or medium is fine.' "$1" "$FLEET_BRIEFING"
 }
 
 t() { tmux -L "$FLEET_SOCK" "$@"; }
@@ -586,7 +601,7 @@ dr_drop() { # NAME: forget its reports
   fi
 }
 # The briefing's queue file (not FLEET_QUEUE: ci_watch.py reads that name as needs-you.md).
-FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-/mnt/c/Users/ajbar/fleet-briefing/queue.md}
+FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-$FLEET_BRIEFING/queue.md}
 # Put a line for an agent's undelivered report in the queue file, at the end of
 # its Running now section. RESULT says where the text stands: on mixed or held
 # it still sits in the orchestrator's box, so it is not sent again. The file is
@@ -1834,7 +1849,7 @@ heph_asks() { # SID HEPH
 heph_note() { # WHY SID HEPH DOING
   local asks
   asks=$(heph_asks "$2" "$3")
-  printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$4"
+  printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in %s/queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$FLEET_BRIEFING" "$4"
   printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
 }
 
