@@ -809,6 +809,14 @@ voices() {
   "$fleet" voices || fail "fleet voices failed; see fleet log."
 }
 
+# The tray's "Run resume pass now" (#271): one pass of the resume service at
+# once, through the installed `fleet resume now`; its decisions go to stdout.
+resume_now() {
+  local fleet=${FLEET_BIN:-$HOME/.local/bin}/fleet
+  [[ -x $fleet ]] || fail "The fleet commands are not installed (make install-fleet)."
+  "$fleet" resume now || fail "The resume pass did not run; see fleet log."
+}
+
 # Hand `target` (a folder or an https GitHub URL) to the desktop. On WSL that is
 # Explorer (it exits 1 even when it opened the target); natively xdg-open, which
 # must exist and, if it fails at once, fails the call. One still running after
@@ -853,11 +861,12 @@ case ${1:-} in
   models) (( $# == 1 )) || fail "usage: klepsydra-launch.sh models"; models ;;
   engines) (( $# == 1 )) || fail "usage: klepsydra-launch.sh engines"; engines ;;
   voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
+  resume-now) (( $# == 1 )) || fail "usage: klepsydra-launch.sh resume-now"; resume_now ;;
   folder) (( $# == 2 )) || fail "usage: klepsydra-launch.sh folder DIR"; folder "$2" ;;
   github) (( $# == 2 )) || fail "usage: klepsydra-launch.sh github URL"; github "$2" ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
   interrupt) (( $# == 5 )) || fail "usage: klepsydra-launch.sh interrupt SOCKET PANE PID START"; interrupt "$2" "$3" "$4" "$5" ;;
-  *) fail "usage: klepsydra-launch.sh new DIR [agy MODEL | claude ACCOUNT [MODEL] | copilot [MODEL]] | models | engines | voices | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
+  *) fail "usage: klepsydra-launch.sh new DIR [agy MODEL | claude ACCOUNT [MODEL] | copilot [MODEL]] | models | engines | voices | resume-now | jump|end|interrupt|wrapup SOCKET PANE PID START" ;;
 esac

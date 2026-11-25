@@ -984,6 +984,18 @@ voices`. Sessions are started with no `KERYX_ENABLED`, which would outrank
 keryx's own setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
 until its next launch.
 
+### Resume pass and Heph's account
+
+The tray's **Run resume pass now** runs one pass of the resume service at once
+(`fleet resume now`) and shows its result on the line beneath it. **Heph's
+account** picks the account the orchestrator runs on: **Fleet's order (auto)**,
+or one account, each shown with its 5-hour and weekly room. The pick is kept in
+`prefs.json` (`"heph_account"`, the account's id) and runs a pass at once; the
+service moves Heph to that account at his next finished turn while it has room
+(any room, not the 50% a move back needs), and back to it after a limit moves
+him off. A pick no logged-in folder holds is logged as a warning and the
+fleet's order holds.
+
 ### Character themes
 
 The cast wears one of three themes, all full and equal, chosen in the tray's
@@ -1542,6 +1554,7 @@ JSON line in `log/fleet.log`, in the app log's shape.
 |---|---|
 | `fleet doctor` | One line per check, one verdict per agent; exits non-zero on a failure. `--json FILE` writes a report, which the wall and phone show as a **Fleet** button. `--prune` drops finished agents' rows. |
 | `fleet log [N]` | The last N decisions (default 30). |
+| `fleet resume now` | One pass of the resume service at once, then the decisions it logged and a summary line. |
 | `fleet accounts` | Each config folder with its account and room. `accounts sync` makes the second folder behave like `~/.claude`. |
 | `fleet recover` | After a hard shutdown, relaunches every agent whose session is gone. |
 | `fleet pause NAME WHY` / `unpause NAME` | Sets an agent aside, or puts it back. |

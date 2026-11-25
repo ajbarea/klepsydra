@@ -7,6 +7,7 @@ pub mod ci;
 pub mod clear;
 pub mod cue;
 pub mod health;
+pub mod heph_account;
 pub mod hub;
 pub mod ledger;
 pub mod logfmt;
