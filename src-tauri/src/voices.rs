@@ -70,7 +70,9 @@ pub async fn get_voices_mode(app: AppHandle) -> VoicesShown {
 #[tauri::command]
 pub fn set_voices_mode(app: AppHandle, mode: String) -> VoicesShown {
     match voices::value(&mode) {
-        Ok(v) => crate::write_pref(&app, voices::KEY, v),
+        Ok(v) => {
+            crate::write_pref(&app, voices::KEY, v);
+        }
         Err(e) => log::warn!(voices = mode.as_str(); "voices: {e}"),
     }
     // write_pref logs its own failure; this says which mode holds now.
