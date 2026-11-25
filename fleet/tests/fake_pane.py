@@ -27,10 +27,21 @@ A test steers it through a JSON state file, re-read on every tick:
   exit_on_exit  /exit ends the process, so its pane closes as Claude Code's does
   die_on_submit  any submitted line ends the process (a pane killed mid-send)
   exit_delay seconds /exit takes before the process ends (with exit_on_exit)
-  slash_menu  text typed starting with "/" opens Claude Code's command menu
-             just above the box, over the transcript's last rows (2.1.316)
-  slash_adds  a transcript line that shows as the menu opens (a phone
-             prompt arriving as /exit goes in)
+  slash_menu  a "/" word typed with no space after it opens Claude Code's
+             command menu just above the box, over the transcript's last rows,
+             and a space shuts it (2.1.316, checked live 11-20), wrapped as in
+             an 84-column pane ("wide": as at 160 columns)
+  slash_menu_space  the menu stays open after a space too (a Claude Code that
+             changed how it draws it)
+  The next four take effect once text starting with "/" is in the box (output
+  arriving as /exit goes in), whether or not the menu shows:
+  slash_adds  a transcript line just above the box (a phone prompt)
+  slash_after  a line just above the box, under the menu when it shows
+  slash_hidden  lines added to the transcript, under the menu when it shows
+             (a prompt and its spinner)
+  slash_fill  lines that take the place of the transcript's last (blank) rows,
+             nothing scrolling: a turn arriving in the gap a bottom-pinned box
+             leaves under a short transcript
   exit_dialog  /exit opens Claude Code's "Background work is running" dialog
              (2.1.316, captured 2026-11-18): Enter exits, Esc cancels it
   log_typed  log each run of typed keys (TYPED <text>), so a test can tell
@@ -66,10 +77,19 @@ RC_MENU = [
     "  ❯ Continue",
     "  Enter to select · Esc to continue",
 ]
+# The menu typing /exit opens, as Claude Code 2.1.316 draws it (captured 2026-11-19): in an
+# 84-column pane two descriptions wrap onto lines indented to their column; at 160 none do.
 SLASH_MENU = [
+    "  ❯ /exit                            Exit the CLI",
+    "    /context                         Visualize current context usage as a colored",
+    "                                     grid",
+    "    /usage-credits                   Configure usage credits or request them from",
+    "                                     your admin when you hit a limit",
+]
+SLASH_MENU_WIDE = [
     "  ❯ /exit                                                Exit the CLI",
-    "    /context                                             Visualize current context usage",
-    "    /usage-credits                                       Configure usage credits",
+    "    /context                                             Visualize current context usage as a colored grid",
+    "    /usage-credits                                       Configure usage credits or request them from your admin when you hit a limit",
 ]
 EXIT_DIALOG = [
     "▔" * 60,
@@ -301,11 +321,27 @@ class Pane:
             box = [PROMPT + first] + ["  " + m for m in more]
         else:
             box = [PROMPT + PLACEHOLDER]
-        if self.state.get("slash_menu") and self.input.startswith("/"):
-            # Drawn over the transcript's last rows, a blank row above it.
-            above = above[: max(0, len(above) - len(SLASH_MENU) - 1)]
-            above += [self.state["slash_adds"]] if self.state.get("slash_adds") else []
-            above += [""] + SLASH_MENU
+        if self.input.startswith("/"):
+            # Lines that arrive as /exit goes in grow the transcript, so the screen
+            # scrolls up (under the menu, when it shows).
+            above += self.state.get("slash_hidden", [])
+            fill = self.state.get("slash_fill", [])
+            if fill:
+                above = above[: max(0, len(above) - len(fill))] + fill
+            menu = []
+            shut = any(c.isspace() for c in self.input)
+            if self.state.get("slash_menu") and (
+                not shut or self.state.get("slash_menu_space")
+            ):
+                wide = self.state["slash_menu"] == "wide"
+                menu = SLASH_MENU_WIDE if wide else SLASH_MENU
+            if self.state.get("slash_after"):
+                menu = menu + [self.state["slash_after"]]
+            adds = [self.state["slash_adds"]] if self.state.get("slash_adds") else []
+            if menu:
+                # Drawn over the transcript's last rows, as many as it has (2.1.316).
+                above = above[: max(0, len(above) - len(menu))] + menu
+            above += adds
         below = self.state.get("below", ["  ⏵⏵ bypass permissions on · 1 shell"])
         return above + [RULE] + box + [RULE] + below
 
