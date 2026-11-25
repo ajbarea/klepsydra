@@ -86,6 +86,14 @@ sed -i 's/ S 202 / Z 202 /' "$P/302/stat"
 check "a zombie is not listed" "$(bash "$script" --list | grep -c '^302')" "0"
 check "no browser: nothing printed" "$(KLEPSYDRA_PROC=$work/none bash "$script" --list)" ""
 
+# Processes mentioning profile in command line, but not Chrome executables
+proc 200 100 npm-exec "npm exec @playwright/mcp@latest --browser chrome --user-data-dir=$cache/mcp-chrome-c35bcf5 --config x.json"
+proc 201 200 sh sh -c "\"playwright-mcp\" --browser chrome --user-data-dir=$cache/mcp-chrome-c35bcf5"
+proc 202 201 node node "$H/n/.bin/playwright-mcp" --browser chrome "--user-data-dir=$cache/mcp-chrome-c35bcf5"
+proc 600 100 bash bash -c "pgrep -af 'chrome --user-data-dir=$cache/mcp-chrome-c35bcf5'"
+check "processes mentioning profile but not Chrome executables are not listed in --list" \
+  "$(bash "$script" --list | grep -E -c '^20[0-2]|^600')" "0"
+
 echo "SessionEnd hook"
 tree
 run env KLEPSYDRA_PPID=201 bash "$script" </dev/null; rc=$?
@@ -133,6 +141,13 @@ proc 503 1500 chrome /opt/google/chrome/chrome "--user-data-dir=$cache/mcp-chrom
 rm -f "$state"
 run bash "$script" --reap "$state" >/dev/null
 check "an orphan reparented to WSL's init is reaped too" "$(kills)" "TERM 500,TERM 503"
+
+# Detached bash and python3 mentioning profile are not signalled
+proc 601 1 bash bash -c "sleep 3600; rm -rf --one-file-system $cache/mcp-chrome-c35bcf5/Default/Cache --user-data-dir=$cache/mcp-chrome-c35bcf5"
+proc 602 1 python3 python3 -c "import subprocess; subprocess.run(['chrome', ' --user-data-dir=$cache/mcp-chrome-zz'])"
+run bash "$script" --reap "$state" >/dev/null
+check "detached bash and python3 mentioning profiles are never signalled by --reap" \
+  "$(kills | grep -E -c '601|602')" "0"
 check "usage on a bad mode" "$(bash "$script" --bogus 2>&1; echo "rc=$?")" "usage: klepsydra-browser.sh [--list | --reap STATE]
 rc=2"
 
@@ -151,7 +166,7 @@ mutant "no profile-folder guard takes a look-alike folder" \
 mutant "no .. guard takes a path that climbs out of AJ's profile" 's/ \&\& \$dir != \*\.\.\*//' "300,402,500,501,710"
 mutant "no profile guards and no pre-filter: AJ's Chrome and Edge are matched" \
   '/ms-playwright-mcp\/mcp-chrome-\* || \$dir == /d; /dir##\*\/} == mcp-chrome-/d; s/grep -lsaF -- .mcp-chrome-./grep -lsaF -- "" /' \
-  "1,50,100,200,201,202,300,400,401,402,403,404,405,500,501,600,700,702,710"
+  "300,400,401,402,403,404,405,500,501,710"
 mutant "no --type= guard lists the renderer" 's/--type=\*) main=0 ;;/--type=*) ;;/' "300,301,500,501,710"
 mutant "a loose --user-data-dir match takes a look-alike argument" \
   's/--user-data-dir=\*) dir=\${arg#--user-data-dir=}/*--user-data-dir=*) dir=${arg#*--user-data-dir=}/' "300,403,500,501,710"
@@ -186,21 +201,44 @@ run bash "$script" --sync-holders
 check "closed window while held writes browser-closed" "$(cut -f1,2 "$FLEET_STATE/browser-closed")" "$(printf 'worker1\t%s' "$cache/mcp-chrome-c35bcf5")"
 
 # PreToolUse hook denies browser tool calls when window was closed while held
-pre_out=$(bash "$script" --pre-tool <<<'{"tool_name":"browser_click","tool_input":{"selector":"button"}}')
+pre_out=$(KLEPSYDRA_PPID=100 bash "$script" --pre-tool <<<'{"tool_name":"browser_click","tool_input":{"selector":"button"}}')
 pre_rc=$?
 check "pre-tool denies tool when browser closed while held" \
   "$(jq -r '[.hookSpecificOutput.permissionDecision, .hookSpecificOutput.permissionDecisionReason] | join(": ")' <<<"$pre_out") rc=$pre_rc" \
   "deny: browser closed while worker1 held it rc=0"
 
-# browser_close resets the closed state and succeeds
-pre_close=$(bash "$script" --pre-tool <<<'{"tool_name":"browser_close","tool_input":{}}' 2>&1; echo "rc=$?")
+# Worker2 (never held profile A) calls browser tool and is allowed
+pre_w2=$(KLEPSYDRA_PPID=700 bash "$script" --pre-tool <<<'{"tool_name":"browser_navigate","tool_input":{"url":"http://example.com"}}')
+check "pre-tool allows worker2 whose browser was not closed" "$(grep -c 'deny' <<<"$pre_w2")" "0"
+
+# Non-browser tool Bash is allowed even if browser was closed while held
+pre_bash=$(KLEPSYDRA_PPID=100 bash "$script" --pre-tool <<<'{"tool_name":"Bash","tool_input":{"command":"ls"}}')
+check "pre-tool allows non-browser tool" "$(grep -c 'deny' <<<"$pre_bash")" "0"
+
+# Worker2 calls browser_close: does NOT clear worker1's closed state
+KLEPSYDRA_PPID=700 bash "$script" --pre-tool <<<'{"tool_name":"browser_close","tool_input":{}}' >/dev/null
+check "worker2 browser_close does not clear worker1 closed state" "$(cut -f1,2 "$FLEET_STATE/browser-closed")" "$(printf 'worker1\t%s' "$cache/mcp-chrome-c35bcf5")"
+
+# browser_close by holder resets the closed state and clears session file browser field
+pre_close=$(KLEPSYDRA_PPID=100 bash "$script" --pre-tool <<<'{"tool_name":"browser_close","tool_input":{}}' 2>&1; echo "rc=$?")
 check "pre-tool allows browser_close and clears state" "$pre_close" "rc=0"
 check "browser-closed file was removed" "$([[ -f $FLEET_STATE/browser-closed ]] && echo exists || echo gone)" "gone"
+check "holder session file browser field is cleared" "$(jq -r '.browser // ""' "$KLEPSYDRA_DIR/fleet/s100.json")" ""
+
+# Session file not rewritten on unchanged sync-holders call
+tree
+run bash "$script" --sync-holders
+ino1=$(stat -c %i "$KLEPSYDRA_DIR/fleet/s100.json")
+run bash "$script" --sync-holders
+ino2=$(stat -c %i "$KLEPSYDRA_DIR/fleet/s100.json")
+check "sync-holders does not rewrite session file when unchanged" "$([[ "$ino1" == "$ino2" ]] && echo unchanged || echo rewritten)" "unchanged"
 
 echo "install block"
 settings=$(sed -n '/^<!-- browser-settings:start -->$/,/^<!-- browser-settings:end -->$/p' "$here/../README.md" |
   grep -v -e '^<!--' -e '^```')
-check "settings: SessionEnd only" "$(jq -c '.hooks | keys' <<<"$settings" 2>/dev/null)" '["SessionEnd"]'
+check "settings: PreToolUse and SessionEnd" "$(jq -c '.hooks | keys | sort' <<<"$settings" 2>/dev/null)" '["PreToolUse","SessionEnd"]'
+check "settings: PreToolUse matcher limited to Playwright MCP tools" \
+  "$(jq -r '.hooks.PreToolUse[0].matcher' <<<"$settings")" 'mcp__.*playwright.*|browser_.*'
 check "settings: the browser script, not async, a timeout that covers its wait" \
   "$(jq -c '.hooks.SessionEnd[0].hooks[0] | [(.command | ltrimstr("~")), has("async"), (.timeout >= 2)]' <<<"$settings")" '["/.claude/klepsydra-browser.sh",false,true]'
 check "make install-hooks installs it" "$(grep -c '"hooks/klepsydra-browser.sh klepsydra-browser.sh"' "$here/../fleet/lib.sh")" "1"

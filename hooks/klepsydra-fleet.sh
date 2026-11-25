@@ -1322,6 +1322,19 @@ main() {
   # tmux can hang for its timeout; no other hook waits on it, so drop the lock first.
   { exec {lock}>&-; } 2>/dev/null
   fleet_registry_event "$orch_state" "$event" "$session" "$source" "$input" "$cleared_sid"
+  # Playwright MCP browser sync on PostToolUse for browser tools (#533)
+  if [[ $event == PostToolUse && $input == *'"tool_name":'* ]]; then
+    local tname
+    tname=$(jq -r '.tool_name // empty' <<<"$input" 2>/dev/null)
+    case $tname in
+      *playwright* | browser_*)
+        local bscript=${FLEET_BROWSER_SCRIPT:-${HOME:-}/.claude/klepsydra-browser.sh}
+        if [[ -x $bscript ]]; then
+          setsid -f bash "$bscript" --sync-holders </dev/null >/dev/null 2>&1
+        fi
+        ;;
+    esac
+  fi
   # A permission prompt in a tmux pane gets a watcher for its answer (#217),
   # started after the lock is let go: a child holding its fd would keep it.
   if [[ $event == PermissionRequest && -n $tmux_pane && ${KLEPSYDRA_ASK_WATCH:-1} == 1 && ${new:-$old} == *'"state":"needs_you"'* ]]; then

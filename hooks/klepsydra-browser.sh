@@ -82,25 +82,26 @@ is_claude() { # pid
 # (or the older .../ms-playwright/mcp-chrome-<hash>), and no --type= (Chrome's
 # renderers, zygote and GPU process carry one).
 mcp_browser() { # pid
-  local arg dir="" main=1 w
-  local -a argv=() words=()
+  local arg dir="" main=1 comm="" exe=""
+  local -a argv=()
   profile=""
+  # Match only a Chrome-family executable (comm/exe basename chrome, chromium, msedge, headless_shell)
+  { IFS= read -r comm <"$PROC_ROOT/$1/comm"; } 2>/dev/null
+  case ${comm##*/} in
+    chrome | chromium | msedge | headless_shell) ;;
+    *)
+      exe=$(readlink "$PROC_ROOT/$1/exe" 2>/dev/null) || true
+      case ${exe##*/} in
+        chrome | chromium | msedge | headless_shell) ;;
+        *) return 1 ;;
+      esac
+      ;;
+  esac
   { mapfile -d '' -t argv <"$PROC_ROOT/$1/cmdline"; } 2>/dev/null || return 1
   for arg in "${argv[@]}"; do
     case $arg in
       --type=*) main=0 ;;
       --user-data-dir=*) dir=${arg#--user-data-dir=} ;;
-      *)
-        if [[ $arg == *" --type="* || $arg == *" --user-data-dir="* ]]; then
-          read -r -a words <<<"$arg"
-          for w in "${words[@]}"; do
-            case $w in
-              --type=*) main=0 ;;
-              --user-data-dir=*) dir=${w#--user-data-dir=} ;;
-            esac
-          done
-        fi
-        ;;
     esac
   done
   (( main )) || return 1
@@ -262,11 +263,20 @@ agent_for_pid() { # claude_pid
   fi
 }
 
-set_session_browser() { # sid agent
-  local sid=$1 agent=$2 f tmp
-  [[ -n $sid && -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]] || return 0
-  f=$KLEPSYDRA_DIR/fleet/$sid.json
+set_session_browser() { # sid_or_file agent
+  local target=$1 agent=$2 f tmp cur
+  if [[ -f $target ]]; then
+    f=$target
+  elif [[ -n $target && -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]]; then
+    f=$KLEPSYDRA_DIR/fleet/$target.json
+  else
+    return 0
+  fi
   [[ -f $f ]] || return 0
+  cur=$(jq -r '.browser // ""' "$f" 2>/dev/null) || cur=""
+  if [[ $cur == "$agent" ]]; then
+    return 0
+  fi
   tmp=$f.$$.tmp
   if [[ -n $agent ]]; then
     jq --arg b "$agent" '.browser = $b' "$f" >"$tmp" 2>/dev/null && mv -f "$tmp" "$f"
@@ -279,43 +289,56 @@ sync_holders() {
   local active_file=${FLEET_STATE:-}/browser-active
   local closed_file=${FLEET_STATE:-}/browser-closed
   local -A current=()
-  local pid start ppid server claude dir agent sid f
+  local -a stat=()
+  local pid start ppid server claude dir agent sid f claude_start
   mkdir -p "${FLEET_STATE:-}" 2>/dev/null
+
+  local -A sess_agent=() sess_sid=()
+  if [[ -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]]; then
+    while IFS=$'\t' read -r cpid csid _cbrowser cagent; do
+      [[ -n $cpid && $cpid =~ ^[0-9]+$ ]] || continue
+      sess_sid[$cpid]=$csid
+      sess_agent[$cpid]=$cagent
+    done < <(jq -r 'input_filename as $fn | select(.ended == null and .claude.pid != null) | [(.claude.pid // -), ($fn | split("/") | .[-1] | rtrimstr(".json")), (.browser // ""), (.fleet_name // .name // "")] | @tsv' "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+  fi
 
   while read -r pid start ppid server claude dir; do
     [[ -n $pid && -n $dir ]] || continue
-    agent=$(agent_for_pid "$claude")
-    current[$dir]="$pid"$'\t'"$start"$'\t'"$claude"$'\t'"$agent"
-    if [[ $claude != - && -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]]; then
-      while IFS= read -r f; do
-        if jq -e --argjson p "$claude" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1; then
-          sid=$(basename "$f" .json)
-          set_session_browser "$sid" "$agent"
-          break
-        fi
-      done < <(grep -lE -- "\"pid\": *${claude}([^0-9]|$)" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+    claude_start=0
+    if [[ $claude =~ ^[0-9]+$ ]]; then
+      proc_stat "$claude" && claude_start=${stat[19]}
+    fi
+    agent=${sess_agent[$claude]:-}
+    if [[ -z $agent ]]; then
+      agent=$(agent_for_pid "$claude")
+    fi
+    current[$dir]="$pid"$'\t'"$start"$'\t'"$claude"$'\t'"$agent"$'\t'"$dir"$'\t'"$claude_start"
+    if [[ -n ${sess_sid[$claude]:-} ]]; then
+      set_session_browser "${sess_sid[$claude]}" "$agent"
     fi
   done < <(browsers)
 
   if [[ -f $active_file ]]; then
-    while IFS=$'\t' read -r old_pid _start old_claude old_agent old_dir; do
+    while IFS=$'\t' read -r old_pid _start old_claude old_agent old_dir old_cstart; do
       [[ -n $old_pid && -n $old_dir ]] || continue
       if [[ -z ${current[$old_dir]:-} ]]; then
         local still_alive=0
         if [[ $old_claude =~ ^[0-9]+$ ]] && is_claude "$old_claude"; then
-          still_alive=1
-        elif [[ -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet ]]; then
-          while IFS= read -r f; do
-            if jq -e --argjson p "$old_claude" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1; then
+          if proc_stat "$old_claude"; then
+            local cur_cstart=${stat[19]}
+            if [[ -z $old_cstart || $old_cstart -eq 0 || $cur_cstart == "$old_cstart" ]]; then
               still_alive=1
-              sid=$(basename "$f" .json)
-              set_session_browser "$sid" ""
-              break
             fi
-          done < <(grep -lE -- "\"pid\": *${old_claude}([^0-9]|$)" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+          fi
         fi
         if (( still_alive )) && [[ -n $old_agent && $old_agent != "no session" ]]; then
-          printf '%s\t%s\t%s\n' "$old_agent" "$old_dir" "$(now)" >"$closed_file"
+          if [[ -f $closed_file ]]; then
+            sed -i "\#\t${old_dir}\t#d" "$closed_file" 2>/dev/null || true
+          fi
+          printf '%s\t%s\t%s\t%s\t%s\n' "$old_agent" "$old_dir" "$(now)" "$old_claude" "${old_cstart:-0}" >>"$closed_file"
+        fi
+        if [[ -n ${sess_sid[$old_claude]:-} ]]; then
+          set_session_browser "${sess_sid[$old_claude]}" ""
         fi
       fi
     done <"$active_file"
@@ -324,8 +347,7 @@ sync_holders() {
   if (( ${#current[@]} )); then
     local tmp=$active_file.$$.tmp
     for d in "${!current[@]}"; do
-      printf '%s\t%s\n' "${current[$d]}" "$d"
-      # If this profile is now running, remove it from closed_file
+      printf '%s\n' "${current[$d]}"
       if [[ -f $closed_file ]]; then
         sed -i "\#\t${d}\t#d" "$closed_file" 2>/dev/null || true
         [[ -s $closed_file ]] || rm -f "$closed_file"
@@ -343,21 +365,85 @@ handle_pre_tool() {
   local closed_file=${FLEET_STATE:-}/browser-closed
   local active_file=${FLEET_STATE:-}/browser-active
 
+  case $tool in
+    *playwright* | browser_*) ;;
+    *) exit 0 ;;
+  esac
+
+  local caller_pid=- caller_start=0 p c
+  local -a stat=()
+  p=${KLEPSYDRA_PPID:-$PPID}
+  for ((c = 0; c < 16 && p > 1; c++)); do
+    if is_claude "$p"; then
+      caller_pid=$p
+      if proc_stat "$p"; then
+        caller_start=${stat[19]}
+      fi
+      break
+    fi
+    proc_stat "$p" || break
+    p=${stat[1]}
+  done
+
   if [[ $tool == *"browser_close"* ]]; then
-    rm -f "$closed_file" "$active_file"
+    if [[ -n ${KLEPSYDRA_DIR:-} && -d $KLEPSYDRA_DIR/fleet && $caller_pid =~ ^[0-9]+$ ]]; then
+      local f
+      for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
+        [[ -f $f ]] || continue
+        if jq -e --argjson p "$caller_pid" '.claude.pid == $p and .ended == null' "$f" >/dev/null 2>&1; then
+          local sid
+          sid=$(basename "$f" .json)
+          set_session_browser "$sid" ""
+        fi
+      done
+    fi
+    if [[ -f $active_file ]]; then
+      if [[ $caller_pid =~ ^[0-9]+$ && $caller_pid -gt 1 ]]; then
+        sed -i "\#\t${caller_pid}\t#d" "$active_file" 2>/dev/null || true
+        [[ -s $active_file ]] || rm -f "$active_file"
+      else
+        rm -f "$active_file"
+      fi
+    fi
+    if [[ -f $closed_file ]]; then
+      if [[ $caller_pid =~ ^[0-9]+$ && $caller_pid -gt 1 ]]; then
+        sed -i "\#\t${caller_pid}\t#d" "$closed_file" 2>/dev/null || true
+        [[ -s $closed_file ]] || rm -f "$closed_file"
+      else
+        rm -f "$closed_file"
+      fi
+    fi
     exit 0
   fi
 
   sync_holders
 
   if [[ -f $closed_file ]]; then
-    local closed_agent=""
-    closed_agent=$(awk -F'\t' '{ print $1; exit }' "$closed_file" 2>/dev/null)
-    [[ -n $closed_agent ]] || closed_agent=$(awk '{ print $1; exit }' "$closed_file" 2>/dev/null)
-    [[ -n $closed_agent ]] || closed_agent="an agent"
-    jq -nc --arg reason "browser closed while $closed_agent held it" \
-      '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": $reason}}'
-    exit 0
+    local closed_agent="" hit=0
+    # shellcheck disable=SC2034 # c_time absorbs timestamp column
+    while IFS=$'\t' read -r c_agent c_dir c_time c_cpid c_cstart; do
+      [[ -n $c_dir ]] || continue
+      if [[ $caller_pid =~ ^[0-9]+$ && $caller_pid -gt 1 ]]; then
+        if [[ $c_cpid == "$caller_pid" ]]; then
+          if [[ $caller_start -eq 0 || -z $c_cstart || $c_cstart -eq 0 || $caller_start == "$c_cstart" ]]; then
+            closed_agent=$c_agent
+            hit=1
+            break
+          fi
+        fi
+      else
+        closed_agent=$c_agent
+        hit=1
+        break
+      fi
+    done <"$closed_file"
+
+    if (( hit )); then
+      [[ -n $closed_agent ]] || closed_agent="an agent"
+      jq -nc --arg reason "browser closed while $closed_agent held it" \
+        '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": $reason}}'
+      exit 0
+    fi
   fi
   exit 0
 }
@@ -472,7 +558,15 @@ case ${1:-} in
           fi
         done < <(grep -lE -- "\"pid\": *${me}[,} ]" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
       fi
-      rm -f "${FLEET_STATE:-}/browser-closed" "${FLEET_STATE:-}/browser-active"
+      active_file=${FLEET_STATE:-}/browser-active closed_file=${FLEET_STATE:-}/browser-closed
+      if [[ -f $active_file ]]; then
+        sed -i "\#\t${me}\t#d" "$active_file" 2>/dev/null || true
+        [[ -s $active_file ]] || rm -f "$active_file"
+      fi
+      if [[ -f $closed_file ]]; then
+        sed -i "\#\t${me}\t#d" "$closed_file" 2>/dev/null || true
+        [[ -s $closed_file ]] || rm -f "$closed_file"
+      fi
     fi
     [[ -n $me ]] || exit 0
     left=()

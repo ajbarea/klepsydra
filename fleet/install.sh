@@ -87,6 +87,23 @@ if [[ -d ${gemini_config%/*} || -d $gemini_config ]]; then
   fi
 fi
 
+# Register PreToolUse for the browser tool guard in Claude Code settings.json (#533)
+claude_settings=$FLEET_HOOK_DIR/settings.json
+if [[ -f $claude_settings ]] && jq -e '.hooks' "$claude_settings" >/dev/null 2>&1; then
+  has_pre=$(jq -r '.hooks.PreToolUse[]? | select(.hooks[]?.command | test("klepsydra-browser\\.sh")) | .matcher' "$claude_settings" 2>/dev/null)
+  if [[ -z $has_pre ]]; then
+    if (( dry )); then
+      printf 'would: register PreToolUse browser guard in %s\n' "$claude_settings"
+    else
+      bentry='{"matcher": "mcp__.*playwright.*|browser_.*", "hooks": [{"type": "command", "command": "~/.claude/klepsydra-browser.sh --pre-tool"}]}'
+      merged=$(jq --argjson be "$bentry" '.hooks.PreToolUse = ((.hooks.PreToolUse // []) + [$be])' "$claude_settings" 2>/dev/null) &&
+        printf '%s\n' "$merged" >"$claude_settings.tmp.$$" &&
+        mv -f "$claude_settings.tmp.$$" "$claude_settings" &&
+        ilog INFO "registered browser PreToolUse hook" file="$claude_settings" || failed=1
+    fi
+  fi
+fi
+
 # A running fleet server read its conf when it started, so it never sees a new
 # hook: tmux-conf.sh has it read the installed conf now (#290). Off in the
 # suite, which tests the script itself (FLEET_LIVE_CONF=0).

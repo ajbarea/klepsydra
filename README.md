@@ -277,10 +277,16 @@ Claude Code otherwise gives every SessionEnd hook together. A browser left
 behind by a server that was killed outright is closed by the resume service,
 and `fleet doctor` lists the open ones.
 
+To show when an agent is using the shared browser on the wall and guard against
+tool use after an unexpected browser close (#533), and to close the Playwright
+MCP browser when a session ends (#379), register `klepsydra-browser.sh` as a
+`PreToolUse` and second `SessionEnd` hook (step 1 installs it):
+
 <!-- browser-settings:start -->
 ```json
 {
   "hooks": {
+    "PreToolUse": [{ "matcher": "mcp__.*playwright.*|browser_.*", "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-browser.sh --pre-tool" }] }],
     "SessionEnd": [{ "hooks": [{ "type": "command", "command": "~/.claude/klepsydra-browser.sh", "timeout": 5 }] }]
   }
 }
