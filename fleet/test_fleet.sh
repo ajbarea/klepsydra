@@ -25,6 +25,8 @@ cp -p -- "$real_keryx_config" "$real_keryx_copy" 2>/dev/null || :
 export KLEPSYDRA_DIR="$work/klepsydra" FLEET_TICK=0.1 FLEET_START_WAIT=4 FLEET_TURN_WAIT=6 FLEET_RC_WAIT=12
 # Never AJ's briefing: `fleet done` writes an undelivered report into this queue file (#445).
 export FLEET_QUEUE_MD="$work/queue.md"
+# Nor the host's briefing folder, so a brief renders the same on WSL and Debian (#531).
+export FLEET_BRIEFING="$work/briefing"
 mkdir -p "$FLEET_STATE" "$KLEPSYDRA_DIR/accounts/a" "$KLEPSYDRA_DIR/accounts/b"
 # Two config folders, logged out until a case logs one in (accounts a and b).
 export FLEET_DEFAULT_CONFIG="$work/cfg-a" FLEET_DEFAULT_JSON="$work/cfg-a.json" FLEET_ACCOUNTS="$work/cfg-a $work/cfg-b"
@@ -985,13 +987,38 @@ echo "briefs"
 printf 'Do X.\nThen Y.' >"$work/body"
 out=$(bash "$here/brief.sh" demo "$work/body" 2>/dev/null)
 check "brief.sh writes task-NAME.src in the state folder" "$out" "$FLEET_STATE/task-demo.src"
-check "the body, a blank line, then the shared rules word for word" \
-  "$(head -3 "$out" | tr '\n' '|')$(tail -n +4 "$out" | cmp -s - "$here/brief-tail.md" && echo same)" "Do X.|Then Y.||same"
+check "the body, a blank line, then the shared rules word for word, with this machine's briefing folder (#531)" \
+  "$(head -3 "$out" | tr '\n' '|')$(tail -n +4 "$out" | cmp -s - <(sed "s|/mnt/c/Users/ajbar/fleet-briefing|$FLEET_BRIEFING|g" "$here/brief-tail.md") && echo same)" "Do X.|Then Y.||same"
 check "the tail carries the one-change experiment line (#157)" "$(grep -c '^Subagent use (experiment klepsydra#157' "$out")" "1"
 bash "$here/brief.sh" demo "$work/body" >/dev/null 2>&1
 check "a brief it replaces is archived" "$(find "$FLEET_STATE/archive/briefs" -name 'task-demo.*.src' | wc -l)" "1"
 check "a body that already has the rules is refused" "$(bash "$here/brief.sh" demo "$out" >/dev/null 2>&1; echo $?)" "2"
 check "a name that is not a plain slug is refused" "$(bash "$here/brief.sh" '../x' "$work/body" >/dev/null 2>&1; echo $?)" "2"
+FLEET_BRIEFING="$work/custom-briefing" bash "$here/brief.sh" custom "$work/body" >/dev/null 2>&1
+check "#531: a brief rendered with FLEET_BRIEFING names it for the queue, needs-you and shots, and no /mnt/c/ path" \
+  "$(grep -c '/mnt/c/' "$FLEET_STATE/task-custom.src") $(grep -o "$work/custom-briefing/[a-z-]*" "$FLEET_STATE/task-custom.src" | sort -u | tr '\n' ' ')" \
+  "0 $work/custom-briefing/needs-you $work/custom-briefing/queue $work/custom-briefing/shots "
+odd='/tmp/a&b|c\1 d'
+FLEET_BRIEFING=$odd bash "$here/brief.sh" odd "$work/body" >/dev/null 2>&1
+check "#531: a folder with &, |, a backslash or a space is filled in as written" \
+  "$(grep -cF "$odd/queue.md" "$FLEET_STATE/task-odd.src")" "1"
+check "#531: a brief rendered for another folder is still current there (--check)" \
+  "$(FLEET_BRIEFING="$work/custom-briefing" bash "$here/brief.sh" --check "$FLEET_STATE/task-custom.src" 2>/dev/null; echo $?)" "0"
+check "#531: fresh_preamble and heph_note each name FLEET_BRIEFING's queue" \
+  "$(for f in 'fresh_preamble why' 'heph_note why sid heph doing'; do FLEET_BRIEFING="$work/custom-briefing" bash -c '. "'"$here"'/lib.sh"; '"$f" | grep -cF "$work/custom-briefing/queue.md"; done | paste -sd' ')" "1 1"
+# The resolver's matrix: FLEET_BRIEFING unset, the WSL clone and ~/fleet-briefing each there or not.
+# shellcheck disable=SC2016  # Inner bash -c command: $FLEET_BRIEFING expands inside the subshell.
+resolve() { env -u FLEET_BRIEFING HOME="$work/rh$2" FLEET_WSL_BRIEFING="$work/rw$1" bash -c '. "'"$here"'/lib.sh"; printf %s "$FLEET_BRIEFING"'; }
+mkdir -p "$work/rw1" "$work/rh1/fleet-briefing" "$work/rh0" 
+check "#531: unset, the WSL clone wins over ~/fleet-briefing; without it ~/fleet-briefing; with neither the WSL path" \
+  "$(resolve 1 1) $(resolve 1 0) $(resolve 0 1) $(resolve 0 0)" "$work/rw1 $work/rw1 $work/rh1/fleet-briefing $work/rw0"
+check "#531: a set FLEET_BRIEFING wins, even over an existing WSL clone" \
+  "$(FLEET_BRIEFING=/elsewhere FLEET_WSL_BRIEFING="$work/rw1" bash -c '. "'"$here"'/lib.sh"; printf %s "$FLEET_BRIEFING"')" "/elsewhere"
+mkdir -p "$work/pybin"
+# shellcheck disable=SC2016  # Script written literally: $FLEET_BRIEFING expands at run time.
+printf '#!/bin/sh\nprintf "%%s" "$FLEET_BRIEFING"\n' >"$work/pybin/python3"; chmod +x "$work/pybin/python3"
+check "#531: fleet shots hands prune_shots.py the folder lib.sh resolves" \
+  "$(env -u FLEET_BRIEFING HOME="$work/rh1" FLEET_WSL_BRIEFING="$work/rw0" PATH="$work/pybin:$PATH" bash "$here/fleet" shots)" "$work/rh1/fleet-briefing"
 check "--check passes a current brief" "$(bash "$here/brief.sh" --check "$out" 2>/dev/null; echo $?)" "0"
 sed 's/^Usage cap: run at most two/Usage cap: run at most three/' "$out" >"$FLEET_STATE/task-old.src"
 check "--check names a brief whose shared rules drifted" "$(bash "$here/brief.sh" --check "$FLEET_STATE/task-old.src" "$out" 2>/dev/null)" "stale: task-old.src"
@@ -1621,6 +1648,8 @@ ln -s "$here/agora.py" "$inst/state/agora.py"
 ln -s "$here/digest.py" "$inst/state/digest.py"
 FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
   bash "$here/install.sh" --force >/dev/null 2>&1
+check "#531: the CI watch unit carries the briefing folder, so its needs-you line lands there" \
+  "$(grep -c "\"FLEET_BRIEFING=$FLEET_BRIEFING\"" "$inst/units/fleet-ci-watch.service")" "1"
 check "#326: a retired script's link is removed (agora.py, digest.py)" "$(for r in agora.py digest.py; do [[ -L $inst/state/$r ]] && echo "kept $r"; done)" ""
 printf 'mine\n' >"$inst/state/agora.py"
 FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
@@ -4825,6 +4854,19 @@ check "#380 review 2: a git archive that fails partway is no copy: nothing is up
   "$(PATH="$work/gitcut:$PATH" FLEET_BRIEFING_DRIVE=$D msync) $(nsync) $(lastlog "could not copy the commit")" "0 4 WARN"
 check "#380 review 2: a new Drive target mirrors the same commit again" \
   "$(FLEET_BRIEFING_DRIVE=$D msync) $(FLEET_BRIEFING_DRIVE=gdrive:other msync) $(nsync)" "0 0 6"
+git -C "$work/brief-phone" pull -q 2>/dev/null; printf 'edited on another host\n' >"$work/brief-phone/README.md"
+git -C "$work/brief-phone" -c user.name=t -c user.email=t@t commit -qam other-host && git -C "$work/brief-phone" push -q origin HEAD 2>/dev/null
+check "#531 review: a clone behind origin with nothing to push mirrors nothing (it would roll Drive back)" \
+  "$(FLEET_BRIEFING_DRIVE=$D msync) $(nsync) $(lastlog "not at origin's commit")" "0 6 INFO"
+git -C "$work/brief" pull -q --ff-only 2>/dev/null
+check "#531 review: once it holds origin's commit, it mirrors" "$(FLEET_BRIEFING_DRIVE=$D msync) $(nsync)" "0 7"
+url=$(git -C "$work/brief" remote get-url origin)
+printf 'q10\n' >"$work/brief/queue.md"; git -C "$work/brief" -c user.name=t -c user.email=t@t commit -qam local
+git -C "$work/brief" push -q origin HEAD 2>/dev/null
+git -C "$work/brief" remote set-url origin "$work/no-such-origin.git"
+check "#531 review: an origin that does not answer mirrors nothing, warns, and keeps the sync green" \
+  "$(FLEET_BRIEFING_DRIVE=gdrive:third msync) $(nsync) $(lastlog "the fetch failed")" "0 7 WARN"
+git -C "$work/brief" remote set-url origin "$url"
 
 echo "fleet send: a message is submitted, never left in the box (#320)"
 fsend() { bash "$here/send.sh" "$@" 2>/dev/null; }

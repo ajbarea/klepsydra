@@ -26,6 +26,39 @@ def img(path: str) -> str:
     return f'<img src="https://github.com/ajbarea/fleet-briefing/blob/main/shots/{path}?raw=true" width="320">'
 
 
+def fresh(env, expr):
+    """prune_shots.py's settings in a fresh interpreter under ENV alone (#531)."""
+    code = f"import sys; sys.path.insert(0, {str(HERE)!r}); import prune_shots; print(prune_shots.{expr})"
+    keep = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("FLEET_BRIEFING", "FLEET_QUEUE", "BRIEFING_DIR")
+    }
+    return subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        env=keep | env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+class Briefing(unittest.TestCase):
+    def test_the_repo_is_briefing_dir_then_fleet_briefing_then_the_wsl_default(self):
+        self.assertEqual(
+            fresh({"BRIEFING_DIR": "/d", "FLEET_BRIEFING": "/b"}, "REPO"), "/d"
+        )
+        self.assertEqual(fresh({"FLEET_BRIEFING": "/b"}, "REPO"), "/b")
+        self.assertEqual(fresh({}, "REPO"), "/mnt/c/Users/ajbar/fleet-briefing")
+        # An empty value (fleet shots when lib.sh fails to source) is no folder: never ".".
+        self.assertEqual(
+            fresh({"FLEET_BRIEFING": ""}, "REPO"), "/mnt/c/Users/ajbar/fleet-briefing"
+        )
+        self.assertEqual(
+            fresh({"BRIEFING_DIR": "", "FLEET_BRIEFING": "/b"}, "REPO"), "/b"
+        )
+
+
 class PruneShots(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
