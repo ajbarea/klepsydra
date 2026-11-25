@@ -1,4 +1,4 @@
-//! The tray's Ping, Windows only: a short cue when a session needs AJ or
+//! Settings' Ping, Windows only: a short cue when a session needs AJ or
 //! finishes, played here rather than in a webview so it sounds with the wall
 //! closed and no autoplay gate applies.
 
@@ -16,7 +16,7 @@ fn wav(cue: Cue) -> &'static [u8] {
     }
 }
 
-/// Whether Ping is on, as the tray last set it.
+/// Whether Ping is on, as Settings last set it.
 static ON: AtomicBool = AtomicBool::new(false);
 
 fn on() -> bool {

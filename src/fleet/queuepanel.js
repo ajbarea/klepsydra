@@ -78,7 +78,7 @@ export function createQueuePanel({ dialog, button, tab, edge, cast = () => null,
   wireListSplit(dialog.querySelector(".lists"), dialog.querySelector(".lists-split"));
 
   addEventListener("keydown", (e) => {
-    if (served || !toggleKey(e) || panel.behind()) return;
+    if (served || !toggleKey(e) || panel.behind() || edge.held) return;
     e.preventDefault();
     panel.toggle();
   });

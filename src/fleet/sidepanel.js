@@ -102,9 +102,27 @@ export function textKey(e) {
  */
 export function createEdge() {
   const panels = new Set();
+  let held = null; // the panels a page standing in the wall's place shut, to reopen
   return {
     join(panel) {
       panels.add(panel);
+    },
+    /**
+     * A page stands in the wall's place (Settings): shut every open panel,
+     * so no hidden modal holds the focus, and keep their keys from opening
+     * one until `release`, which reopens what was open.
+     */
+    hold() {
+      held ??= [...panels].filter((p) => p.isOpen).map((p) => [p, p.view]);
+      for (const [p] of held) p.shut(false);
+    },
+    release() {
+      const open = held ?? [];
+      held = null;
+      for (const [p, view] of open) p.restore(view);
+    },
+    get held() {
+      return held !== null;
     },
     /** Shut every panel but `panel`, leaving focus to the one that opens. */
     opening(panel) {
@@ -231,7 +249,7 @@ export function wireListSplit(lists, split, key = "klepsydra.queue.split") {
  * `.list-scroll` around one keeps its place), `-resize`, `-smaller`,
  * `-reset`, `-larger`, `-full`, `-close` and `-live`. `returnTo()` is where focus goes when the
  * panel is closed (Close, Esc, the button); `onOpen()` runs as it opens and
- * `onShut()` once it has shut; `onLayout()` on every layout; `onResized()`
+ * `onShut(forGood)` once it has shut (false when shut for a while, as Settings does); `onLayout()` on every layout; `onResized()`
  * once at the end of a drag of the separator.
  */
 export function createSidePanel({
@@ -314,25 +332,26 @@ export function createSidePanel({
   }
 
   /**
-   * Shut, dock or fill the panel, and remember it. `focus`: true for the
+   * Shut, dock or fill the panel, and remember it unless `remember` is false
+   * (Settings shuts it for a while). `focus`: true for the
    * title, an element to focus, or false to leave focus be; shutting moves
    * focus that was inside to the tab, or where the tab is hidden to
    * returnTo(). Opening shuts the edge's other panels. `quiet` (a shut by
    * another panel) moves no focus: the panel opening takes it.
    */
-  function setView(next, focus = next !== "shut", quiet = false) {
+  function setView(next, focus = next !== "shut", quiet = false, remember = true) {
     const had = dialog.contains(document.activeElement);
     const was = view;
     if (next !== "shut") edge.opening(api);
     view = next;
-    store(STORE.view, view);
+    if (remember) store(STORE.view, view);
     if (was === "shut" && view !== "shut") onOpen();
     place(view === "shut" ? false : focus);
     edge.changed(api);
     if (view !== "shut") return;
     if (focus instanceof HTMLElement) focus.focus();
     else if (had && !quiet) (tab.hidden ? returnTo() : tab).focus();
-    if (was !== "shut") onShut();
+    if (was !== "shut") onShut(remember);
   }
 
   /** The button's toggle: shut opens docked; open shuts, focus staying on the button. */
@@ -503,8 +522,14 @@ export function createSidePanel({
     behind,
     toggle,
     layout,
-    /** Shut by another panel opening: no focus moves. */
-    shut: () => setView("shut", false, true),
+    /** Shut by another panel opening, or for a while (`remember` false: kept as it was for the next start): no focus moves. */
+    shut: (remember = true) => setView("shut", false, true, remember),
+    /** Back to `view` after a shut that was not remembered, moving no focus. */
+    restore: (to) => setView(to, false, true, false),
+    /** shut, docked or full. */
+    get view() {
+      return view;
+    },
     /** Open docked if shut, focusing the title; an open panel keeps its view and takes the focus to its title. */
     open() {
       if (view === "shut") setView("docked");

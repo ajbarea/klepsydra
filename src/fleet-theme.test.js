@@ -307,7 +307,7 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
     assert.match(wall, new RegExp(`${target ? `${target}\\.` : "\\n"}addEventListener\\("${event}", flushTheme\\);`), `a waiting choice is saved on ${target || "window"} ${event}`);
   }
   assert.match(wall, /if \(document\.hidden\) flushTheme\(\);/);
-  assert.match(wall, /setText\(themeNote, `Not saved: \$\{err\}`\);/, "a refused save says so");
+  assert.match(wall, /sayTheme\(`Not saved: \$\{err\}`\);/, "a refused save says so, beside the picker and on the settings page");
   assert.doesNotMatch(read("src/fleet/strip.js"), /cast\.json|import cast/);
   assert.match(read("src/main.js"), /subscribeTheme\(\(id\) => \{\s*clearTimeout\(noWord\);\s*setTimeout\(ready, THEME_WAIT_MS\);[^\n]*\n\s*wanted = id;\s*loadTheme\(id\)\s*\.then\(\(next\) => \{\s*if \(wanted !== id \|\| next === theme\) return;\s*theme = next;\s*render\(\);/, "the gauge's strip redraws on a switch, once the theme is loaded");
   assert.match(read("src/main.js"), /await first;\s*drawStrip = mountStrip\(/, "and first draws in the theme worn");

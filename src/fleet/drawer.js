@@ -366,11 +366,12 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
     // Focus goes back to what opened it, or to the Ledger button once that is gone.
     returnTo: () => (usable(opener) ? opener : button),
     onOpen: start,
-    onShut: () => {
+    onShut: (forGood) => {
       clearTimeout(later);
       clearTimeout(midnight);
       later = 0;
       turn++; // an answer still on its way has nowhere to go
+      if (!forGood) return; // back from Settings: the same session, the same opener
       filter = null;
       opener = null;
     },

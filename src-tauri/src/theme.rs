@@ -1,26 +1,18 @@
-//! The character theme (#135): chosen in the tray's Characters menu or the
-//! wall's picker, kept in prefs.json, and sent to every window that follows
+//! The character theme (#135): chosen in the wall's picker or on its
+//! settings page (one code path, wall.js `chooseTheme`), kept in prefs.json, and sent to every window that follows
 //! it and to the phone wall, so a switch applies without a restart.
 
 use klepsydra_fleet::hub::Hub;
-use klepsydra_fleet::theme::{self, THEMES};
+use klepsydra_fleet::theme;
 use serde_json::Value;
 use tauri::ipc::Channel;
-use tauri::menu::Submenu;
-use tauri::{AppHandle, Manager, Wry};
-
-/// The tray's id for each theme's item.
-const MENU_PREFIX: &str = "theme:";
+use tauri::{AppHandle, Manager};
 
 /// Who follows the theme: the gauge's strip and the wall, each sent the saved
 /// theme when it subscribes and again after each change. A type of its own,
 /// since Tauri keys state by type.
 #[derive(Default)]
 pub struct Themes(Hub<crate::fleet::Webview>);
-
-/// The tray's theme items, ticked to match the saved theme after any change.
-#[derive(Default)]
-pub struct ThemeMenu(crate::choice::ChoiceItems);
 
 /// The saved theme, or the default.
 pub fn saved(app: &AppHandle) -> &'static str {
@@ -71,39 +63,12 @@ fn write_hook_cast(app: &AppHandle, id: &str) {
     }
 }
 
-/// Send the theme now saved to every window, the phone wall, the hook's
-/// cast and the tray's ticks, so all of them and the next start agree even
-/// if the save failed.
+/// Send the theme now saved to every window (and to each that subscribes
+/// later), the phone wall and the hook's cast, so all of them and the next
+/// start agree even if the save failed. Run at start and after each save.
 pub fn publish(app: &AppHandle) {
     let now = saved(app);
     write_hook_cast(app, now);
     app.state::<Themes>().0.publish(Value::from(now));
     crate::phone::set_theme(app, now);
-    app.state::<ThemeMenu>().0.tick(now);
-}
-
-/// The tray's Characters submenu, one ticked item per theme.
-pub fn menu(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
-    let now = saved(app);
-    let submenu = app
-        .state::<ThemeMenu>()
-        .0
-        .build(app, "Characters", MENU_PREFIX, &THEMES, now)?;
-    app.state::<Themes>().0.publish(Value::from(now));
-    write_hook_cast(app, now);
-    Ok(submenu)
-}
-
-/// A tray click: when it was on a theme's item, save that theme and apply it
-/// everywhere (a click on the ticked item unticks it; `publish` ticks it
-/// again). False for any other item.
-pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
-    let Some(id) = crate::choice::picked(menu_id, MENU_PREFIX, &THEMES) else {
-        return false;
-    };
-    if let Ok(v) = theme::value(id) {
-        crate::write_pref(app, theme::KEY, v);
-    }
-    publish(app);
-    true
 }

@@ -1,6 +1,6 @@
 //! The wall's two lists, each a markdown file read for its panel: the queue
 //! file, the agents' to-do list, and the Needs you file, AJ's. The queue
-//! file's path is `queue.json`'s in the data folder (set from the tray or by a
+//! file's path is `queue.json`'s in the data folder (set from Settings or by a
 //! session, which may name who keeps the file), else the `queue_path` pref,
 //! else `claude-queue.md` on the Desktop. The Needs you file's is
 //! `needs.json`'s, else `needs-you.md` beside the queue file. The app only
@@ -543,7 +543,7 @@ mod tests {
         );
         assert!(!dir.0.join("queue.json.tmp").exists(), "renamed over");
         keep(&dir.0, &file, None).unwrap();
-        assert_eq!(kept(Some(&dir.0)).unwrap().by, None, "chosen from the tray");
+        assert_eq!(kept(Some(&dir.0)).unwrap().by, None, "chosen in Settings");
         let long = "x".repeat(BY_MAX_CHARS + 1);
         for by in [
             json!(""),

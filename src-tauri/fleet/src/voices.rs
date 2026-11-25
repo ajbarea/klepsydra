@@ -3,15 +3,15 @@
 //! keryx to match, for running sessions too: "heph" (the default) lets only the
 //! orchestrator's session speak, "everyone" every session, "off" none.
 //!
-//! The tray shows what keryx does, not what was saved (#337): each time its
-//! menu opens it reads keryx's own config (found through [`PATHS_FILE`], which
-//! `fleet voices` keeps in the data folder) and ticks the mode that config
+//! Settings shows what keryx does, not what was saved (#337): each time the
+//! page opens it reads keryx's own config (found through [`PATHS_FILE`], which
+//! `fleet voices` keeps in the data folder) and selects the mode that config
 //! matches, or none, naming what keryx does instead. Nothing is cached, so a
 //! `keryx off` or a `fleet voices heph` done elsewhere shows on the next open.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use serde_json::{Map, Value};
@@ -20,7 +20,7 @@ use crate::bounded::{self, Refused};
 
 /// The prefs.json key.
 pub const KEY: &str = "voices";
-/// Each mode's id and its tray label; the first is the default.
+/// Each mode's id and its label in Settings; the first is the default.
 pub const VOICES: [(&str, &str); 3] = [
     ("heph", "Heph only"),
     ("everyone", "Everyone"),
@@ -109,8 +109,8 @@ pub fn paths(dir: &Path) -> Option<(PathBuf, String)> {
     Some((PathBuf::from(config), heph.into()))
 }
 
-/// What the tray's Voices submenu shows: the mode keryx's state matches, if
-/// any, and the status line naming what keryx does.
+/// What Settings' Voices row shows: the mode keryx's state matches, if any,
+/// and the line naming what keryx does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shown {
     pub tick: Option<&'static str>,
@@ -151,7 +151,7 @@ pub fn shown(k: &Keryx, heph: &str, saved: &str) -> Shown {
     Shown { tick, says }
 }
 
-/// What the tray shows when keryx's state cannot be told: no tick.
+/// What Settings shows when keryx's state cannot be told: no mode.
 pub fn unknown(why: &str) -> Shown {
     Shown {
         tick: None,
@@ -168,18 +168,14 @@ pub fn now(dir: &Path, saved: &str) -> Shown {
     shown(&keryx(bounded::read_text(&config, MAX)), &heph, saved)
 }
 
-/// Reads keryx's state when the tray menu is about to open, on a thread the
-/// open waits on for at most a bound, so a slow file share never holds the
-/// tray. A read that outlasts the bound shows "unknown" at once and hands its
-/// own answer, stamped, to `late` when it lands: never a tick from before.
-/// While one is still out, another open starts none: one stuck read, not one
-/// per click.
+/// Reads keryx's state for the settings page, on a thread the page waits on
+/// for at most a bound, so a slow file share never holds it: a read that
+/// outlasts the bound shows "unknown", and the next open reads afresh. While
+/// one is still out, another open starts none: one stuck read, not one per
+/// open.
 #[derive(Default)]
 pub struct Reader {
     busy: Arc<AtomicBool>,
-    /// Bumped by each read and each change of mode: a late answer applies
-    /// only while nothing newer has been shown.
-    stamp: Arc<AtomicU64>,
 }
 
 /// Marks the reader free when dropped.
@@ -191,89 +187,44 @@ impl Drop for Free {
     }
 }
 
-/// A read's answer that came after its open stopped waiting.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Late {
-    pub shown: Shown,
-    stamp: u64,
-}
-
 impl Reader {
     /// keryx's state through data folder `dir`: see [`Reader::read_with`].
-    pub fn read(
-        &self,
-        dir: &Path,
-        saved: &'static str,
-        wait: Duration,
-        late: impl FnOnce(Late) + Send + 'static,
-    ) -> Option<Shown> {
+    pub fn read(&self, dir: &Path, saved: &'static str, wait: Duration) -> Option<Shown> {
         let dir = dir.to_path_buf();
-        self.read_with(move || now(&dir, saved), wait, late)
+        self.read_with(move || now(&dir, saved), wait)
     }
 
-    /// Something newer than any read still out has been shown (a click
-    /// saved a mode): that read's late answer no longer applies.
-    pub fn supersede(&self) {
-        self.stamp.fetch_add(1, Ordering::AcqRel);
-    }
-
-    /// Whether late answer `l` may still be shown: no read or change came
-    /// after its own. Check it where it is shown (the tray's main thread,
-    /// where reads and changes happen too), so none can come between.
-    pub fn current(&self, l: &Late) -> bool {
-        self.stamp.load(Ordering::Acquire) == l.stamp
-    }
-
-    /// What `read` returns, within `wait`, to show now; "unknown" past it,
-    /// with `read`'s answer handed to `late` (on the read's thread: post it
-    /// to where the menu is changed) when it lands. `None` while an earlier
-    /// read is still out: what shows stays, and that read's `late` follows.
+    /// What `read` returns within `wait`; "unknown" past it. `None` while an
+    /// earlier read is still out.
     pub fn read_with(
         &self,
         read: impl FnOnce() -> Shown + Send + 'static,
         wait: Duration,
-        late: impl FnOnce(Late) + Send + 'static,
     ) -> Option<Shown> {
         if self.busy.swap(true, Ordering::AcqRel) {
             return None;
         }
-        let stamp = self.stamp.fetch_add(1, Ordering::AcqRel) + 1;
         let (tx, rx) = mpsc::channel();
-        // Set by the open once it stops waiting: the read then hands itself to `late`.
-        let gave_up = Arc::new(Mutex::new(false));
-        let (busy, gave_up_t) = (Arc::clone(&self.busy), Arc::clone(&gave_up));
+        let busy = Arc::clone(&self.busy);
         let spawned = std::thread::Builder::new()
             .name("voices-read".into())
             .spawn(move || {
                 // Frees the reader even if `read` panics, so opens read again.
-                let _free = Free(Arc::clone(&busy));
+                let free = Free(busy);
                 let shown = read();
-                // Held until the answer is sent, so the open, under the same
-                // lock, either finds it sent or has given up before the check.
-                let g = gave_up_t.lock().unwrap_or_else(|e| e.into_inner());
-                // Free before answering, so the next open never finds it busy.
-                busy.store(false, Ordering::Release);
-                if *g {
-                    drop(g);
-                    late(Late { shown, stamp });
-                } else {
-                    let _ = tx.send(shown);
-                }
+                // Free before answering, so an open right after never finds it busy.
+                drop(free);
+                // A page that stopped waiting has dropped the receiver.
+                let _ = tx.send(shown);
             });
         if spawned.is_err() {
             self.busy.store(false, Ordering::Release);
             return Some(unknown("could not start a read"));
         }
-        if let Ok(s) = rx.recv_timeout(wait) {
-            return Some(s);
-        }
-        // Under the lock, an answer either was sent already or goes to `late`.
-        let mut g = gave_up.lock().unwrap_or_else(|e| e.into_inner());
-        if let Ok(s) = rx.try_recv() {
-            return Some(s);
-        }
-        *g = true;
-        Some(unknown("keryx's config did not answer in time"))
+        Some(
+            rx.recv_timeout(wait)
+                .unwrap_or_else(|_| unknown("keryx's config did not answer in time")),
+        )
     }
 }
 
@@ -399,15 +350,14 @@ mod tests {
 
     /// One menu open's read, which must answer in time.
     fn open(r: &Reader, d: &Scratch, saved: &'static str) -> Shown {
-        r.read(&d.0, saved, TEST_WAIT, |_| panic!("answered late"))
-            .expect("no read was out")
+        r.read(&d.0, saved, TEST_WAIT).expect("no read was out")
     }
 
     #[test]
     fn a_mode_saved_by_the_cli_shows_on_the_next_open() {
         let d = setup("cli-mode");
         let r = Reader::default();
-        // The tray saved Everyone; `fleet voices heph` then ran in a terminal.
+        // Settings saved Everyone; `fleet voices heph` then ran in a terminal.
         d.write("config.json", r#"{"enabled": true, "speak_only": []}"#);
         assert_eq!(open(&r, &d, "everyone").tick, Some("everyone"));
         d.write(
@@ -422,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn keryx_off_done_outside_the_tray_shows_off_and_no_stale_tick_survives() {
+    fn keryx_off_done_outside_settings_shows_off_and_no_stale_tick_survives() {
         let d = setup("keryx-off");
         let r = Reader::default();
         d.write(
@@ -458,45 +408,23 @@ mod tests {
     }
 
     #[test]
-    fn a_slow_read_shows_unknown_then_its_own_answer_and_frees_the_reader() {
+    fn a_slow_read_shows_unknown_holds_one_thread_and_frees_the_reader() {
         let r = Reader::default();
         let heph = || shown(&Keryx::Only(vec![ORCH.into()]), ORCH, "heph");
-        let (tx, late) = mpsc::channel();
         let slow = move || {
             std::thread::sleep(Duration::from_millis(300));
             heph()
         };
-        let s = r.read_with(slow, Duration::from_millis(20), move |l| {
-            let _ = tx.send(l);
-        });
+        let s = r.read_with(slow, Duration::from_millis(20));
         assert_eq!(s.as_ref().map(|s| s.tick), Some(None), "{s:?}");
         assert!(s.unwrap().says.contains("did not answer in time"));
-        // A second open while it is out starts no read and leaves what shows.
-        let again = r.read_with(|| panic!("a second read"), TEST_WAIT, |_| {});
-        assert_eq!(again, None);
-        // The late answer is the real state, and nothing newer came first.
-        let l = late.recv_timeout(TEST_WAIT).unwrap();
-        assert_eq!(l.shown, heph());
-        assert!(r.current(&l));
-        // And the reader is free again; a newer read makes the late one stale.
-        let next = r.read_with(heph, TEST_WAIT, |_| panic!("answered late"));
-        assert_eq!(next, Some(heph()));
-        assert!(
-            !r.current(&l),
-            "an older late answer would overwrite a newer read"
-        );
-    }
-
-    #[test]
-    fn a_read_that_panics_does_not_leave_the_reader_busy() {
-        let r = Reader::default();
-        let s = r.read_with(|| panic!("a read fails"), Duration::from_millis(50), |_| {});
-        assert_eq!(s.map(|s| s.tick), Some(None));
-        let ok = || shown(&Keryx::Off, ORCH, "off");
+        // A second open while it is out starts no read.
+        assert_eq!(r.read_with(|| panic!("a second read"), TEST_WAIT), None);
+        // Once it lands the reader is free, and the next open reads afresh.
         let start = std::time::Instant::now();
         loop {
-            if let Some(s) = r.read_with(ok, TEST_WAIT, |_| {}) {
-                assert_eq!(s, ok());
+            if let Some(s) = r.read_with(heph, TEST_WAIT) {
+                assert_eq!(s, heph());
                 break;
             }
             assert!(start.elapsed() < TEST_WAIT, "the reader stayed busy");
@@ -505,19 +433,19 @@ mod tests {
     }
 
     #[test]
-    fn a_mode_clicked_while_a_read_is_out_outranks_its_late_answer() {
+    fn a_read_that_panics_does_not_leave_the_reader_busy() {
         let r = Reader::default();
-        let (tx, late) = mpsc::channel();
-        let slow = || {
-            std::thread::sleep(Duration::from_millis(200));
-            shown(&Keryx::Off, ORCH, "heph")
-        };
-        r.read_with(slow, Duration::from_millis(10), move |l| {
-            let _ = tx.send(l);
-        });
-        // The click on a mode comes while the read is out.
-        r.supersede();
-        let l = late.recv_timeout(TEST_WAIT).unwrap();
-        assert!(!r.current(&l), "{l:?}");
+        let s = r.read_with(|| panic!("a read fails"), Duration::from_millis(50));
+        assert_eq!(s.map(|s| s.tick), Some(None));
+        let ok = || shown(&Keryx::Off, ORCH, "off");
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(s) = r.read_with(ok, TEST_WAIT) {
+                assert_eq!(s, ok());
+                break;
+            }
+            assert!(start.elapsed() < TEST_WAIT, "the reader stayed busy");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

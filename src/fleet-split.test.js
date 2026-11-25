@@ -48,7 +48,7 @@ test("the toggle is a labelled toggle button, off and hidden until the saved cho
   const note = { textContent: "", title: "" };
   let load;
   const { calls, invoke } = app({ saved: new Promise((r) => { load = r; }) });
-  const ready = wireSplit({ button, note, invoke, app: true });
+  const ready = wireSplit({ button, note, invoke, app: true }).ready;
   assert.ok(button.hidden, "hidden until the app says split mode is available");
   assert.ok(!pressed(button), "off by default");
   load(false);
@@ -63,7 +63,7 @@ test("a saved on is applied once the wall loads, and the toggle turns on when it
   const button = control();
   const note = { textContent: "", title: "" };
   const { calls, invoke } = app({ saved: Promise.resolve(true), answer: async () => "Split: the wall on the left, the fleet terminal on the right." });
-  await wireSplit({ button, note, invoke, app: true });
+  await wireSplit({ button, note, invoke, app: true }).ready;
   await settle();
   assert.deepEqual(calls, [["get_split_mode", undefined], ["set_split_mode", { on: true }]]);
   assert.ok(pressed(button));
@@ -74,7 +74,7 @@ test("a click turns split on, a second click turns it off, each through the comm
   const button = control();
   const note = { textContent: "", title: "" };
   const { calls, invoke } = app();
-  await wireSplit({ button, note, invoke, app: true });
+  await wireSplit({ button, note, invoke, app: true }).ready;
   button.click();
   await settle();
   assert.ok(pressed(button));
@@ -89,7 +89,7 @@ test("with the fleet terminal not open the note says so and the toggle stays off
   const note = { textContent: "", title: "" };
   const notOpen = "The fleet terminal is not open, so nothing moved. Open it with + New session, then turn Split on.";
   const { invoke } = app({ answer: async () => { throw notOpen; } });
-  await wireSplit({ button, note, invoke, app: true });
+  await wireSplit({ button, note, invoke, app: true }).ready;
   button.click();
   await settle();
   assert.ok(!pressed(button), "the toggle never shows a split that did not happen");
@@ -101,7 +101,7 @@ test("a saved on whose terminal is not open leaves the toggle off and says why",
   const button = control();
   const note = { textContent: "", title: "" };
   const { invoke } = app({ saved: Promise.resolve(true), answer: async () => { throw "The fleet terminal is not open."; } });
-  await wireSplit({ button, note, invoke, app: true });
+  await wireSplit({ button, note, invoke, app: true }).ready;
   await settle();
   assert.ok(!button.hidden);
   assert.ok(!pressed(button));
@@ -113,7 +113,7 @@ test("a click while a call runs is ignored, so one press is one move", async () 
   const note = { textContent: "", title: "" };
   let finish;
   const { calls, invoke } = app({ answer: () => new Promise((r) => { finish = r; }) });
-  await wireSplit({ button, note, invoke, app: true });
+  await wireSplit({ button, note, invoke, app: true }).ready;
   button.click();
   button.click();
   finish("ok");
@@ -126,11 +126,11 @@ test("off Windows, and outside the app, the toggle stays hidden", async () => {
   const button = control();
   const note = { textContent: "", title: "" };
   const { calls, invoke } = app({ saved: Promise.reject("Split mode works on Windows only.") });
-  await wireSplit({ button, note, invoke, app: true });
+  await wireSplit({ button, note, invoke, app: true }).ready;
   assert.ok(button.hidden);
   const browser = control();
   const none = app();
-  await wireSplit({ button: browser, note, invoke: none.invoke, app: false });
+  await wireSplit({ button: browser, note, invoke: none.invoke, app: false }).ready;
   assert.ok(browser.hidden);
   assert.deepEqual(none.calls, [], "a browser asks the app nothing");
   assert.equal(calls.length, 1);
@@ -164,7 +164,7 @@ test("when a window leaves the split the toggle turns off, the note says why, an
   const note = { textContent: "", title: "" };
   const { calls, invoke } = app({ saved: Promise.resolve(true) });
   const f = follower();
-  await wireSplit({ button, note, invoke, app: true, follow: f.follow });
+  await wireSplit({ button, note, invoke, app: true, follow: f.follow }).ready;
   await settle();
   assert.deepEqual(f.subs.map(([c]) => c), ["split_subscribe"], "subscribed once, after the saved choice loads");
   assert.ok(pressed(button));
@@ -184,7 +184,7 @@ test("#182: when AJ snaps both windows into the split the toggle turns on and th
   const note = { textContent: "", title: "" };
   const { calls, invoke } = app({ saved: Promise.resolve(false) });
   const f = follower();
-  await wireSplit({ button, note, invoke, app: true, follow: f.follow });
+  await wireSplit({ button, note, invoke, app: true, follow: f.follow }).ready;
   await settle();
   assert.ok(!pressed(button));
   const said = "Split on: the wall and the fleet terminal were snapped side by side.";

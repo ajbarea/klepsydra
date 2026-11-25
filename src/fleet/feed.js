@@ -181,7 +181,7 @@ export const pageTheme = (search) => new URLSearchParams(search).get("theme");
 
 /**
  * Follow the character theme: inside the app the saved one, then each
- * change from the tray or the wall; in a browser the page's ?theme=, once.
+ * change from Settings or the wall's picker; in a browser the page's ?theme=, once.
  * The phone's comes on each snapshot instead, so this sends it nothing.
  */
 export function subscribeTheme(onTheme) {

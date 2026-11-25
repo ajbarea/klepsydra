@@ -65,7 +65,7 @@ let started = false; // the first draw waits for the layout
 
 const compact = () => layout === "compact";
 
-/** The chips' layout for the tray's choice: Compact is linear, Full is stacked (#421). */
+/** The chips' layout for the saved choice (Settings' Compact row): Compact is linear, Full is stacked (#421). */
 const chipLayout = () => (compact() ? "linear" : "stacked");
 
 /**
@@ -87,7 +87,7 @@ async function applyLayout(next) {
 }
 
 /**
- * The harness pins a layout with ?layout=; the app follows the tray. Resolves
+ * The harness pins a layout with ?layout=; the app follows the saved layout. Resolves
  * once the first layout is in, or after LAYOUT_WAIT_MS, so a compact gauge
  * does not open tall for a moment.
  */

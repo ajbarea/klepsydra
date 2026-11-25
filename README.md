@@ -335,7 +335,7 @@ takes its own `KLEPSYDRA_DIR` and `KLEPSYDRA_NO_AUTOSTART` set to any
 value but empty (`1`, say; `0` holds it too). The login entry
 is one per app name, so without the second setting the copy re-registers it
 with its own path, and the next login starts the copy. With it set, the copy
-leaves the entry alone and its tray's start-at-login item is greyed out.
+leaves the entry alone and its Settings row for start at login is greyed out.
 
 **2. Build the overlay.** Windows and Linux differ here; see the Linux
 section below. On Windows it requires Rust (MSVC toolchain), Node, and the
@@ -355,7 +355,7 @@ bash scripts/build-windows.sh
 so a branch can build beside the main one.
 
 **3. Start it with Windows.** Run `klepsydra.exe` once. It registers itself to
-start at login; the tray's "Start with Windows" turns that off.
+start at login; **Start with Windows** in Settings turns that off.
 
 Published readings live in `%LOCALAPPDATA%\dev.ajsoftworks.klepsydra`, so
 uninstalling with *Delete application data* ticked takes them with it. Leaving
@@ -389,7 +389,8 @@ through `xdg-open`.
 The tray icon needs a StatusNotifierItem host. On XFCE that is the Status Tray
 panel plugin (`xfce4-panel --add=systray`). Stock GNOME has none and needs an
 AppIndicator extension. Without a host the gauge still runs, but the tray menu,
-and with it Quit, is unreachable: `pkill klepsydra` stops it.
+and with it Quit, is unreachable: `pkill klepsydra` stops it. Settings stays
+reachable from the wall's gear.
 
 Tauri's X11 click-through leaves one input pixel at the window's top-left
 corner, which sits in the panel's transparent rounded corner.
@@ -442,24 +443,38 @@ desync the two.
 
 The tray icon is itself a miniature of the bar, redrawn as the reading changes,
 so the level stays readable when the overlay is covered or a fullscreen app is
-in front. "Set home here" saves where the gauge sits now, and "Reset position"
-returns it there, keeping the corner nearest the screen edges: a gauge homed
+in front. Its menu holds three items: **Open wall**, **Settings...** and
+**Quit**.
+
+### Settings
+
+The app's settings live on one page of the wall window: **Settings...** in the
+tray, or **Settings…** under the wall's gear. The gauge's background opacity is
+the gear's own slider ([Background opacity](#background-opacity)). A choice applies at once, with no Save
+button, and each row shows what the app reports back, so a choice the app
+could not make (a held login entry, a phone wall whose port is in use) shows
+as it is, with a note under the row; the [log](#logs) has the cause. Press `/` to search the rows by name or
+description; Escape clears the search, then returns to the wall. The rows for
+Split, card density, Characters and + New session's default run the same code
+as the wall's own controls, so the two always agree.
+
+In Settings, "Set home here" saves where the gauge sits now, and "Reset
+position" returns it there, keeping the corner nearest the screen edges: a gauge homed
 on the taskbar returns to the taskbar at any size. Its monitor is found by
 position, then by name, then by nearness, and a changed resolution moves
 home to the same relative spot. With no home saved, it goes over the primary
-monitor's taskbar, 220px in from the right. The menu also toggles "Compact"
+monitor's taskbar, 220px in from the right. Settings also holds "Compact layout"
 (below), "Ping" (Windows only; see Ping), "Start with Windows" ("Start at login"
-on Linux) and "Phone wall" (see Fleet on your phone). It holds the Characters
-and Voices submenus, "Choose queue file..." and "Choose Needs you file..." (see
-Queue panel), and Quit.
+on Linux), "Phone wall" (see Fleet on your phone), Characters, Voices, and the
+queue and Needs you files (see Queue panel).
 Autostart is on by default; the icon may start in the notification-area
 overflow.
 
 ### Compact
 
-"Compact" in the tray menu puts the chips in one row, each a logo, a bold
+"Compact layout" in Settings puts the chips in one row, each a logo, a bold
 percent, a countdown ("4h 58m", "3d 11h") and its pips, with a thin bar between
-accounts. Unchecked, the gauge stacks them: a line per account with every
+accounts. Off, the gauge stacks them: a line per account with every
 window's percent and countdown.
 
 <p align="center">
@@ -957,10 +972,10 @@ fetches nothing.
 
 ### Voices
 
-The tray's **Voices** menu says who speaks through keryx: **Heph only** (the
+**Voices** in Settings says who speaks through keryx: **Heph only** (the
 default), **Everyone** or **Off**. It is kept in `prefs.json` (`"voices"`), and
 a change runs `fleet voices` at once, which sets keryx itself, so it reaches
-running sessions too, including ones started from the tray's Start: Heph only
+running sessions too, including ones already running: Heph only
 sets keryx's `speak_only` to `orchestrator.session` (keryx 0.12.0 or later), so
 only the orchestrator's session speaks and every other session's hook stops
 before keryx's daemon; Everyone lets every session speak; Off runs `keryx off`,
@@ -968,31 +983,28 @@ which stops its daemon and frees the GPU. The resume service applies a changed
 mode within a pass (`fleet voices --if-changed`), so a `keryx off` of your own
 between changes stays, and `fleet doctor` warns while the saved mode is not
 applied, naming why (a keryx without `speak_only` on either account).
-The tick shows what keryx does, not only what was saved: when the pointer
-enters the tray icon and when it presses it, the tray reads keryx's own
-`config.json` (`enabled`, `speak_only`), found through `keryx-paths.json`, which
-`fleet voices` keeps in the data folder, and ticks the mode that config
-matches. A line above the modes says what keryx does and, when it differs, the
-saved mode (`keryx now: Off; saved: Heph only` after a `/keryx off`). A state no
-mode matches (a bare `keryx speak-only` for other sessions, a malformed
-`speak_only`, an unreadable config) ticks nothing and is named there; no config
-file is keryx's defaults, Everyone. The read waits at most 250 ms (a warm read
-across WSL's file share takes about 4 ms); a slower one ticks nothing, says
-keryx's config did not answer in time, and shows its answer when it lands
-unless a newer read or click came first. A click still saves through `fleet
-voices`. Sessions are started with no `KERYX_ENABLED`, which would outrank
+The row shows what keryx does, not only what was saved: each time Settings
+opens, it reads keryx's own `config.json` (`enabled`, `speak_only`), found
+through `keryx-paths.json`, which `fleet voices` keeps in the data folder, and
+selects the mode that config matches. A line under the row says what keryx
+does and, when it differs, the saved mode (`keryx now: Off; saved: Heph only`
+after a `/keryx off`). A state no mode matches (a bare `keryx speak-only` for
+other sessions, a malformed `speak_only`, an unreadable config) selects
+nothing and is named there; no config file is keryx's defaults, Everyone. The
+read waits at most 2 s (a warm read across WSL's file share takes about 4 ms);
+a slower one selects nothing and says keryx's config did not answer in time.
+A choice still saves through `fleet voices`. Sessions are started with no `KERYX_ENABLED`, which would outrank
 keryx's own setting; a worker launched before 11-02 still carries `KERYX_ENABLED=false`
 until its next launch.
 
 ### Character themes
 
-The cast wears one of three themes, all full and equal, chosen in the tray's
-**Characters** menu or the wall's Characters picker, under the gear beside its density choice.
+The cast wears one of three themes, all full and equal, chosen in Settings'
+**Characters** row or the wall's Characters picker, under the gear beside its density choice.
 The choice is kept in `prefs.json` (`"theme"`) and applies at once, without a
 restart: every card's name, epithet, face and colour (Comfortable and
 Compact), the strip beside the gauge, an open portrait, the Ledger's
-names, the Queue's keeper, the empty wall's keeper, the phone wall and the
-tray's tick. The wall names the theme on `<html data-theme="...">`, as a CSS
+names, the Queue's keeper, the empty wall's keeper and the phone wall. The wall names the theme on `<html data-theme="...">`, as a CSS
 colour theme does; each card's colour is its own `--accent`.
 
 - **Kourai** (the default): the kourai portraits above.
@@ -1070,10 +1082,10 @@ once to the [log](#logs), and the rest of the fleet still shows.
 
 ### Ping
 
-With "Ping" ticked in the tray menu, klepsydra plays a short chime when a
+With "Ping" on in Settings, klepsydra plays a short chime when a
 session needs you or finishes its turn: two notes at one pitch when it needs
 you (a prompt, a question or an error), two rising notes when a turn ends.
-Ping is off until you tick it, and ticking it plays the needs-you chime once.
+Ping is off until you turn it on, and turning it on plays the needs-you chime once.
 Several sessions changing together make one chime, needs-you first. Within 2
 seconds of a chime only a needs-you after a done plays, so a burst makes one
 sound and a prompt still gets its own. A chime answers a hook event, as the
@@ -1085,8 +1097,8 @@ chimes at each of its Stops.
 The chime stays silent while Do Not Disturb or a Focus session is on, or
 while a full-screen app, a game or presentation mode is in front. Windows
 reports Do Not Disturb only through an undocumented setting, so if klepsydra
-cannot read it, the chime plays. Ping is Windows only; the Linux tray menu
-has no "Ping".
+cannot read it, the chime plays. Ping is Windows only; Settings on Linux
+has no "Ping" row.
 
 The chimes are built by `scripts/make-sounds.mjs`, which writes
 `src-tauri/sounds/`; the tests fail if the files and the script disagree.
@@ -1094,12 +1106,12 @@ The chimes are built by `scripts/make-sounds.mjs`, which writes
 ### Fleet on your phone
 
 <!-- budget: 560 words -->
-With "Phone wall" ticked in the tray menu, klepsydra serves a read-only copy
+With "Phone wall" on in Settings, klepsydra serves a read-only copy
 of the wall on `127.0.0.1:8318`, and Tailscale Serve carries it to your phone
-over your tailnet. Unticked (the default), nothing listens.
+over your tailnet. Off (the default), nothing listens.
 
-1. Tick **Phone wall** in klepsydra's tray menu. The box stays ticked across
-   restarts; if the port is taken it stays clear and the [log](#logs) says why.
+1. Turn on **Phone wall** in klepsydra's Settings. It stays on across
+   restarts; if the port is taken it stays off, and the row and the [log](#logs) say why.
 2. Install Tailscale on the PC and on the iPhone, signed in to the same
    tailnet.
 3. In the Tailscale admin console, under DNS, enable **HTTPS certificates**
@@ -1299,8 +1311,8 @@ remembered. The files stay the source of truth:
 agents and you keep editing them with any editor, and the panel only reads
 them.
 
-To read another file, pick it with the tray's **Choose queue file...** or
-**Choose Needs you file...**, or let a session own it: an orchestrator that
+To read another file, pick it with **Queue file** or **Needs you file** in
+Settings, or let a session own it: an orchestrator that
 keeps the queue runs
 
 ```bash
@@ -1551,7 +1563,7 @@ JSON line in `log/fleet.log`, in the app log's shape.
 | `fleet close NAME` | Closes a finished agent's pane at rest; never kills it. |
 | `fleet delegate TASK-FILE` | Hands read-only work to a locked agy or Copilot lane. See [docs/engines.md](docs/engines.md). |
 | `fleet headless NAME BRIEF` | Runs a job as `claude -p` on the API credit, capped. See [docs/headless.md](docs/headless.md). |
-| `fleet voices [MODE]` | Sets keryx to the tray's Voices mode now. |
+| `fleet voices [MODE]` | Sets keryx to Settings' Voices mode now. |
 | `fleet shots [--apply]` | Prunes the briefing's decided and old screenshots; a dry run without `--apply`. |
 | `fleet install` / `fleet cutover` | Install the scripts and units; move the eight units (nine with `wsl-mem-watch.service` when installed) onto the installed files. |
 

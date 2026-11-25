@@ -1,0 +1,496 @@
+/* The settings page (#384, Design A): one column of rows in sections. Every
+   colour, font and focus ring is a wall.css token, so both schemes follow
+   (css-tokens.test.js holds every var() here to a defined property). */
+
+.settings-view {
+  display: block;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--wall-bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.45;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.settings-view[hidden] {
+  display: none !important;
+}
+
+.set-a {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+  box-sizing: border-box;
+}
+
+/* ═══ Header: Back button, Title, Search Box ═══ */
+.settings-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+}
+
+.settings-view .back-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--button-bg);
+  border: 1px solid var(--button-line);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  flex: none;
+}
+
+.settings-view .back-btn:hover {
+  background: var(--button-hover);
+}
+
+.settings-top h1 {
+  font-family: var(--title);
+  font-weight: 650;
+  font-size: 28px;
+  letter-spacing: 0.02em;
+  margin: 0;
+  margin-right: auto;
+}
+
+.settings-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 260px;
+  max-width: 380px;
+  flex: 1;
+}
+
+.settings-view .search-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.settings-view .search-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 42px 0 38px;
+  font-family: var(--font);
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  border-radius: 999px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+}
+
+.settings-view .search-input:focus {
+  border-color: var(--card-focus);
+  box-shadow: 0 0 0 1px var(--card-focus);
+}
+
+.settings-view .search-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.settings-view .search-kbd {
+  position: absolute;
+  right: 14px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-quiet);
+  background: var(--button-bg);
+  border: 1px solid var(--button-line);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.settings-view .search-clear {
+  position: absolute;
+  right: 10px;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.settings-view .search-clear:hover {
+  color: var(--text);
+}
+
+.settings-view .search-clear[hidden] {
+  display: none !important;
+}
+
+/* ═══ Sticky Section Navigation ═══ */
+.settings-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+  padding: 10px 0 14px;
+  margin-bottom: 12px;
+  background: var(--wall-bg);
+  border-bottom: 1px solid var(--card-line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.settings-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-view .nav-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-decoration: none;
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  border-radius: 999px;
+  white-space: nowrap;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.settings-view .nav-item:hover,
+.settings-view .nav-item:focus-visible {
+  color: var(--text);
+  background: var(--button-hover);
+  border-color: var(--button-line);
+}
+
+/* ═══ Sections & Rows ═══ */
+.settings-section {
+  padding: 18px 0 8px;
+}
+
+.settings-section + .settings-section {
+  border-top: 1px solid var(--card-line);
+}
+
+.settings-section[hidden] {
+  display: none !important;
+}
+
+.settings-section h2 {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin: 0 0 10px;
+  color: var(--text);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 0;
+  border-radius: 6px;
+}
+
+.settings-row[hidden] {
+  display: none !important;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid color-mix(in srgb, var(--card-line) 40%, transparent);
+}
+
+.settings-row-info {
+  display: grid;
+  gap: 3px;
+  max-width: 62ch;
+}
+
+.settings-row-label {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.settings-row-desc {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.settings-row-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  justify-content: flex-end;
+}
+
+/* ═══ Controls ═══
+   Each rule is scoped to .settings-view, which outranks wall.css's
+   button:hover, so a toggle just clicked shows its new state under the pointer. */
+
+/* Toggle Switch */
+.settings-view .tog {
+  width: 44px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  position: relative;
+  background: var(--button-bg);
+  border: 1px solid var(--button-line);
+  cursor: pointer;
+  outline: none;
+  transition: background 0.15s, border-color 0.15s;
+  flex: none;
+}
+
+.settings-view .tog i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.15s, background 0.15s;
+  pointer-events: none;
+}
+
+.settings-view .tog[aria-checked="true"] {
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.settings-view .tog[aria-checked="true"] i {
+  transform: translateX(20px);
+  background: var(--wall-bg);
+}
+
+/* Held (autostart under KLEPSYDRA_NO_AUTOSTART) or waiting on the app. */
+.settings-view .tog[aria-disabled="true"],
+.settings-view [aria-busy="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.settings-view [aria-busy="true"] {
+  cursor: progress;
+}
+
+/* What the app said about a row: keryx's live state, a refusal, a hold. */
+.settings-row-note {
+  font-size: 12.5px;
+  color: var(--text-quiet);
+  line-height: 1.4;
+}
+
+.settings-row-note:empty {
+  display: none;
+}
+
+/* Segmented Control */
+.settings-view .seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 9px;
+  background: var(--card-quiet);
+  box-shadow: inset 0 0 0 1px var(--card-line);
+}
+
+.settings-view .seg button {
+  border: 0;
+  background: transparent;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+.settings-view .seg button:hover {
+  color: var(--text);
+}
+
+.settings-view .seg button[aria-checked="true"] {
+  background: var(--button-hover);
+  color: var(--text);
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px var(--button-line);
+}
+
+/* Dropdown Select */
+.settings-view .sel-control {
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--button-bg);
+  border: 1px solid var(--button-line);
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  outline: none;
+  min-width: 160px;
+}
+
+.settings-view .sel-control:focus-visible {
+  border-color: var(--card-focus);
+}
+
+/* Button Action */
+.settings-view .btn-action {
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--button-bg);
+  border: 1px solid var(--button-line);
+  border-radius: 8px;
+  padding: 7px 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.settings-view .btn-action:hover {
+  background: var(--button-hover);
+}
+
+.settings-view .btn-action:focus-visible {
+  outline: 2px solid var(--card-focus);
+  outline-offset: 1px;
+}
+
+/* Path Picker */
+.path-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.path-val {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+/* Empty search state */
+.settings-empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 14.5px;
+}
+
+.settings-empty[hidden],
+.settings-view .nav-item[hidden] {
+  display: none !important;
+}
+
+/* The page stands alone: the Ledger and Queue tabs wait behind it (wall.js shuts the panels). */
+.settings-open :is(#ledger-tab, #queue-tab) {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-view *,
+  .settings-view *::before,
+  .settings-view *::after {
+    transition: none !important;
+  }
+}
+
+/* Focus visibility for full keyboard navigation */
+.settings-view :focus-visible {
+  outline: 2px solid var(--card-focus);
+  outline-offset: 2px;
+}
+
+/* ═══ Responsive Breakpoint: 390px (Mobile / Phone wall) ═══ */
+@media (max-width: 640px) {
+  .set-a {
+    padding: 16px 14px 32px;
+  }
+
+  .settings-top {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .settings-top h1 {
+    font-size: 22px;
+  }
+
+  .settings-search {
+    order: 3;
+    min-width: 100%;
+    max-width: 100%;
+  }
+
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 14px 0;
+  }
+
+  .settings-row-control {
+    justify-content: flex-start;
+  }
+
+  .settings-view .seg {
+    flex-wrap: wrap;
+  }
+
+  .path-wrap {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .path-val {
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
+  }
+}
