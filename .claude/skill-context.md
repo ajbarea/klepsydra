@@ -84,6 +84,7 @@ files belong to: the JS guards scan hooks and scripts too.
   delivery, doctor, install).
 - `python3 -I fleet/test_ci_watch.py`: the CI watch against a fake GitHub.
 - `python3 -I fleet/test_prune_shots.py`: the briefing's screenshot prune against a fake gh.
+- `bash fleet/test_sync_mirror.sh`: the briefing sync's Drive mirror refusals (no tmux, no lock).
 - `python3 -I scripts/perf/test_fixture.py`: the perf harness's demo fleet
   writes only files it owns and no future times.
 - `make test-engine` (no tmux, no lock): the agy and Copilot hook adapters in `hooks/klepsydra-engine.sh`; CI does not run it.
@@ -165,12 +166,14 @@ files belong to: the JS guards scan hooks and scripts too.
 
 ## ci_audit
 
-- workflows: `.github/workflows/ci.yml` (two jobs), and
+- workflows: `.github/workflows/ci.yml` (four jobs), and
   `.github/workflows/dependabot-auto-merge.yml`.
-- `Gauge logic + statusLine hook` runs on `ubuntu-latest` with Node 24: unit
+- `Hooks, lints and the other suites` runs on `ubuntu-latest` with Node 24: unit
   tests, both hooks' tests, the release memory check's tests, shellcheck,
   Biome and ruff (the logging lints, as annotations), and the
-  install-directory guard.
+  install-directory guard. `Fleet engine tests` runs the fleet engine suite beside it
+  (the longest suite). `Gauge logic + statusLine hook` needs both and passes
+  only when both passed; it is the name branch protection requires.
 - `Rust (fmt + clippy, <os>)` is a matrix over `windows-latest` and
   `ubuntu-latest`, for the reason in `## repo`; the Linux leg installs the
   WebKitGTK and tray headers first. Clippy is `-D warnings`, so a warning is a

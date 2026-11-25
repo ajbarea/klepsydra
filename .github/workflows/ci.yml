@@ -25,9 +25,9 @@ concurrency:
 
 jobs:
   test:
-    name: Gauge logic + statusLine hook
+    name: Hooks, lints and the other suites
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 30
     steps:
       # actions/checkout runs `git init`, which prints a hint while Git's
       # default branch name is unset.
@@ -84,8 +84,6 @@ jobs:
         run: |
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
           make test-launch FLEET_HEAVY_HELD=1
-      - name: Fleet engine tests
-        run: make test-fleet FLEET_HEAVY_HELD=1
       - name: Delegate lane tests
         run: make test-delegate FLEET_HEAVY_HELD=1
       - name: Headless runner tests
@@ -112,6 +110,8 @@ jobs:
         run: python3 -I fleet/test_ci_watch.py
       - name: Screenshot prune tests
         run: python3 -I fleet/test_prune_shots.py
+      - name: Briefing mirror refusal tests
+        run: bash fleet/test_sync_mirror.sh
       - name: Shell lint
         run: make shellcheck SHELLCHECK=shellcheck FLEET_HEAVY_HELD=1
       - name: Shell lint runner tests
@@ -137,6 +137,45 @@ jobs:
           if [ -n "$hits" ]; then
             printf '%s\n' "$hits"
             echo "::error::write a path under the install directory somewhere else"
+            exit 1
+          fi
+
+  # The fleet engine suite takes most of the pipeline's time (38 min on 11-19), so it runs
+  # beside the other suites rather than after them.
+  fleet:
+    name: Fleet engine tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      # actions/checkout runs `git init`, which prints a hint while Git's
+      # default branch name is unset.
+      - name: Set Git's default branch name
+        run: git config --global init.defaultBranch main
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fleet engine tests
+        run: |
+          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          make test-fleet FLEET_HEAVY_HELD=1
+
+  # Branch protection requires this check by name: it passes only when both halves did.
+  # always(), not !cancelled(): a skipped job reports success, even as a required check.
+  gate:
+    name: Gauge logic + statusLine hook
+    needs: [test, fleet]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Both halves passed
+        env:
+          SUITES: ${{ needs.test.result }}
+          FLEET: ${{ needs.fleet.result }}
+        run: |
+          if [[ $SUITES != success || $FLEET != success ]]; then
+            echo "::error::hooks, lints and other suites: $SUITES; fleet engine tests: $FLEET"
             exit 1
           fi
 

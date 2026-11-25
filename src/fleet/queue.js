@@ -206,9 +206,17 @@ export function sections(nodes, opened = () => undefined) {
 export function needsYouCount(nodes) {
   const needs = nodes.find((n) => typeof n !== "string" && n.tag === "details" && n.cls === "q-needs");
   if (!needs) return null;
-  let count = 0;
-  for (const list of needs.kids) {
-    if (typeof list === "string" || (list.tag !== "ol" && list.tag !== "ul")) continue;
+  return openItems(needs.kids) ?? 0;
+}
+
+const isList = (n) => typeof n !== "string" && (n.tag === "ol" || n.tag === "ul");
+
+/** The items of the lists among `kids` that do not read as done; null when none is a list. */
+function openItems(kids) {
+  let count = null;
+  for (const list of kids) {
+    if (!isList(list)) continue;
+    count ??= 0;
     for (const item of list.kids) if (typeof item !== "string" && item.tag === "li" && item.cls !== "q-done") count++;
   }
   return count;
@@ -216,17 +224,18 @@ export function needsYouCount(nodes) {
 
 /**
  * The Needs you file's open asks: its Needs you section's, as
- * `needsYouCount`, else the visible top-level items of every top-level list,
- * less those done. Null when it has neither.
+ * `needsYouCount`, else the top-level items, less those done, of every list
+ * at the top or directly in a section, as under "# Needs you" then "## Today".
+ * Null when it has neither.
  */
 export function asksCount(nodes) {
   const inSection = needsYouCount(nodes);
   if (inSection !== null) return inSection;
-  let count = null;
-  for (const list of nodes) {
-    if (typeof list === "string" || (list.tag !== "ol" && list.tag !== "ul")) continue;
-    count ??= 0;
-    for (const item of list.kids) if (typeof item !== "string" && item.tag === "li" && item.cls !== "q-done") count++;
+  let count = openItems(nodes);
+  for (const n of nodes) {
+    if (typeof n === "string" || n.tag !== "details") continue;
+    const inIt = openItems(n.kids);
+    if (inIt !== null) count = (count ?? 0) + inIt;
   }
   return count;
 }

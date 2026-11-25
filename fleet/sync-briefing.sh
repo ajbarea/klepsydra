@@ -11,7 +11,7 @@ FLEET_TARGET=fleet::sync-briefing
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
-R=${BRIEFING_DIR:-/mnt/c/Users/ajbar/fleet-briefing}
+R=${BRIEFING_DIR:-$FLEET_BRIEFING}
 GITLEAKS=${FLEET_GITLEAKS:-gitleaks}
 # Google Drive mirror (#380): AJ's phone swipes screenshots and plays video in Drive, which the
 # GitHub app cannot. Off unless FLEET_BRIEFING_DRIVE names an rclone remote and a folder in it;
@@ -38,6 +38,21 @@ mirror() {
   [[ "$head $DRIVE" == "$last" ]] && return 0
   command -v "$RCLONE" >/dev/null 2>&1 || { flog WARN "briefing mirror: rclone not installed" remote="$DRIVE"; return 0; }
   "$RCLONE" listremotes 2>/dev/null | grep -qxF "${DRIVE%%:*}:" || { flog WARN "briefing mirror: no such rclone remote; run rclone config create" remote="$DRIVE"; return 0; }
+  # A clone behind origin (another host pushed, or an edit on GitHub) would roll the folder
+  # back to its older commit: only the commit origin holds goes (#531 review).
+  local up
+  up=$(git rev-parse -q --verify '@{u}' 2>/dev/null) || { flog WARN "briefing mirror: the branch tracks no upstream; not mirrored" commit="${head:0:7}"; return 0; }
+  # The branch's own remote, bounded (124 is the bound): the only network call on a pass with nothing to push.
+  out=$(timeout "${FLEET_FETCH_TIMEOUT:-60}" git fetch -q 2>&1); rc=$?
+  if (( rc != 0 )); then
+    flog WARN "briefing mirror: the fetch failed; retried next pass" remote="$DRIVE" rc="$rc" said="$(tail -2 <<<"$out")"
+    return 0
+  fi
+  up=$(git rev-parse -q --verify '@{u}' 2>/dev/null)
+  if [[ $up != "$head" ]]; then
+    flog INFO "briefing mirror: this clone is not at origin's commit; mirrored once it is" commit="${head:0:7}"
+    return 0
+  fi
   snap=$(mktemp -d) || { flog WARN "briefing mirror: no temp folder; retried next pass"; return 0; }
   if ! (set -o pipefail; git archive --format=tar "$head" | tar -x -C "$snap"); then
     flog WARN "briefing mirror: could not copy the commit; retried next pass" commit="${head:0:7}"
