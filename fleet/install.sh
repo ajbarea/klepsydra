@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# install.sh [--dry-run] [--hooks] [--no-cutover]: install the fleet from this checkout (with
-# --hooks, only the copies in ~/.claude, which the gauge alone needs). Each script is
+# install.sh [--dry-run] [--hooks] [--force] [--no-cutover]: install the fleet from this checkout
+# (with --hooks, only the copies in ~/.claude, which the gauge alone needs; --force
+# installs from a git worktree). Each script is
 # linked into the state folder (so a pull updates the fleet), the `fleet`
 # command into ~/.local/bin, the hooks, status line, launcher and cast copied
 # into ~/.claude (FLEET_HOOK_DIR), and the fleet's services into
@@ -24,8 +25,10 @@ fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
 # A dry run writes nothing, its log included: its events go to stderr only.
 ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}" >&2; else flog "$@"; fi; }
-SCRIPTS=(launch.sh fresh-now.sh resume-at-reset.sh watch-panes.sh memfrag-log.sh relaunch-fresh.sh done.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh resume-now.sh sync-briefing.sh ci_watch.py agora.py worker-settings.json)
-UNITS=${FLEET_UNITS:-$HOME/.config/systemd/user}
+SCRIPTS=(launch.sh delegate.sh headless.sh engines.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh close.sh send.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh resume-now.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py prune_shots.py worker-settings.json)
+# Scripts the checkout no longer has: their links in the state folder go (#326).
+RETIRED=(agora.py digest.py)
+UNITS=$FLEET_UNIT_DIR
 BIN=${FLEET_BIN:-$HOME/.local/bin}
 archive=$FLEET_STATE/archive/fleet-scripts-$(date +%Y%m%d)
 
@@ -58,6 +61,38 @@ for c in "${HOOK_COPIES[@]}"; do
     failed=1
   fi
 done
+
+# Antigravity (AGY) discovers lifecycle hooks in ~/.gemini/config/hooks.json.
+gemini_config=${GEMINI_CONFIG_DIR:-${HOME:-}/.gemini/config}
+if [[ -d ${gemini_config%/*} || -d $gemini_config ]]; then
+  agy_src=$root/hooks/klepsydra-agy.json
+  agy_dest=$gemini_config/hooks.json
+  if [[ -f $agy_src ]]; then
+    if (( dry )); then
+      printf 'would: configure agy hooks in %s\n' "$agy_dest"
+    else
+      if mkdir -p "$gemini_config"; then
+        if [[ -f $agy_dest ]]; then
+          merged=$(jq -s '.[0] + .[1]' "$agy_dest" "$agy_src" 2>/dev/null) &&
+            printf '%s\n' "$merged" >"$agy_dest.tmp.$$" &&
+            mv -f "$agy_dest.tmp.$$" "$agy_dest" &&
+            ilog INFO "updated agy hooks" file="$agy_dest" || failed=1
+        else
+          cp -p "$agy_src" "$agy_dest" && ilog INFO "installed agy hooks" file="$agy_dest" || failed=1
+        fi
+      else
+        failed=1
+      fi
+    fi
+  fi
+fi
+
+# A running fleet server read its conf when it started, so it never sees a new
+# hook: tmux-conf.sh has it read the installed conf now (#290). Off in the
+# suite, which tests the script itself (FLEET_LIVE_CONF=0).
+if (( !dry )) && [[ ${FLEET_LIVE_CONF:-1} == 1 ]]; then
+  bash "$here/tmux-conf.sh" "$FLEET_HOOK_DIR" || failed=1
+fi
 if (( hooks_only )); then
   (( failed )) && exit 1
   (( dry )) || echo "hooks installed from $root into $FLEET_HOOK_DIR"
@@ -74,12 +109,22 @@ for f in "${SCRIPTS[@]}"; do
   fi
   do_ ln -sfn -- "$here/$f" "$dest"
 done
+# Only a link: a file there is someone's own, and stays.
+for f in "${RETIRED[@]}"; do
+  [[ -L $FLEET_STATE/$f ]] || continue
+  do_ rm -f -- "${FLEET_STATE:?}/${f:?}"
+  ilog INFO "a retired script's link removed" link="$FLEET_STATE/$f"
+done
 do_ ln -sfn -- "$here/fleet" "$BIN/fleet"
 
 
 # The PATH the services run with: this shell's, as `systemd-run -E PATH` gave them.
+# A unit already as written is left alone, and one that changed is rewritten in
+# place (never a temp file and mv), so its birth says when it was first written:
+# doctor dates the slices by it (#353), and a test holds it.
 unit() { # NAME BODY
-  if (( dry )); then printf 'would write %s/%s\n' "$UNITS" "$1"; else printf '%s\n' "$2" >"$UNITS/$1"; fi
+  if (( dry )); then printf 'would write %s/%s\n' "$UNITS" "$1"
+  elif [[ ! -f $UNITS/$1 || "$(<"$UNITS/$1")" != "$2" ]]; then printf '%s\n' "$2" >"$UNITS/$1"; fi
 }
 unit fleet-resume-at-reset.service "[Unit]
 Description=klepsydra fleet: resume panes stopped on a usage limit
@@ -143,8 +188,8 @@ Description=klepsydra fleet: commit and push the fleet-briefing repo
 
 [Service]
 Type=oneshot
-TimeoutStartSec=180
-Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+TimeoutStartSec=480
+Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"FLEET_BRIEFING_DRIVE=gdrive:fleet-briefing\"
 ExecStart=/usr/bin/bash $FLEET_STATE/sync-briefing.sh"
 unit fleet-sync-briefing.timer "[Unit]
 Description=klepsydra fleet: sync the fleet-briefing repo every 5 min
@@ -166,7 +211,7 @@ TimeoutStartSec=120
 SuccessExitStatus=1
 # What it prints is in the report; the journal would keep a Remote Control link each run.
 StandardOutput=null
-Environment=\"PATH=$PATH\" \"HOME=$HOME\"
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"${WSL_DISTRO_NAME:+ \"WSL_DISTRO_NAME=$WSL_DISTRO_NAME\"}
 ExecStart=/usr/bin/bash $FLEET_STATE/doctor.sh --json \"$KLEPSYDRA_DIR/fleet-health.json\""
 unit fleet-doctor.timer "[Unit]
 Description=klepsydra fleet: fleet doctor every 5 min
@@ -177,12 +222,32 @@ OnUnitActiveSec=5min
 
 [Install]
 WantedBy=timers.target"
+# The tmux server watchdog (#290): fleet recover once a crash ends the server.
+unit fleet-tmux-watch.service "[Unit]
+Description=klepsydra fleet: fleet recover when the fleet's tmux server crashes
+
+[Service]
+Type=oneshot
+# A recover staggers its launches a minute apart, so a fleet takes a while.
+TimeoutStartSec=3600
+Environment=\"PATH=$PATH\" \"HOME=$HOME\"${WSL_DISTRO_NAME:+ \"WSL_DISTRO_NAME=$WSL_DISTRO_NAME\"}
+ExecStart=/usr/bin/bash $FLEET_STATE/tmux-watch.sh"
+unit fleet-tmux-watch.timer "[Unit]
+Description=klepsydra fleet: check the fleet's tmux server every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target"
 # The CI watch (#162), with the ci-audit report script from techne's main checkout.
 unit fleet-ci-watch.service "[Unit]
 Description=klepsydra fleet: watch the sisters' CI for red runs
 
 [Service]
-Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"TECHNE_CI_REPORT=${TECHNE_CI_REPORT:-$HOME/ajsoftworks/techne/plugins/techne/skills/ci-audit/scripts/report.sh}\" \"CI_SWEEP_HOUR=${CI_SWEEP_HOUR:-99}\"
+Environment=\"PATH=$PATH\" \"HOME=$HOME\" \"TECHNE_CI_REPORT=${TECHNE_CI_REPORT:-$HOME/ajsoftworks/techne/plugins/techne/skills/ci-audit/scripts/report.sh}\" \"CI_SWEEP_HOUR=${CI_SWEEP_HOUR:-99}\" \"FLEET_BRIEFING=$FLEET_BRIEFING\"
 ExecStart=/usr/bin/python3 -I $FLEET_STATE/ci_watch.py
 Restart=always
 RestartSec=60
@@ -202,6 +267,18 @@ RestartSec=30
 
 [Install]
 WantedBy=default.target"
+fi
+# The fleet's memory slices (#353), sized from this machine now; the reload below
+# hands new caps to a slice already running. A scope finds its slice by name, so
+# neither is enabled.
+if caps=$(fleet_slice_caps); then
+  read -r all workers margin <<<"$caps"
+  unit "$FLEET_SLICE" "$(fleet_slice_unit "klepsydra fleet: every fleet scope's memory together, the orchestrator's included" "$all")"
+  unit "$FLEET_WORKER_SLICE" "$(fleet_slice_unit "klepsydra fleet: the workers' memory, leaving the orchestrator its peak" "$workers")"
+  ilog INFO "memory slices sized" fleet_mb="$all" workers_mb="$workers" orchestrator_mb="$((all - workers))" margin_mb="$margin"
+else
+  ilog ERROR "memory slices not sized: no MemTotal in /proc/meminfo, no orchestrator reading and no MEM_MAX size, or the orchestrator's peak leaves the workers nothing or all" mem_max="${MEM_MAX:-5G}"
+  failed=1
 fi
 # Enabling and starting is the cut-over's: a transient unit of the same name
 # (systemd-run) makes enable fail until it is stopped (fleet cutover).

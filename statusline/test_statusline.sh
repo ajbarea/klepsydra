@@ -559,6 +559,50 @@ settle
 check "prune: done once its lock is free" "$(there "uuid-team/$(u 2).json")" "gone"
 check "prune: a render returns before it ($took ms)" "$(( took < 1000 ))" "1"
 
+# Antigravity statusLine tests
+agy_input=$(cat <<EOF
+{
+  "session_id": "$(u 10)",
+  "title": "Fix the issue",
+  "model": {
+    "id": "Gemini 3.8 Flash (High)",
+    "display_name": "Gemini 3.8 Flash (High)"
+  },
+  "context_window": {
+    "used_percentage": 14.5
+  },
+  "quota": {
+    "gemini-5h": {
+      "remaining_fraction": 0.72,
+      "reset_time": "2026-11-16T20:45:51Z",
+      "reset_in_seconds": 13457
+    },
+    "gemini-weekly": {
+      "remaining_fraction": 0.28,
+      "reset_time": "2026-11-21T01:05:36Z",
+      "reset_in_seconds": 374642
+    }
+  },
+  "plan_tier": "Google AI Pro"
+}
+EOF
+)
+
+rm -rf "$work/agy_out"
+mkdir -p "$work/agy_out/dev.ajsoftworks.klepsydra"
+agy_pd="$work/agy_out/dev.ajsoftworks.klepsydra"
+display=$(KLEPSYDRA_DIR="$agy_pd" KLEPSYDRA_NOW=1794848578 bash "$script" <<<"$agy_input")
+check "agy: terminal line" "$display" "Gemini 3.8 Flash (High) · ctx 14% · 5h 28% · 7d 72%"
+check "agy: file published" "$([[ -f "$agy_pd/accounts/agy-primary/$(u 10).json" ]] && echo yes)" "yes"
+check "agy: account id" "$(jq -r .account "$agy_pd/accounts/agy-primary/$(u 10).json")" "agy-primary"
+check "agy: harness" "$(jq -r .harness "$agy_pd/accounts/agy-primary/$(u 10).json")" "agy"
+check "agy: label" "$(jq -r .label "$agy_pd/accounts/agy-primary/$(u 10).json")" "Google AI Pro"
+check "agy: five_hour pct" "$(jq -r .windows.five_hour.used_percentage "$agy_pd/accounts/agy-primary/$(u 10).json")" "28"
+check "agy: five_hour reset" "$(jq -r .windows.five_hour.resets_at "$agy_pd/accounts/agy-primary/$(u 10).json")" "1794861951"
+check "agy: seven_day pct" "$(jq -r .windows.seven_day.used_percentage "$agy_pd/accounts/agy-primary/$(u 10).json")" "72"
+check "agy: beat written" "$([[ -f "$agy_pd/fleet/$(u 10).beat" ]] && echo yes)" "yes"
+check "agy: beat content" "$(cat "$agy_pd/fleet/$(u 10).beat")" "Fix the issue	$(( 1794848578 / 10 ))"
+
 block() { sed -n '/^# --- prune helpers/,/^# --- end prune helpers ---$/p' "$1"; }
 check "prune helpers present" "$([[ -n "$(block "$script")" ]] && echo yes)" "yes"
 check "prune helpers identical in the fleet hook" "$(block "$script")" "$(block "$here/../hooks/klepsydra-fleet.sh")"

@@ -12,7 +12,9 @@ A test steers it through a JSON state file, re-read on every tick:
   busy       a turn is running (the spinner shows)
   input      text to put in the input box now (then removed from the file)
   clear      empty the input box now (then removed from the file)
-  on_submit  what a submitted line starts: "busy" (default), "limit" or "none"
+  on_submit  what a submitted line starts: "busy" (default), "limit", "none" or
+             "queue" (Claude Code queued it: its line shows above the box,
+             and queue_box, when set, is what the box holds after)
   rc         "off" (default) or "on": Remote Control already connected
   rc_delay   seconds before /remote-control's answer shows
   busy_delay seconds before a submitted turn's spinner shows
@@ -23,6 +25,18 @@ A test steers it through a JSON state file, re-read on every tick:
   stall      seconds after start in which Enter does nothing (10-29: a new
              session showed the pasted brief but took no Enter for 9 min)
   exit_on_exit  /exit ends the process, so its pane closes as Claude Code's does
+  die_on_submit  any submitted line ends the process (a pane killed mid-send)
+  exit_delay seconds /exit takes before the process ends (with exit_on_exit)
+  slash_menu  text typed starting with "/" opens Claude Code's command menu
+             just above the box, over the transcript's last rows (2.1.316)
+  slash_adds  a transcript line that shows as the menu opens (a phone
+             prompt arriving as /exit goes in)
+  exit_dialog  /exit opens Claude Code's "Background work is running" dialog
+             (2.1.316, captured 2026-11-18): Enter exits, Esc cancels it
+  log_typed  log each run of typed keys (TYPED <text>), so a test can tell
+             text was typed even when it was erased before any Enter
+  on_exit    a command /exit runs first, as Claude Code's SessionEnd hook
+             (prompt_input_exit) runs the fleet hook on a real /exit
 
 Run: python3 -I fake_pane.py STATE LOG
 """
@@ -30,6 +44,7 @@ Run: python3 -I fake_pane.py STATE LOG
 import json
 import os
 import select
+import subprocess
 import sys
 import termios
 import time
@@ -50,6 +65,21 @@ RC_MENU = [
     "    Show QR code   Scan with your phone to open this session",
     "  ❯ Continue",
     "  Enter to select · Esc to continue",
+]
+SLASH_MENU = [
+    "  ❯ /exit                                                Exit the CLI",
+    "    /context                                             Visualize current context usage",
+    "    /usage-credits                                       Configure usage credits",
+]
+EXIT_DIALOG = [
+    "▔" * 60,
+    "   Background work is running",
+    "   The following will stop when you exit:",
+    "   shell · sleep 300",
+    "   ❯ 1. Exit and stop tasks",
+    "     2. Move to background and exit",
+    "     3. Stay",
+    "   Enter to confirm · Esc to cancel",
 ]
 LIMIT_MENU = [
     "  You've hit your session limit · resets 1:10pm (America/New_York)",
@@ -114,7 +144,15 @@ class Pane:
             self.log("RC REQUESTED")
             return
         self.log("SUBMIT " + text.replace("\n", "\\n"))
+        if self.state.get("die_on_submit"):
+            raise SystemExit(0)
+        if text.strip() == "/exit" and self.state.get("exit_dialog"):
+            self.menu = "exit"
+            return
+        if text.strip() == "/exit" and self.state.get("on_exit"):
+            subprocess.run(self.state["on_exit"], shell=True, check=False)
         if text.strip() == "/exit" and self.state.get("exit_on_exit"):
+            time.sleep(float(self.state.get("exit_delay", 0)))
             raise SystemExit(0)
         self.last_submit = text
         self.state.setdefault("above", []).append(
@@ -123,6 +161,9 @@ class Pane:
         then = self.state.get("on_submit", "busy")
         if then == "busy":
             self.busy_at = time.time() + float(self.state.get("busy_delay", 0))
+        elif then == "queue":
+            self.state["above"].append("  Press up to edit queued messages")
+            self.input = self.state.get("queue_box", "")
         elif then == "limit":
             self.state["above"].append(
                 "  ⎿  You've hit your session limit · resets 1:10pm (America/New_York)"
@@ -182,6 +223,9 @@ class Pane:
                 ):
                     self.lost_enters += 1
                     self.log("KEY ENTER (lost after a paste)")
+                elif self.menu == "exit":
+                    self.log("EXIT AND STOP TASKS")
+                    raise SystemExit(0)
                 elif self.menu == "rc":
                     self.log("RC CONTINUE")
                     self.menu = None
@@ -209,7 +253,10 @@ class Pane:
                 while self.buf and self.buf[:1] >= b" " and self.buf[:1] != b"\x7f":
                     rest += self.buf[:1]
                     self.buf = self.buf[1:]
-                self.input += rest.decode("utf-8", "replace")
+                rest = rest.decode("utf-8", "replace")
+                self.input += rest
+                if self.state.get("log_typed"):
+                    self.log("TYPED " + rest)
 
     def tick(self):
         if self.busy_at is not None and time.time() >= self.busy_at:
@@ -234,6 +281,8 @@ class Pane:
             return above + [RULE] + LIMIT_MENU
         if self.menu == "rc":
             return above + [RULE] + RC_MENU
+        if self.menu == "exit":
+            return above + EXIT_DIALOG
         at, n = self.pasted
         pasted = self.input[at : at + n] if self.pastes else ""
         if pasted and ("\n" in pasted or len(pasted) > 800):
@@ -252,6 +301,11 @@ class Pane:
             box = [PROMPT + first] + ["  " + m for m in more]
         else:
             box = [PROMPT + PLACEHOLDER]
+        if self.state.get("slash_menu") and self.input.startswith("/"):
+            # Drawn over the transcript's last rows, a blank row above it.
+            above = above[: max(0, len(above) - len(SLASH_MENU) - 1)]
+            above += [self.state["slash_adds"]] if self.state.get("slash_adds") else []
+            above += [""] + SLASH_MENU
         below = self.state.get("below", ["  ⏵⏵ bypass permissions on · 1 shell"])
         return above + [RULE] + box + [RULE] + below
 

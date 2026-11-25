@@ -179,17 +179,30 @@ pub async fn set_split_mode(app: tauri::AppHandle, on: bool) -> Result<String, S
         .await
         .map_err(|e| format!("Could not split: {e}"))
         .and_then(|said| said);
-        crate::write_pref(&app, SPLIT_KEY, Value::Bool(saved_on(on, said.is_ok())));
+        let kept = crate::write_pref(&app, SPLIT_KEY, Value::Bool(saved_on(on, said.is_ok())));
         if !saved_on(on, said.is_ok()) {
             watch_for_snap(&app);
         }
-        said
+        with_save_note(said, kept)
     }
     #[cfg(not(windows))]
     {
         let _ = (app, on);
         Err(WINDOWS_ONLY.into())
     }
+}
+
+/// What the wall says after a split that worked (`said`) when prefs.json did
+/// not take the choice (`kept` false, #484): it holds now, not after a restart.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn with_save_note(said: Result<String, String>, kept: bool) -> Result<String, String> {
+    said.map(|m| {
+        if kept {
+            m
+        } else {
+            format!("{m} prefs.json could not be saved, so it is not kept after a restart.")
+        }
+    })
 }
 
 /// The choice to save after a call to split (`on`) or not: on only once a
@@ -1796,6 +1809,23 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_split_prefs_json_refused_still_says_it_split_and_that_it_is_not_kept() {
+        assert_eq!(
+            with_save_note(Ok("Split.".into()), true),
+            Ok("Split.".into())
+        );
+        let said = with_save_note(Ok("Split.".into()), false).unwrap();
+        assert!(
+            said.starts_with("Split. ") && said.contains("not kept after a restart"),
+            "{said}"
+        );
+        assert_eq!(
+            with_save_note(Err("Could not split.".into()), false),
+            Err("Could not split.".into())
+        );
+    }
 
     #[test]
     fn a_hand_made_split_is_the_wall_left_and_the_terminal_right_within_a_few_pixels() {

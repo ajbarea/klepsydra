@@ -44,12 +44,12 @@ impl ChoiceItems {
         Ok(submenu)
     }
 
-    /// Tick NOW's item, and only it.
+    /// Tick NOW's item, and only it. The items are copied out first, so no
+    /// lock is held while each change waits on the main thread.
     pub fn tick(&self, now: &str) {
-        if let Ok(items) = self.0.lock() {
-            for (id, item) in items.iter() {
-                let _ = item.set_checked(*id == now);
-            }
+        let items = self.0.lock().map(|i| i.clone()).unwrap_or_default();
+        for (id, item) in &items {
+            let _ = item.set_checked(*id == now);
         }
     }
 }

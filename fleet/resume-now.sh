@@ -46,11 +46,11 @@ else
 fi
 
 # What the pass decided: the resume service's lines since the request.
-lines=$(jq -r --arg since "$since" 'select(.target == "fleet::resume" and .ts >= $since)
+pass_lines=$(jq -r --arg since "$since" 'select(.target == "fleet::resume" and .ts >= $since)
   | [.ts[11:19], .level, .message] + ([to_entries[] | select(.key | IN("ts","level","target","message","run_id") | not) | "\(.key)=\(.value)"]) | join(" ")' "$FLEET_LOG" 2>/dev/null)
 # The last line is the summary the tray shows.
 n=0
-[[ -n $lines ]] && { printf '%s\n' "$lines"; n=$(grep -c . <<<"$lines"); }
+[[ -n $pass_lines ]] && { printf '%s\n' "$pass_lines"; n=$(grep -c . <<<"$pass_lines"); }
 if (( n )); then
   echo "Resume pass done at $(date +%H:%M): $n decision$( (( n == 1 )) || echo s) logged (fleet log)"
 else

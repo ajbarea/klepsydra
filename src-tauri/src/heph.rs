@@ -196,12 +196,15 @@ pub fn on_menu(app: &AppHandle, menu_id: &str) -> bool {
     let Some(id) = menu_id.strip_prefix(PICK_PREFIX) else {
         return false;
     };
-    match heph_account::value(id) {
+    let saved_ok = match heph_account::value(id) {
         Ok(v) => crate::write_pref(app, heph_account::KEY, v),
-        Err(e) => log::warn!(error = e.as_str(); "heph account: not saved"),
-    }
+        Err(e) => {
+            log::warn!(error = e.as_str(); "heph account: not saved");
+            false
+        }
+    };
     let now = saved(app);
-    if now == id {
+    if saved_ok && now == id {
         log::info!(heph_account = id; "heph account: saved; the resume service moves him at a finished turn");
         run_pass(app, "heph account picked");
     } else {

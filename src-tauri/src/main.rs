@@ -8,6 +8,7 @@ mod heph;
 mod jump;
 mod launch;
 mod logging;
+mod opacity;
 mod phone;
 #[cfg(windows)]
 mod ping;
@@ -24,7 +25,7 @@ use geometry::{Display, Home, Rect};
 use tauri::{
     ipc::Channel,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, PhysicalPosition,
 };
 use tauri_plugin_autostart::ManagerExt;
@@ -134,9 +135,11 @@ fn read_prefs_at(path: &std::path::Path) -> Option<serde_json::Map<String, serde
     }
 }
 
-fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
+fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) -> bool {
     if let Some(path) = prefs_path(app) {
-        write_pref_at(&path, key, value);
+        write_pref_at(&path, key, value)
+    } else {
+        false
     }
 }
 
@@ -144,13 +147,13 @@ fn write_pref(app: &tauri::AppHandle, key: &str, value: serde_json::Value) {
 /// and a rename, so two at once would lose one key or share the tmp file.
 static PREFS_WRITE: Mutex<()> = Mutex::new(());
 
-fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
+fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) -> bool {
     let _one = PREFS_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let Some(mut prefs) = read_prefs_at(path) else {
         log::error!(
             "{key} not saved: {PREFS_FILE} is not a readable JSON object, and is left as it is"
         );
-        return;
+        return false;
     };
     prefs.insert(key.into(), value);
     if let Some(parent) = path.parent() {
@@ -161,7 +164,9 @@ fn write_pref_at(path: &std::path::Path, key: &str, value: serde_json::Value) {
     let text = serde_json::Value::Object(prefs).to_string();
     if let Err(e) = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path)) {
         log::error!("{key} not saved to {PREFS_FILE}: {e}");
+        return false;
     }
+    true
 }
 
 /// Each layout keeps its own zoom: compact is sized to the taskbar, the full
@@ -818,16 +823,17 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(fleet::NeedsFeed::default())
         .manage(fleet::CiFeed::default())
         .manage(fleet::HealthFeed::default())
-        .manage(fleet::AgoraFeed::default())
         .manage(Moved::default())
         .manage(Sized::default())
         .manage(Requested::default())
         .manage(Layouts::default())
         .manage(launch::InFlight::default())
+        .manage(launch::AgyModels::default())
         .manage(launch::PaneFlight::default())
         .manage(launch::JumpFlight::default())
         .manage(phone::Phone::default())
         .manage(theme::Themes::default())
+        .manage(opacity::Opacities::default())
         .manage(theme::ThemeMenu::default())
         .manage(voices::VoicesMenu::default())
         .manage(heph::HephMenu::default())
@@ -870,8 +876,6 @@ fn main() {
             fleet::needs_subscribe,
             fleet::ci_subscribe,
             fleet::health_subscribe,
-            fleet::agora_subscribe,
-            fleet::agora_react,
             fleet::open_wall,
             launch::open_folder,
             launch::open_github,
@@ -889,8 +893,14 @@ fn main() {
             fleet::set_wall_density,
             theme::theme_subscribe,
             theme::set_theme,
+            opacity::opacity_subscribe,
+            opacity::set_gauge_opacity,
             jump::jump_to_terminal,
             launch::launch_session,
+            launch::agy_models,
+            launch::engines_status,
+            launch::new_session_prefs,
+            launch::set_new_session_default,
             launch::get_launch_dir
         ])
         .setup(|app| {
@@ -965,6 +975,8 @@ fn main() {
             let phone_item =
                 CheckMenuItem::with_id(app, "phone", "Phone wall", true, phone_on, None::<&str>)?;
             let characters = theme::menu(app.handle())?;
+            // Before any window subscribes, so each is sent the saved opacity (#438).
+            opacity::publish(app.handle());
             let voices_menu = voices::menu(app.handle())?;
             let (resume_item, resume_status, heph_menu) = heph::items(app.handle())?;
             let queue_item =
@@ -1008,6 +1020,22 @@ fn main() {
                 .tooltip("klepsydra")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
+                // The Voices tick follows keryx's state as it is when the menu
+                // opens (#337): read on entering the icon and on the press
+                // that comes before the release opening the menu.
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        TrayIconEvent::Enter { .. }
+                            | TrayIconEvent::Click {
+                                button: MouseButton::Left | MouseButton::Right,
+                                button_state: MouseButtonState::Down,
+                                ..
+                            }
+                    ) {
+                        voices::on_open(tray.app_handle());
+                    }
+                })
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "autostart" => {
                         if autostart_held() {
@@ -1065,7 +1093,6 @@ fn main() {
             fleet::start_queue(app.handle());
             fleet::start_ci(app.handle(), klepsydra_dir(app.handle()));
             fleet::start_health(app.handle(), klepsydra_dir(app.handle()));
-            fleet::start_agora(app.handle(), klepsydra_dir(app.handle()));
             heph::start(app.handle());
             Ok(())
         })
@@ -1074,6 +1101,9 @@ fn main() {
         .run(|_, event| {
             // Before Tauri hides every window on its way out.
             if let tauri::RunEvent::Exit = event {
+                // Logged, so the doctor's "phone wall: no answer" reads as a quit, not a mystery.
+                log::info!("klepsydra quitting: the phone wall and the gauge stop with it");
+                log::logger().flush();
                 split::quitting();
             }
         });
@@ -1114,6 +1144,28 @@ mod tests {
                 "k{i}"
             );
         }
+    }
+
+    #[test]
+    fn a_corrupt_prefs_file_is_refused_and_left_intact() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("klepsydra-prefs-corrupt-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prefs.json");
+        std::fs::write(&path, "{").unwrap();
+
+        assert!(!super::write_pref_at(
+            &path,
+            "theme",
+            serde_json::json!("kourai")
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 
     #[test]

@@ -27,6 +27,8 @@ fi
 archive() { # FILE NAME
   mkdir -p -- "$FLEET_STATE/archive/briefs" && cp -- "$1" "$FLEET_STATE/archive/briefs/$2"
 }
+# The shared rules with this machine's briefing folder filled in (#531).
+render_tail() { briefing_paths <"$TAIL"; }
 # A unique archive stamp: two writes in one second never share a name.
 stamp() { printf '%s-%s' "$(date +%Y%m%d-%H%M%S.%N)" "$$"; }
 # A brief's shared rules: from its "Resources:" line on.
@@ -35,11 +37,11 @@ rules() { sed -n '/^Resources: /,$p' "$1"; }
 # this checkout's history; without one, the current tail alone).
 tail_lines() {
   local root
-  grep . "$TAIL"
+  render_tail | grep .
   root=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null) || return 0
   git -C "$root" log --format='commit %H' --name-only --follow -- fleet/brief-tail.md 2>/dev/null |
     awk '/^commit / { h = $2; next } NF { print h, $0 }' |
-    while read -r h path; do git -C "$root" show "$h:$path" 2>/dev/null; done | grep .
+    while read -r h path; do git -C "$root" show "$h:$path" 2>/dev/null; done | briefing_paths | grep .
 }
 
 # BRIEF as the current tail would have it: its body, the tail, then the lines
@@ -47,7 +49,7 @@ tail_lines() {
 # word for word or by its label.
 current() { # BRIEF
   sed '/^Resources: /,$d' "$1"
-  cat -- "$TAIL"
+  render_tail
   # ENVIRON, not -v: awk would read a backslash in a rule as an escape.
   rules "$1" | LABELS=$tail_labels OLD=$tail_old awk 'BEGIN {
       n = split(ENVIRON["LABELS"], l, "\n"); for (i = 1; i <= n; i++) rule[l[i]] = 1
@@ -121,6 +123,22 @@ name=$1 body=$2
 [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || { err "a brief name is lowercase letters, digits and dashes: $name"; exit 2; }
 [[ -r $body ]] || { err "no body at $body"; exit 2; }
 if grep -q '^Resources: ' "$body"; then err "$body already has the shared rules; give the body only"; exit 2; fi
+
+# One PR-sized item a session (#515): a body that names issues or PRs in more
+# than one repo (REPO#N, REPO #N, OWNER/REPO#N or a github.com link) is a warning. A
+# name counts only when it is a repo under FLEET_REPOS_ROOT, so "the PR" is no repo.
+repos_named() { # BODY
+  local root=${FLEET_REPOS_ROOT:-$HOME/ajsoftworks} r
+  grep -oE '(github\.com/[A-Za-z0-9_.-]+/)[A-Za-z0-9_.-]+/(pull|issues)/[0-9]+|([A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+ ?#[0-9]+' -- "$1" 2>/dev/null |
+    sed -E 's|^github\.com/[^/]+/([^/]+)/.*|\1|; s| ?#.*||; s|.*/||' | LC_ALL=C sort -u |
+    while IFS= read -r r; do [[ -e $root/$r/.git ]] && printf '%s\n' "$r"; done
+}
+repos=$(repos_named "$body")
+if (( $(grep -c . <<<"$repos") > 1 )); then
+  flog WARN "brief names more than one repo's issues or PRs; one PR-sized item a session" name="$name" repos="$(paste -sd' ' - <<<"$repos")"
+  printf "warning: brief %s names issues or PRs in %s; one PR-sized item a session keeps its context small (chain briefs instead)\n" "$name" "$(paste -sd' ' - <<<"$repos" | sed 's/ /, /g')" >&2
+fi
+
 out=$FLEET_STATE/task-$name.src
 # As the refresh: a temp file first, then the archive copy, then a checked write.
 if ! tmp=$(mktemp "$out.XXXXXX"); then
@@ -138,7 +156,7 @@ if ! {
   cat -- "$body"
   [[ -n $(tail -c1 -- "$body") ]] && printf '\n'
   printf '\n'
-  cat -- "$TAIL"
+  render_tail
 } >"$tmp" || ! grep -q '^Resources: ' "$tmp"; then
   rm -f -- "${tmp:?}"
   flog ERROR "brief not written: building it failed" name="$name" path="$out"

@@ -41,9 +41,9 @@ test("a page loads the default theme with itself and any other once, the first t
 });
 
 test("every theme has cast.json's shape and covers every voice in the cast, and no other", () => {
-  const ALLOWED = ["accent", "epithet", "face", "gender", "head", "name"];
+  const ALLOWED = ["accent", "epithet", "face", "gender", "head", "motif", "name"];
   for (const [id, t] of Object.entries(THEMES)) {
-    assert.deepEqual(Object.keys(t).sort(), ["characters", "faces", "keeper", "label", "v"], id);
+    assert.deepEqual(Object.keys(t).sort(), ["backdrop", "characters", "faces", "keeper", "label", "v"], id);
     assert.equal(t.v, 1, id);
     assert.equal(t.faces, id, `${id}: its faces folder is its id`);
     assert.deepEqual(Object.keys(t.characters).sort(), VOICES, `${id} covers every voice`);
@@ -54,6 +54,20 @@ test("every theme has cast.json's shape and covers every voice in the cast, and 
       for (const k of ["name", "face", "accent", "gender"]) assert.ok(typeof c[k] === "string" && c[k], `${id} ${voice} ${k}`);
       assert.deepEqual(Object.keys(c).filter((k) => !ALLOWED.includes(k)), [], `${id} ${voice}`);
       assert.ok(castFiles(c, t), `${id} ${voice}: its face is a plain path segment`);
+    }
+  }
+});
+
+test("every theme declares its living backdrop and every character has a valid arrival motif", () => {
+  const MOTIFS = ["burst", "sparks", "shimmer", "eyes", "sand", "fade"];
+  const BACKDROPS = ["forge", "studio", "geometric"];
+  for (const [id, t] of Object.entries(THEMES)) {
+    assert.ok(t.backdrop, `${id} has backdrop`);
+    assert.ok(BACKDROPS.includes(t.backdrop.motif), `${id} backdrop motif`);
+    assert.match(t.backdrop.glow, /^#[0-9A-Fa-f]{6}$/, `${id} glow hex`);
+    assert.match(t.backdrop.secondary, /^#[0-9A-Fa-f]{6}$/, `${id} secondary hex`);
+    for (const [voice, c] of Object.entries(t.characters)) {
+      assert.ok(typeof c.motif === "string" && MOTIFS.includes(c.motif), `${id} ${voice} motif ${c.motif}`);
     }
   }
 });
@@ -167,7 +181,7 @@ test("the theme ids and names are the fleet crate's (theme.rs THEMES), the defau
 });
 
 /** A card's fields that may differ between two themes: who the session is, never what it does. */
-const LOOK = new Set(["name", "face", "face2x", "full", "epithet", "figure", "accent", "accentInk", "ringColor", "jumpMark", "label", "remoteLabel", "playLabel", "stopLabel", "menuLabel", "jumpLabel"]);
+const LOOK = new Set(["name", "face", "face2x", "full", "epithet", "figure", "accent", "accentInk", "accentLight", "ringColor", "jumpMark", "label", "remoteLabel", "playLabel", "stopLabel", "menuLabel", "jumpLabel"]);
 
 test("switching themes changes only each card's look (name, face, epithet, accent); rings, tone, actions and order stay", () => {
   const cards = (id) => shifted.map((s) => card(s, THEMES[id], NOW));
@@ -275,7 +289,7 @@ test("one loader: only theme.js names a theme's file, and no frontend code branc
   const theme = read("src/fleet/theme.js");
   // Only the default is part of the page; the others are fetched by id when first worn.
   assert.deepEqual([...theme.matchAll(/from "\.\/themes\/([a-z]+)\.json"/g)].map((m) => m[1]), ["kourai"]);
-  assert.match(theme, /import\(`\.\/themes\/\$\{key\}\.json`, \{ with: \{ type: "json" \} \}\)/);
+  assert.match(theme, /import\(`\.\/themes\/\$\{key\}\.json\$\{retryQuery\(key\)\}`, \{ with: \{ type: "json" \} \}\)/);
 });
 
 test("the wall, the strip and the drawer read the theme now worn, not a fixed cast", () => {
@@ -306,7 +320,7 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(drawer, /repaint: \(\) => paint\(\),/);
   assert.match(read("src/fleet/queuepanel.js"), /const name = keeperName\(keptBy, keptVoice, cast\(\)\);/);
   assert.match(wall, /if \(said\.length\) announce\(said\.join\("\. "\)\);\n    refillPortrait\(\);/, "and so does a snapshot, the phone's theme with it");
-  assert.match(read("src/fleet/wall.css"), /\.served \.theme-pick,/, "no picker on the phone");
+  assert.match(read("src/fleet/wall.css"), /\.served \.gear,/, "no picker on the phone");
 });
 
 test("each profession's glyph carries its own licence: Feather's MIT where Lucide's LICENSE says it derives from Feather", () => {

@@ -77,6 +77,7 @@ pub struct View {
     pub place: Option<Place>,
     pub touched: Vec<Touched>,
     pub prompt: Option<Said>,
+    pub said: Option<Said>,
     pub reply: Option<Said>,
     pub error: Option<String>,
     pub updated_at: i64,
@@ -116,6 +117,9 @@ pub struct View {
     /// of its own oldest first, so a card keeps its face. None from a hook
     /// that never stamped it.
     pub started_at: Option<i64>,
+    /// Last request context tokens from its transcript.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_tokens: Option<u64>,
     /// The voice this card gave up to another card that keeps it
     /// (keep_faces_distinct), live or ended; the wall counts it in this card's
     /// place so no other card's face moves (castPicks). Left out when none.
@@ -132,6 +136,12 @@ pub struct View {
     /// a relaunch (crate::picks). Left out when none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fleet_name: Option<String>,
+    /// The engine running this session (e.g. "agy", "copilot", "claude").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// The model running this session if recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<serde_json::Value>,
     /// Heph, the orchestrator: the only session wearing Heph's face. Left
     /// out when false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -258,11 +268,13 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         ..p.clone()
     });
     let prompt = shift_said(&f.prompt);
+    let said = shift_said(&f.said);
     let reply = shift_said(&f.reply);
     let updated_at = [
         Some(state_at),
         place.as_ref().map(|p| p.at),
         prompt.as_ref().map(|s| s.at),
+        said.as_ref().map(|s| s.at),
         reply.as_ref().map(|s| s.at),
         f.ended.as_ref().map(|e| at(e.at)),
     ]
@@ -302,6 +314,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             })
             .collect(),
         prompt,
+        said,
         reply,
         error: f.error.clone(),
         updated_at,
@@ -326,10 +339,13 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             f.remote_url.clone()
         },
         started_at: f.started_at,
+        call_tokens: f.call_tokens,
         ceded: None,
         pick: None,
         account: f.account.clone(),
         fleet_name: f.fleet_name.clone(),
+        engine: f.engine.clone(),
+        model: f.model.clone(),
         orchestrator: f.orchestrator,
         orchestrator_face: f.orchestrator_face.clone(),
         reply_at: None,
@@ -475,6 +491,7 @@ mod tests {
             place: None,
             touched: vec![],
             prompt: None,
+            said: None,
             reply: None,
             error: None,
             ended: None,
@@ -485,6 +502,7 @@ mod tests {
             background: vec![],
             shells_live: None,
             turns: None,
+            call_tokens: None,
             turns_at: None,
             turn_at: None,
             needs: None,
@@ -493,6 +511,8 @@ mod tests {
             fleet_name: None,
             orchestrator: false,
             orchestrator_face: None,
+            engine: None,
+            model: None,
         }
     }
 
@@ -507,6 +527,33 @@ mod tests {
 
     fn ids(s: &Snapshot) -> Vec<&str> {
         s.sessions.iter().map(|v| v.session_id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_view_carries_its_engine_and_model() {
+        let mut e = entry("a", State::Working, NOW - 5, NOW - 5);
+        e.file.engine = Some("agy".into());
+        e.file.model = Some(serde_json::json!({
+            "id": "gemini-3.8-pro",
+            "display_name": "Gemini 3.8 Pro"
+        }));
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.engine.as_deref(), Some("agy"));
+        assert_eq!(v.model.as_ref().unwrap()["id"], "gemini-3.8-pro");
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["engine"], "agy");
+        assert_eq!(json["model"]["display_name"], "Gemini 3.8 Pro");
+    }
+
+    #[test]
+    fn call_tokens_comes_through_from_session_file() {
+        let mut e = entry("a", State::Working, NOW - 5, NOW - 5);
+        assert_eq!(view(&e, NOW).unwrap().call_tokens, None);
+        e.file.call_tokens = Some(245_000);
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.call_tokens, Some(245_000));
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["call_tokens"], 245_000);
     }
 
     #[test]
@@ -1485,5 +1532,17 @@ mod tests {
         );
         assert_eq!(voice_of(&s, "a"), Some("bf_isabella"));
         assert_eq!(voice_of(&s, "b"), None);
+    }
+
+    #[test]
+    fn view_carries_said() {
+        let mut e = entry("a", State::Working, NOW - 400, NOW - 5);
+        e.file.said = Some(Said {
+            text: "narrating".into(),
+            at: NOW - 350,
+        });
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.said.as_ref().unwrap().text, "narrating");
+        assert_eq!(v.said.as_ref().unwrap().at, NOW - 350);
     }
 }

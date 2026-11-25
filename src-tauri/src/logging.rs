@@ -120,11 +120,53 @@ pub fn start(app: &tauri::AppHandle) {
     if let Some(e) = bad_level {
         log::warn!("{e}");
     }
+    log_panics();
+}
+
+/// One line for a panic: its message and where it happened. A payload that
+/// is neither text type (`panic_any`) says so rather than going unnamed.
+fn panic_line(payload: &(dyn std::any::Any + Send), at: Option<&std::panic::Location>) -> String {
+    let what = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("a payload that is not text");
+    match at {
+        Some(l) => format!("panic at {}:{}: {what}", l.file(), l.line()),
+        None => format!("panic: {what}"),
+    }
+}
+
+/// A panic reaches the log file before the app goes down, so an exit the log
+/// never explained is a kill, not a crash. The default hook still runs.
+fn log_panics() {
+    let earlier = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!(target: "klepsydra::panic", "{}", panic_line(info.payload(), info.location()));
+        log::logger().flush();
+        earlier(info);
+    }));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_panic_line_names_the_message_and_the_place() {
+        let at = std::panic::Location::caller();
+        let line = panic_line(&"index out of range", Some(at));
+        assert!(
+            line.starts_with(&format!("panic at {}:{}: ", at.file(), at.line())),
+            "{line}"
+        );
+        assert!(line.ends_with("index out of range"), "{line}");
+        assert_eq!(panic_line(&String::from("owned"), None), "panic: owned");
+        assert_eq!(
+            panic_line(&42_u8, None),
+            "panic: a payload that is not text"
+        );
+    }
 
     /// The plugin's own logger, given a record with a session id, writes one
     /// JSON line with that id and the message as logged.

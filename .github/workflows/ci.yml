@@ -7,6 +7,11 @@ name: CI Pipeline
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      slice_live_repeat:
+        description: 'Times to run the live capped slice test (default: 1)'
+        required: false
+        default: '1'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -65,16 +70,38 @@ jobs:
         env:
           KERYX_SRC: ${{ github.workspace }}/keryx/src
         run: bash hooks/test_fleet.sh
+      # Fork budgets and the screen parser's differential (#492): strace counts
+      # processes, and mawk is the awk the parser must agree under.
+      - name: Fork budget tests
+        run: |
+          sudo apt-get update && sudo apt-get install -y strace mawk
+          make test-forks
       - name: Wrap-up hook tests
         run: bash hooks/test_wrapup.sh
+      - name: Browser closer tests
+        run: bash hooks/test_browser.sh
       - name: Launcher tests
         run: |
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
-          bash hooks/test_launch.sh
+          make test-launch FLEET_HEAVY_HELD=1
       - name: Fleet engine tests
-        run: bash fleet/test_fleet.sh
+        run: make test-fleet FLEET_HEAVY_HELD=1
+      - name: Delegate lane tests
+        run: make test-delegate FLEET_HEAVY_HELD=1
+      - name: Headless runner tests
+        run: make test-headless
       - name: Heavy lock release tests
-        run: bash fleet/test_heavy_lock.sh
+        run: make test-heavy-lock FLEET_HEAVY_HELD=1
+      - name: Memory slice tests
+        env:
+          INPUT_REPEAT: ${{ github.event.inputs.slice_live_repeat }}
+        run: |
+          repeat="${INPUT_REPEAT:-1}"
+          if [[ ! "$repeat" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::slice_live_repeat must be a positive integer, got '$repeat'"
+            exit 1
+          fi
+          env -u BASH_ENV SLICE_LIVE_REPEAT="$repeat" make test-slice FLEET_HEAVY_HELD=1
       - name: Release memory check tests
         run: bash scripts/test_measure_memory.sh
       - name: Windows build stage check tests
@@ -85,10 +112,12 @@ jobs:
         run: python3 -I fleet/test_ci_watch.py
       - name: Screenshot prune tests
         run: python3 -I fleet/test_prune_shots.py
-      - name: Agora tests
-        run: python3 -I fleet/test_agora.py
+      - name: Briefing mirror refusal tests
+        run: bash fleet/test_sync_mirror.sh
       - name: Shell lint
-        run: shellcheck -x hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
+        run: make shellcheck SHELLCHECK=shellcheck FLEET_HEAVY_HELD=1
+      - name: Shell lint runner tests
+        run: make test-shellcheck
       # The install dir is writable only because the NSIS mode is currentUser;
       # a perMachine build puts it under Program Files. Readings and harness
       # output go to the app data dir and to temp respectively.

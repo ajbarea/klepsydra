@@ -1,0 +1,10 @@
+{
+  "toolPermission": "request-review",
+  "allowNonWorkspaceAccess": false,
+  "enableTerminalSandbox": true,
+  "showFeedbackSurvey": false,
+  "permissions": {
+    "allow": [],
+    "deny": ["write_file(*)", "command(*)", "execute_url(*)", "mcp(*)", "read_url(*)"]
+  }
+}

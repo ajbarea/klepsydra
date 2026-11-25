@@ -35,6 +35,13 @@ test("the preview routes each status as wrapup.rs does, in klepsydra's tmux or n
   // In the fleet means what the actions menu needs: a known Claude process too.
   assert.equal(sessionRoute({ ...fleet, status: "done", claude: undefined }), "by_hand");
   assert.equal(sessionRoute({ ...fleet, status: "done", claude: { pid: 0, start: 9 } }), "by_hand");
+  // Through wsl.exe start_wrapup() types only to a session with its distro; native Linux records none.
+  for (const distro of [undefined, null, 1]) {
+    assert.equal(sessionRoute({ ...fleet, status: "done", distro }), "by_hand", `distro ${distro}`);
+    assert.equal(sessionRoute({ ...fleet, status: "done", distro }, false), "by_hand", `distro ${distro} through wsl.exe`);
+    assert.equal(sessionRoute({ ...fleet, status: "done", distro }, true), "type", `distro ${distro} on native Linux`);
+  }
+  assert.equal(sessionRoute({ ...outside, status: "done", distro: null }, true), "by_hand", "native, outside klepsydra's tmux");
   assert.equal(sessionRoute({ status: "weird" }), null);
   assert.equal(sessionRoute(null), null);
 });
