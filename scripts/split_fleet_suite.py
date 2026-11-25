@@ -150,6 +150,7 @@ TABLE = [
             r"^recover:",
             r"^resume: Heph's session is recorded",
             r"^the orchestrator's identity across",
+            r"^a pane open with its agent dead",  # #314, on recover's fake /proc
         ],
     ),
     (
