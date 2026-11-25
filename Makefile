@@ -24,8 +24,7 @@ SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 # SHARD=<area> runs one shard of it, as CI runs a pull request (#547); the shards a
 # change reaches: git diff --name-only main... | bash scripts/split-fleet-suite.sh --select
 test-fleet:
-	$(if $(SHARD),bash scripts/split-fleet-suite.sh)
-	$(HEAVY) bash $(if $(SHARD),fleet/tests/$(SHARD).sh,fleet/test_fleet.sh)
+	$(HEAVY) bash $(if $(SHARD),-c 'bash scripts/split-fleet-suite.sh && exec bash fleet/tests/$(SHARD).sh',fleet/test_fleet.sh)
 
 test-launch:
 	$(HEAVY) bash hooks/test_launch.sh
