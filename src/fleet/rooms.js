@@ -442,32 +442,75 @@ export function createRooms({
       }
 
       // 2. Sections from needs-you.md
-      for (const [groupName, groupItems] of groups.entries()) {
-        html += `<div class="needs-group-header">${groupName} <span class="group-count">${groupItems.length}</span></div>`;
-        html += `<ul class="needs-list">`;
-        for (const it of groupItems) {
-          const isFocused = currentIndex === focusedIndex;
-          const isToday = /today/i.test(it.group);
-          const linksHtml = it.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener" data-url="${l.url}"><i>${l.kind === "file" ? "▤" : l.kind === "folder" ? "▱" : l.kind === "pr" ? "⑂" : "↗"}</i>${l.label}</a>`).join("");
+      if (currentLayout === "E" && items.length > 0) {
+        // Layout E Focus Card at top + compact list below
+        const focusItemIndex = Math.min(items.length - 1, Math.max(0, focusedIndex - blocked.length));
+        const curItem = items[focusItemIndex] || items[0];
+        const focusLinksHtml = curItem.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>${l.kind === "file" ? "▤" : l.kind === "folder" ? "▱" : l.kind === "pr" ? "⑂" : "↗"}</i>${l.label}</a>`).join("");
+        const isToday = /today/i.test(curItem.group);
 
-          html += `
-            <li class="needs-row ${isToday ? "is-today" : ""} ${isFocused ? "is-focused" : ""}" data-idx="${currentIndex}" data-line="${it.lineIndex}">
-              <div class="needs-row-lead">
-                <span class="row-due ${isToday ? "due-today" : ""}">${isToday ? "Today" : it.group}</span>
-              </div>
-              <div class="needs-row-body">
-                <h3 class="row-title">${it.title}</h3>
-                ${it.detail ? `<p class="row-detail">${it.detail}</p>` : ""}
-                ${it.links.length > 0 ? `<div class="row-links">${linksHtml}</div>` : ""}
-              </div>
-              <div class="needs-row-actions">
-                <button type="button" class="done-btn" data-act="done" data-line="${it.lineIndex}" aria-label="Mark done: ${it.title}">Done</button>
-              </div>
-            </li>
-          `;
-          currentIndex++;
+        html += `
+          <div class="focus-card">
+            <div class="focus-card-meta">
+              <span class="focus-due ${isToday ? "due-today" : ""}">${curItem.group}</span>
+              <span class="focus-prog">${focusItemIndex + 1} of ${items.length}</span>
+            </div>
+            <h2 class="focus-title">${curItem.title}</h2>
+            ${curItem.detail ? `<p class="focus-detail">${curItem.detail}</p>` : ""}
+            ${curItem.links.length > 0 ? `<div class="focus-links">${focusLinksHtml}</div>` : ""}
+            <div class="focus-bar">
+              <button type="button" class="done-btn focus-action-done" data-act="done" data-line="${curItem.lineIndex}">Done <span class="kbd">E</span></button>
+              ${curItem.links[0] ? `<a class="btn focus-action-open" href="${curItem.links[0].url}" target="_blank" rel="noopener">Open <span class="kbd">Enter</span></a>` : ""}
+              <button type="button" class="btn focus-action-copy" data-act="copy" data-text="${curItem.links[0]?.url || curItem.title}">Copy <span class="kbd">C</span></button>
+              <span class="focus-sp"></span>
+              <button type="button" class="btn btn-step" data-step="-1" title="Previous (K)">▲</button>
+              <button type="button" class="btn btn-step" data-step="1" title="Next (J)">▼</button>
+            </div>
+          </div>
+          <div class="focus-subhead">All asks</div>
+          <ul class="needs-list focus-sublist">
+            ${items.map((it, idx) => {
+              const itIdx = blocked.length + idx;
+              const isFoc = itIdx === focusedIndex;
+              return `
+                <li class="needs-row focus-row ${isFoc ? "is-focused" : ""}" data-idx="${itIdx}" data-line="${it.lineIndex}">
+                  <span class="focus-row-due">${it.group}</span>
+                  <span class="focus-row-title">${it.title}</span>
+                  <button type="button" class="done-btn tick-only" data-act="done" data-line="${it.lineIndex}" aria-label="Done: ${it.title}"></button>
+                </li>
+              `;
+            }).join("")}
+          </ul>
+        `;
+      } else {
+        // Layout B & D: Render sections
+        for (const [groupName, groupItems] of groups.entries()) {
+          html += `<div class="needs-group-header">${groupName} <span class="group-count">${groupItems.length}</span></div>`;
+          html += `<ul class="needs-list">`;
+          for (const it of groupItems) {
+            const isFocused = currentIndex === focusedIndex;
+            const isToday = /today/i.test(it.group);
+            const linksHtml = it.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener" data-url="${l.url}"><i>${l.kind === "file" ? "▤" : l.kind === "folder" ? "▱" : l.kind === "pr" ? "⑂" : "↗"}</i>${l.label}</a>`).join("");
+
+            html += `
+              <li class="needs-row ${isToday ? "is-today" : ""} ${isFocused ? "is-focused" : ""}" data-idx="${currentIndex}" data-line="${it.lineIndex}">
+                <div class="needs-row-lead">
+                  <span class="row-due ${isToday ? "due-today" : ""}">${isToday ? "Today" : it.group}</span>
+                </div>
+                <div class="needs-row-body">
+                  <h3 class="row-title">${it.title}</h3>
+                  ${it.detail ? `<p class="row-detail">${it.detail}</p>` : ""}
+                  ${it.links.length > 0 ? `<div class="row-links">${linksHtml}</div>` : ""}
+                </div>
+                <div class="needs-row-actions">
+                  <button type="button" class="done-btn" data-act="done" data-line="${it.lineIndex}" aria-label="Mark done: ${it.title}">Done</button>
+                </div>
+              </li>
+            `;
+            currentIndex++;
+          }
+          html += `</ul>`;
         }
-        html += `</ul>`;
       }
     }
 
@@ -493,6 +536,27 @@ export function createRooms({
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         onTerminal(btn.dataset.sessionId);
+      });
+    });
+
+    needsRoomContainer.querySelectorAll(".btn-step").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const step = Number(btn.dataset.step) || 0;
+        focusedIndex = Math.max(0, Math.min(total - 1, focusedIndex + step));
+        renderNeedsRoom();
+      });
+    });
+
+    needsRoomContainer.querySelectorAll("[data-act='copy']").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const copyText = btn.dataset.text;
+        if (copyText) {
+          navigator.clipboard.writeText(copyText).then(() => {
+            showToast("Copied to clipboard", null, null, 1500);
+          }).catch(() => {});
+        }
       });
     });
 
@@ -722,9 +786,13 @@ export function createRooms({
 
         if (status === "needs_you" && prev !== "needs_you") {
           jumpSessionId = id;
-          showToast(`${name} needs your answer`, "Enter to jump", () => {
-            switchView("agents");
-          }, 6000);
+          if (currentLayout === "E") {
+            switchView("needs");
+          } else {
+            showToast(`${name} needs your answer`, "Enter to jump", () => {
+              switchView("agents");
+            }, 6000);
+          }
           break;
         } else if (status === "done" && prev !== "done") {
           jumpSessionId = id;

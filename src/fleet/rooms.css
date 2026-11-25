@@ -639,6 +639,118 @@ body[data-layout="E"][data-view="needs"] #wall {
   pointer-events: none;
 }
 
+/* Layout E Focus Card and Sublist */
+.focus-card {
+  background: var(--card-bg, #1f1912);
+  border: 1px solid var(--card-line, #3b3125);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.focus-card-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.focus-due {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-quiet, #a09079);
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--plinth, #0f0c08);
+  border: 1px solid var(--card-line, #3b3125);
+}
+
+.focus-due.due-today {
+  color: var(--needs, #e69f00);
+  border-color: rgb(230 159 0 / 30%);
+}
+
+.focus-prog {
+  font-size: 12.5px;
+  color: var(--text-faint, #8c7d68);
+}
+
+.focus-title {
+  font: 600 20px/1.25 var(--display, var(--font, sans-serif));
+  color: var(--text, #f2eadf);
+  margin: 0 0 8px;
+}
+
+.focus-detail {
+  font-size: 14px;
+  color: var(--text-dim, #b9a993);
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+.focus-links {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.focus-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--card-line, #3b3125);
+}
+
+.focus-sp {
+  flex: 1;
+}
+
+.focus-subhead {
+  font: 600 12.5px/1 var(--font, sans-serif);
+  color: var(--text-dim, #b9a993);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 18px 0 8px;
+}
+
+.focus-sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.focus-row {
+  grid-template-columns: 80px 1fr auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.focus-row-due {
+  color: var(--text-quiet, #a09079);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.focus-row-title {
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tick-only {
+  padding: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Phone (<= 640px) */
 .phone-tabbar {
   display: none;

@@ -144,4 +144,15 @@ test("Layout D: Inbox and Floor triage layout, All clear at 0, N/Esc toggle", ()
   assert.equal(emptyCount, 0);
 });
 
+test("Layout E: Amber Door right panel layout, focus card at top", () => {
+  assert.equal(parseLayout("E"), "E");
+  const fixture = readFileSync(new URL("../scripts/fixtures/needs-you-shape.md", import.meta.url), "utf8");
+  const items = parseNeedsItems(fixture);
+  assert.equal(items.length, 18);
+  const first = items[0];
+  assert.ok(first.title);
+  assert.ok(first.group);
+});
+
+
 
