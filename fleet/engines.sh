@@ -154,18 +154,46 @@ eng_classify() { # RC STDOUT STDERR: a failure is read with its stderr; an exit 
 
 # An interactive pane's state from its screen. agy: the input box sits between
 # two rules and the footer under it reads "esc to cancel" while a turn runs and
-# "? for shortcuts" when idle. Copilot: the footer reads "Working ctrl+c
-# interrupt" while a turn runs and "open sidebar ... Manual Approval" when idle,
-# and a folder not yet trusted shows a dialog (state trust; eng_trust_key answers).
+# "? for shortcuts" when idle (1.5.12 draws a status line with "· ctx " instead,
+# and a spinner or activity phrase above the box while busy). Copilot: the footer
+# reads "Working ctrl+c interrupt" while a turn runs and "open sidebar ... Manual
+# Approval" when idle, and a folder not yet trusted shows a dialog (state trust;
+# eng_trust_key answers).
 eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   local engine=$1 screen=$2 foot recent
   recent=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -12)
   foot=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -1)
   # Only the dialog's own footer, last on screen: the answered dialog stays in scrollback.
   if [[ $engine == copilot && $(grep -v '^[[:space:]]*$' <<<"$screen" | tail -2) == *"enter to select"* ]]; then echo trust; return; fi
+  if [[ $engine == agy && $(grep -v '^[[:space:]]*$' <<<"$screen" | tail -2) == *"enter Confirm"* ]]; then echo trust; return; fi
   local footer=unknown
   if [[ $engine == agy && $foot == *"esc to cancel"* ]]; then footer=busy
   elif [[ $engine == agy && $foot == *"? for shortcuts"* ]]; then footer=idle
+  elif [[ $engine == agy && $foot == *"· ctx "* ]]; then
+    # agy 1.5.12+ status line footer (#488). Busy shows spinner/activity above the box,
+    # or a background task row under the box whose text ends in "running".
+    local above_foot below_box
+    above_foot=$(head -n -1 <<<"$recent")
+    below_box=$(awk '
+      BEGIN { seen_prompt = 0 }
+      { line = $0; sub(/^[[:space:]]+/, "", line) }
+      index(line, ">") == 1 { seen_prompt = NR }
+      { lines[NR] = $0 }
+      END {
+        if (seen_prompt > 0) {
+          found_bottom = 0
+          for (i = seen_prompt + 1; i < NR; i++) {
+            if (!found_bottom && index(lines[i], "──") > 0) { found_bottom = 1; continue }
+            if (found_bottom) print lines[i]
+          }
+        }
+      }
+    ' <<<"$recent")
+    if grep -Eq '●.*running[[:space:]]*$' <<<"$below_box" || LC_ALL=C /usr/bin/grep -aqP '\xe2[\xa0-\xa3][\x80-\xbf]|(Generating|Thinking|Running command|Planning|Loading)\.\.\.' <<<"$above_foot"; then
+      footer=busy
+    else
+      footer=idle
+    fi
   elif [[ $engine == copilot && $foot == *"ctrl+c interrupt"* ]]; then footer=busy
   elif [[ $engine == copilot && ( $foot == *"open sidebar"* || $foot == *"Manual Approval"* ) ]]; then footer=idle; fi
   # A running turn is busy whatever the screen says. A quota or login message is the

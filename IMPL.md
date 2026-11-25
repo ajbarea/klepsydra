@@ -1,28 +1,53 @@
-# IMPL: #460 Debian Linux launch parity (PR #458, branch feat/linux-launch-parity)
+# IMPL: fix(fleet): agy 1.5.12 idle and busy screens (#488)
 
-Issue: https://github.com/ajbarea/klepsydra/issues/460. The Windows/WSL path must not change.
+Branch `fix/agy-footer-488` (worktree `.claude/worktrees/agy-488`).
+Push only with explicit refspec: `git push -u origin fix/agy-footer-488:fix/agy-footer-488`. Never push to main.
 
-## Slice
-Live check on the Debian 13 / XFCE PC (RIT), and fix what it finds.
+## Status: Paused for PC Restart
+Stopped at a clean commit point on `fix/agy-footer-488`. Working tree is clean. B1, S1, S2, and S3 are committed.
 
 ## Done
-- Earlier: review fixes for the Linux launcher, `launch.rs` Linux argv, xdg-open verbs, pane-died on tmux 3.8 (see `git log`).
-- Live check found every card action dead on native Linux: the hook records `"distro": null` there, and five readers (Rust `launch::target`, `folder_of`, `github_of`; JS `jumpable`, `inFleet`) required one. Now one Rust helper, `distro_words(distro, native)`, needs a distro only through wsl.exe; `recorded_distro` is the one reader; JS shares `paneKnown` (end.js). On Windows a record without a distro still gets no pane target (`target_on`), as before.
-- Open terminal did not restore a minimized terminal: xfwm4 unmaps it, so `xdotool search --onlyvisible` missed it. `managed_window` picks the window with WM_STATE (xprop); without xprop, the old visible-only search.
-- A missing `KLEPSYDRA_TERMINAL` is named in the error (`no_terminal`).
-- README Linux: the wall buttons' tools and terminal order.
-- Each fix has a test that fails without it (mutation-checked: 4 Rust, 2 JS, 1 shell, plus the Windows arm).
-- Delta review r1 (Heph, 11-23, `reports/linux-458-delta-r1.md`): S1, the wall lost the platform and offered End/Interrupt, a typed wrap-up and an unnamed Jump to a null-distro session on Windows. The app now adds `native` (launch.rs `NATIVE`) to the wall's snapshot (fleet.rs `for_wall`; the phone gets none), and `paneKnown(s, native)` needs `str(s.distro) || native`. N1: `session_distro(s, native)` is the one reader for `target_on`, `folder_of`, `github_of`, so Folder/GitHub on Windows say again that klepsydra does not know the folder/page. N2: `managed_window` falls back to the visible-only search when no window reports WM_STATE. Six JS mutants killed.
-- Delta review r2 (Heph, 11-23, `reports/linux-458-delta-r2.md`): S1, `jumpStyle` read jumpability again without `native`, so an unnamed native session's Open terminal lost its needs fill and accent marker; it now takes the card's `jump`. S2, the flag's path was unpinned: `hand_out` (fleet.rs) gives the phone the bare snapshot and the windows `for_wall`'s; `folder_request` / `github_request` (launch.rs) read the snapshot for Folder/GitHub as this build does; a browser case feeds a null-distro snapshot with `native: true` and without it. N1: `wrapupLine` takes the flag too.
+- Round 1 items (committed & rebased):
+  - Added support for agy 1.5.12+ status line footer (`· ctx `).
+  - Captured initial real fixtures (`agy-1.5.12-idle.txt`, `agy-1.5.12-busy.txt`, etc.).
+  - Added version class guard to `fleet/doctor.sh`.
+- Round 2 items (committed):
+  - Detected task row ending in `running` as busy; debounced idle detection in `cmd_watch` (3 polls). (Commit `6d1fb49`)
+  - Matched braille block U+2800-U+28FF and added `Loading...`. (Commit `4215da2`)
+  - Mapped agy folder-trust dialog to `trust` state. (Commit `c3e89eb`)
+  - Added dedicated indicators fixtures (`agy-busy-spinner-only.txt`, `agy-busy-phrase-only.txt`, `agy-busy-task-only.txt`). (Commit `d931343`)
+  - Wrapped `agy --version` in timeout and parsed CLI version. (Commit `5b9fd73`)
+  - Renamed quota screen to `agy-1.5.13-limit.txt` and captured real 1.5.13 busy screen. (Commit `18104f8`)
+- Round 3 items (completed & committed):
+  - B1 (`5096d87`): Matched braille block by bytes locale-proof with `LC_ALL=C /usr/bin/grep -aqP '\xe2[\xa0-\xa3][\x80-\xbf]|(Generating|Thinking|Running command|Planning|Loading)\.\.\.'`. Added LC_ALL=C test; passes 180/180.
+  - S1 (`5080fd5`): Restored main's behavior where unknown footers check `$recent` for auth and limit messages. Added tests for synthetic login (`auth`), quota crash (`limit`), and Copilot with odd footer (`limit`).
+  - S2 (`dbc4164`): Anchored task row check to rows below the input box's bottom rule (`below_box`). Tested that an answer ending with `● nginx.service running` reads `idle`, while `agy-1.5.13-bg-running.txt` reads `busy`.
+  - S3 (`62bea85`): Added tests for the watcher 3-poll debounce rule (`cmd_watch`), proving single idle between busy polls does not end the turn (kills mutant `idle_count >= 1`) and 3 idle polls end the turn.
 
-## Verified
-Live, Debian 13 XFCE X11: + New session (cold and warm), Open terminal (switches tmux window; restores a minimized terminal), `KLEPSYDRA_TERMINAL=nope` (error on + and on Open terminal, nothing created). Suites: cargo fmt/clippy/test workspace, node 508, test-launch 285, test_fleet 599, test-headless 125, statusline, shellcheck, Biome.
+## What is Next (Post-Restart Resume)
+1. Complete NITS in `fleet/doctor.sh`:
+   - A non-zero exit from `agy --version` must warn, not report ok (`elif (( rc != 0 )); then report warn ...`).
+   - Make version sed case-insensitive (`[Aa][Gg][Yy]|[Cc][Ll][Ii]`) so "AGY 1.5.13" parses.
+   - Take only first line of multi-line banner (`head -1 <<<"$raw_ver"`).
+   - Add tests in `fleet/test_delegate.sh` for non-zero exit warning and case-insensitive parsing.
+   - Commit: `fix(fleet): doctor warns on non-zero exit and parses case-insensitive version (#488)`.
+2. Run test suites:
+   - `bash fleet/test_delegate.sh > /tmp/t488.log 2>&1; echo $? > /tmp/t488.exit`
+   - `LC_ALL=C bash fleet/test_delegate.sh > /tmp/t488_c.log 2>&1; echo $? > /tmp/t488_c.exit`
+   - `uvx --from shellcheck-py shellcheck -x fleet/engines.sh fleet/doctor.sh fleet/delegate.sh fleet/test_delegate.sh`
+3. Push branch with explicit refspec:
+   - `git push -u origin fix/agy-footer-488:fix/agy-footer-488`
+4. Update PR #507 body with Round 3 fixes.
+5. Wait for `gh pr checks 507` ("Gauge logic + statusLine hook") to pass.
+6. Update `~/.local/state/fleet-orchestrator/reports/agy-488.md` and send to orchestrator pane (`%61`).
 
-Merged main (15 commits) at 1619197; IMPL.md kept as the branch's. On the merged tree: cargo 113+439+7, node 584, test-launch 321, test_fleet 599, test-headless 125, statusline 143, browser 33, shellcheck, Biome; live after a reboot: + New session twice from cold, Open terminal restores a minimized terminal.
-
-## Next
-1. ✅ Delta r1 fixes (S1, N1, N2) pushed.
-2. 📋 Delta r2 fixes (S1, S2, N1): suites, mutants, push, CI.
-3. 📋 Heph runs round 3 and merges; do not merge here.
-4. Not done live: End, Interrupt, wrap-up typing, unnamed Jump style, Folder, GitHub on native Linux (tests only; AJ's next Debian session, needs-you).
-5. Follow-ups filed, not in this PR: #527 deb dependencies, #528 "wsl" log lines on Linux, #529 multi-window terminal, #530 xdotool BadWindow, #531 hardcoded fleet-briefing path.
+## Rerun Commands for Fresh Session
+```bash
+cd /home/ajbar/ajsoftworks/klepsydra/.claude/worktrees/agy-488
+git status
+# Finish NITS in fleet/doctor.sh & fleet/test_delegate.sh
+bash fleet/test_delegate.sh
+LC_ALL=C bash fleet/test_delegate.sh
+uvx --from shellcheck-py shellcheck -x fleet/engines.sh fleet/doctor.sh fleet/delegate.sh fleet/test_delegate.sh
+git push -u origin fix/agy-footer-488:fix/agy-footer-488
+```

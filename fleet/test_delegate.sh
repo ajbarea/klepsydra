@@ -194,8 +194,86 @@ check "an unrecognised failure is an error (no fallback)" "$(eng_classify 2 '' '
 idle=$'  stub\n──────────\n>\n──────────\n? for shortcuts'
 check "agy's footer: idle" "$(eng_state agy "$idle")" "idle"
 check "agy's footer: busy" "$(eng_state agy "${idle/\? for shortcuts/esc to cancel}")" "busy"
+idle_leg=$(cat "$here/fixtures/agy-legacy-idle.txt")
+busy_leg=$(cat "$here/fixtures/agy-legacy-busy.txt")
+check "agy legacy fixture: idle" "$(eng_state agy "$idle_leg")" "idle"
+check "agy legacy fixture: busy" "$(eng_state agy "$busy_leg")" "busy"
+idle12=$(cat "$here/fixtures/agy-1.5.12-idle.txt")
+busy12=$(cat "$here/fixtures/agy-1.5.12-busy.txt")
+check "agy 1.5.12 real fixture: idle" "$(eng_state agy "$idle12")" "idle"
+check "agy 1.5.12 real fixture: busy" "$(eng_state agy "$busy12")" "busy"
+idle13=$(cat "$here/fixtures/agy-1.5.13-idle.txt")
+busy13=$(cat "$here/fixtures/agy-1.5.13-busy.txt")
+limit13=$(cat "$here/fixtures/agy-1.5.13-limit.txt")
+check "agy 1.5.13 real fixture: idle" "$(eng_state agy "$idle13")" "idle"
+check "agy 1.5.13 real fixture: busy" "$(eng_state agy "$busy13")" "busy"
+check "agy 1.5.13 real fixture: limit" "$(eng_state agy "$limit13")" "limit"
+bg_task=$(cat "$here/fixtures/agy-1.5.13-bg-running.txt")
+check "agy 1.5.13 real background task fixture reads busy" "$(eng_state agy "$bg_task")" "busy"
+nginx_ans=$'────\n> ask\n  The service is active:\n  ● nginx.service running\n────\n>\n────\nGemini 3.8 Flash (Low) · ctx 0% · 5h 0% · 7d 0%'
+check "answer ending with ● running reads idle (task row must be below box)" "$(eng_state agy "$nginx_ans")" "idle"
+loading_screen=$'────\n> ask\n  reply\n⢿  Loading...\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%'
+check "agy: ⢿ Loading... screen reads busy" "$(eng_state agy "$loading_screen")" "busy"
+spinner_only=$(cat "$here/fixtures/agy-busy-spinner-only.txt")
+phrase_only=$(cat "$here/fixtures/agy-busy-phrase-only.txt")
+task_only=$(cat "$here/fixtures/agy-busy-task-only.txt")
+check "agy busy fixture: spinner only reads busy" "$(eng_state agy "$spinner_only")" "busy"
+check "agy busy fixture: phrase only reads busy" "$(eng_state agy "$phrase_only")" "busy"
+check "agy busy fixture: task row only reads busy" "$(eng_state agy "$task_only")" "busy"
+check "agy busy fixtures under LC_ALL=C read busy" "$(
+  LC_ALL=C eng_state agy "$busy12"
+  LC_ALL=C eng_state agy "$busy13"
+  LC_ALL=C eng_state agy "$spinner_only"
+  LC_ALL=C eng_state agy "$phrase_only"
+  LC_ALL=C eng_state agy "$loading_screen"
+)" $'busy\nbusy\nbusy\nbusy\nbusy'
+trust_screen=$(cat "$here/fixtures/agy-1.5.13-trust.txt")
+check "agy 1.5.13 real trust dialog reads trust" "$(eng_state agy "$trust_screen")" "trust"
+check "agy trust key is Enter" "$(eng_trust_key agy)" "Enter"
+check "agy 1.5.12: a short reply that is a quota message is a limit" "$(eng_state agy $'────\n> ask\n  You have exhausted your quota\n────\n>\n────\nClaude Opus 4.6 (Thinking) · ctx 0% · 5h 0% · 7d 32%')" "limit"
+check "agy 1.5.12: a short answer about a 429 is a limit too" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\nGemini 3.8 Flash (Low) · ctx 0% · 5h 21% · 7d 39%')" "limit"
+
+# Doctor class guard: agy --version fixture check (#488)
+fake_bin="$work/fake_agy_ver"
+printf '#!/usr/bin/env bash\necho 99.99.99\n' >"$fake_bin"
+chmod +x "$fake_bin"
+doc_warn=$(FLEET_AGY="$fake_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: installed agy version without fixture warns" "$(grep -c '^warn *agy version: 99.99.99: no captured fixture in the repo' <<<"$doc_warn")" "1"
+
+real_bin="$work/real_agy_ver"
+printf '#!/usr/bin/env bash\necho 1.5.12\n' >"$real_bin"
+chmod +x "$real_bin"
+doc_ok=$(FLEET_AGY="$real_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: installed agy version with fixture passes ok" "$(grep -c '^ok *agy version: 1.5.12 (fixture present)' <<<"$doc_ok")" "1"
+
+timeout_bin="$work/fake_agy_timeout"
+printf '#!/usr/bin/env bash\nsleep 5\n' >"$timeout_bin"
+chmod +x "$timeout_bin"
+doc_timeout=$(FLEET_AGY="$timeout_bin" FLEET_AGY_TIMEOUT_S=1 FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: agy version timeout warns" "$(grep -c '^warn *agy version: timed out' <<<"$doc_timeout")" "1"
+
+unparse_bin="$work/fake_agy_unparse"
+printf '#!/usr/bin/env bash\necho "invalid version string"\n' >"$unparse_bin"
+chmod +x "$unparse_bin"
+doc_unparse=$(FLEET_AGY="$unparse_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: unparseable agy version warns" "$(grep -c '^warn *agy version: unreadable: invalid version string' <<<"$doc_unparse")" "1"
+
+cli_parse_bin="$work/fake_agy_cli_parse"
+printf '#!/usr/bin/env bash\necho "Antigravity CLI 1.5.12"\n' >"$cli_parse_bin"
+chmod +x "$cli_parse_bin"
+doc_cliparse=$(FLEET_AGY="$cli_parse_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: agy version parsed after CLI" "$(grep -c '^ok *agy version: 1.5.12 (fixture present)' <<<"$doc_cliparse")" "1"
+
+build_parse_bin="$work/fake_agy_build_parse"
+printf '#!/usr/bin/env bash\necho "v2.0 (CLI 1.5.12)"\n' >"$build_parse_bin"
+chmod +x "$build_parse_bin"
+doc_buildparse=$(FLEET_AGY="$build_parse_bin" FLEET_HOOK_DIR="$root/hooks" bash "$here/doctor.sh" 2>/dev/null)
+check "doctor: agy version parsed after CLI in v2.0 (CLI 1.5.12)" "$(grep -c '^ok *agy version: 1.5.12 (fixture present)' <<<"$doc_buildparse")" "1"
 check "agy: a short reply that is a quota message is a limit" "$(eng_state agy $'────\n> ask\n  You have exhausted your quota\n────\n>\n────\n? for shortcuts')" "limit"
 check "agy: a short answer about a 429 is a limit too (kept in answer.md and said to be maybe an answer)" "$(eng_state agy $'────\n> ask\n  GitHub returned HTTP 429\n────\n>\n────\n? for shortcuts')" "limit"
+check "synthetic agy login screen reads auth" "$(eng_state agy $'Sign in to Antigravity\nPlease authenticate at https://accounts.google.com/...\n')" "auth"
+check "agy quota crash reads limit" "$(eng_state agy $'Fatal: You have exhausted your quota for today\nProcess exited with status 1')" "limit"
+check "copilot limit screen with an odd footer reads limit" "$(eng_state copilot $' ❯ ask\n ● Rate limit reached, please try again later\n────\nweird custom footer')" "limit"
 longans=$(printf '  The API returns 429 when the rate limit is hit; details follow.\n'; printf '  %s\n' "$(head -c 500 /dev/zero | tr '\0' x)")
 check "agy: a long answer that mentions a rate limit is an answer (idle)" "$(eng_state agy "$(printf '────\n> ask\n%s\n────\n>\n────\n? for shortcuts' "$longans")")" "idle"
 quotedlim=$(printf '────\n> Read TASK.md in the working folder and go\n  %s\n> a quoted line\n  429 rate limit\n────\n>\n────\n? for shortcuts' "$(head -c 500 /dev/zero | tr '\0' x)")
@@ -610,6 +688,74 @@ check "an echo wrapped onto indented lines is not part of the answer, and the HT
   "$(has "$(cat "$work/state/delegate/$idw/answer-2.md")" 'STUB ANSWER') $(has "$(cat "$work/state/delegate/$idw/answer-2.md")" 'wrapmarker-tail') $(has "$(sent)" 'status=ok turn=2')" "yes no yes"
 sleep 3; bash "$delegate" stop "$idw" >/dev/null 2>&1; knobs_off
 knobs_off
+echo "review round 8: watcher 3-poll idle debounce (#488)"
+watch_code=$(sed -n '/^cmd_watch()/,/^}/p' "$delegate")
+# shellcheck disable=SC2034,SC2329 # variables and mocks invoked by eval-ed cmd_watch
+run_watch_test() {
+  local mode=$1
+  eval "$watch_code"
+  DEL_ROOT="$work/watch_debounce"
+  rm -rf "$DEL_ROOT" && mkdir -p "$DEL_ROOT/tw"
+  POLL=0.001
+  TURN_TIMEOUT=5
+  pane_screen() { echo "mock screen"; }
+  eng_answer() { echo "mock answer"; }
+  meta_get() {
+    case $2 in
+      pane) echo "p" ;;
+      engine) echo "agy" ;;
+      turn) echo "0" ;;
+      prompt) echo "p" ;;
+      model) echo "m" ;;
+    esac
+  }
+  status_file="$DEL_ROOT/status.txt"
+  meta_set() { echo "$2" > "$status_file"; }
+  stamp() { :; }
+  flog() { :; }
+  notify() { :; }
+
+  history_file="$DEL_ROOT/history.txt"
+  : > "$history_file"
+  : > "$status_file"
+  if [[ $mode == single ]]; then
+    eng_state() {
+      local count
+      count=$(wc -l < "$history_file")
+      (( count++ ))
+      case $count in
+        1) echo "busy"; echo "busy" >> "$history_file" ;;
+        2) echo "idle"; echo "idle" >> "$history_file" ;;
+        3) echo "busy"; echo "busy" >> "$history_file" ;;
+        *) echo "busy" ;;
+      esac
+    }
+    lane_pane() {
+      local count
+      count=$(wc -l < "$history_file")
+      (( count < 3 ))
+    }
+  else
+    lane_pane() { return 0; }
+    eng_state() {
+      local count
+      count=$(wc -l < "$history_file")
+      (( count++ ))
+      case $count in
+        1) echo "busy"; echo "busy" >> "$history_file" ;;
+        2) echo "idle"; echo "idle" >> "$history_file" ;;
+        3) echo "idle"; echo "idle" >> "$history_file" ;;
+        4) echo "idle"; echo "idle" >> "$history_file" ;;
+        *) echo "busy" ;;
+      esac
+    }
+  fi
+  cmd_watch "tw"
+  cat "$status_file"
+}
+check "idle once between busy polls does not end the turn" "$(run_watch_test single)" "status=gone"
+check "3 consecutive idle polls end the turn" "$(run_watch_test triple)" "status=idle"
+
 echo "the shared policy"
 check "the helper rules fit agy's 24000-byte limit" "$([[ $(stat -c %s "$root/hooks/klepsydra-engine-rules.md") -le 24000 ]] && echo fits)" "fits"
 check "a person, course, team or account name appears in no shipped rule or policy" "$(cat "$root/hooks/klepsydra-engine-rules.md" "$root/hooks/klepsydra-agy-locked.json" | grep -cwE 'AJ|ajbar|RIT|CISC|Ben|makesense|Anthropic|Claude')" "0"

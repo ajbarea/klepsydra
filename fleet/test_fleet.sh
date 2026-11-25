@@ -3887,7 +3887,8 @@ check "doctor: #513 within FLEET_MODELS_EVERY_S the list is not asked again" \
   "$(mdoc $'only-one' FLEET_MODELS_EVERY_S=3600 FLEET_MODELS_WARN_S=0; cat "$models_dir/models-agy.txt")" $'ok   models agy: 2 models\ngemini-3.8-flash-high\ngemini-4-neon'
 rm -f -- "$models_dir/models-agy.asked"
 # A lister that fails: asked once an interval, its list kept whole, and said once it is stale.
-printf '%s\n' '#!/usr/bin/env bash' "echo x >>'$work/agy-calls'" 'printf "gemini-3.8-flash-high\tGemini\n"' 'exit 1' >"$work/fail-agy"
+# shellcheck disable=SC2016 # the stub's $1 is its own
+printf '%s\n' '#!/usr/bin/env bash' '[[ ${1:-} == models ]] || exit 0' "echo x >>'$work/agy-calls'" 'printf "gemini-3.8-flash-high\tGemini\n"' 'exit 1' >"$work/fail-agy"
 chmod +x "$work/fail-agy"
 : >"$work/agy-calls"; rm -f -- "$models_dir/models-agy.asked"
 check "doctor: #513 a listing that fails partway changes nothing (not read as models gone)" \
