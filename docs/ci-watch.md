@@ -28,7 +28,7 @@ agent's next idle prompt. Otherwise it goes to Heph as a line in
 `ci/alerts.jsonl`, which wakes his pane watcher. A run still red 30 minutes
 after routing (`CI_ESCALATE_S`, 1800) wakes Heph once more and gets one line
 under "Needs you" in the file `FLEET_QUEUE` names (default
-`/mnt/c/Users/ajbar/fleet-briefing/needs-you.md`). Dependabot's reds are kept
+`$FLEET_BRIEFING/needs-you.md`). Dependabot's reds are kept
 for the morning instead. Once a day (after `CI_SWEEP_HOUR`) the
 latest green run on each default branch is read for warnings. The script's
 default is 6; the installed unit sets 99, which turns the sweep off, unless
