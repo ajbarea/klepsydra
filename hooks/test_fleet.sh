@@ -1713,7 +1713,7 @@ C6=aaaaaaaa-2222-4333-8444-555555555556
 ( cfire session-start.json $C5 >/dev/null ) &
 hung=$!
 t_end=$(( SECONDS + 5 ))
-until [[ -s $tlog || SECONDS -ge t_end ]]; do read -r -t 0.05 <> <(:) || true; done # the first hook is inside tmux
+until [[ -s $tlog ]] || (( SECONDS >= t_end )); do read -r -t 0.05 <> <(:) || true; done # the first hook is inside tmux
 t0=$SECONDS
 fire session-start.json ".session_id = \"$C6\"" >/dev/null
 check "a hung tmux does not hold the lock: another session is written at once" \

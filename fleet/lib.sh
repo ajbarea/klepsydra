@@ -1871,13 +1871,13 @@ proc_stat() { # pid
 # live_shells PID ME: count live child tool/task calls under PID, excluding ME and MCP servers
 live_shells() { # pid me
   local pid=$1 p=$2 f child comm n=0 listed=0 i own=${CLAUDE_CODE_SHELL:-}
-  local -a stat=() mine=()
+  local -a stat=() chain=()
   [[ -n ${CLAUDE_CODE_SHELL_PREFIX:-} ]] && return 0
   own=${own##*/}
   [[ $own == sh || $own == dash ]] && own=""
   for ((i = 0; i < 32; i++)); do
     [[ $p == "$pid" ]] && break
-    mine+=("$p")
+    chain+=("$p")
     proc_stat "$p" || break
     p=${stat[1]}
     (( p >= 1 )) || break
@@ -1890,7 +1890,7 @@ live_shells() { # pid me
     listed=1
     for child in $(<"$f"); do
       [[ $child =~ ^[0-9]+$ ]] || continue
-      [[ " ${mine[*]} " == *" $child "* ]] && continue
+      [[ " ${chain[*]} " == *" $child "* ]] && continue
       proc_stat "$child" && [[ ${stat[0]} == Z ]] && continue
       if (( is_agy )); then
         local cmd="" word=""

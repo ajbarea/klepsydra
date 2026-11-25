@@ -658,7 +658,7 @@ update_heartbeat() { # PANE SCREEN
         [[ -n ${f_line//[[:space:]]/} ]] && foot="$f_line"
       done <<<"$s"
       if [[ $foot == *"? for shortcuts"* || $foot == *"ctx "* || $foot == *"5h "* || $foot == *"7d "* || $s =~ \>[[:space:]]*$ ]]; then
-        if [[ ! $s =~ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⡿⣻] && ! $s =~ "Running command" && ! $s =~ "Thinking..." ]]; then
+        if [[ ! $s =~ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⡿⣻] && $s != *"Running command"* && $s != *"Thinking..."* ]]; then
           is_prompt_idle=1
         fi
       fi
