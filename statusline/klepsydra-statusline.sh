@@ -87,9 +87,11 @@ PRUNE_LITTER_AFTER=86400
 # XDG_RUNTIME_DIR: a WSL boot sets it before logind makes it, and the overlay's
 # shells may lack it, so callers would split between two locks (#517). Making
 # this boot's folder removes this host's folders last changed before this boot
-# began (btime), which only ended boots can be. Another host's are never
-# touched, so a HOME two machines share (NFS) keeps each one's live folder.
-# The host is the kernel's hostname, so renaming a host mid-boot moves its lock.
+# began (btime), which only ended boots can be. Another host's are untouched
+# while hostnames differ (same-name hosts on one shared HOME still prune each
+# other). An unusable hostname never prunes, so run-_-* accumulates one small
+# folder per boot. The host is the kernel's hostname, so renaming a host
+# mid-boot moves its lock.
 lock_why() { # PATH [w]: fails with LOCK_WHY set when PATH is no folder of ours (w: or not writable)
   local mode
   if [[ -L $1 ]]; then LOCK_WHY="$1 is a symlink"

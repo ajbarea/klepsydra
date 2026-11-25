@@ -406,8 +406,9 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
                     crate::ping::cue(c);
                 }
                 if let Ok(v) = serde_json::to_value(snapshot) {
-                    crate::phone::publish(&app, &v);
-                    app.state::<Fleet>().publish(v);
+                    hand_out(app.state::<Fleet>().inner(), v, |v| {
+                        crate::phone::publish(&app, v)
+                    });
                 }
             }
             wait = POLL;
@@ -415,6 +416,22 @@ pub fn start(app: &AppHandle, dir: Option<PathBuf>) {
             klepsydra_fleet::ledger::lock(&stamp).stamp_alive(unix_now());
         }
     });
+}
+
+/// Hand snapshot `v` to the phone as read, then to the app's windows with
+/// `native` (`for_wall`).
+fn hand_out<S: Sink>(hub: &Hub<S>, v: Value, phone: impl FnOnce(&Value)) {
+    phone(&v);
+    hub.publish(for_wall(v));
+}
+
+/// Snapshot `v` as the wall reads it: with `native`, so its cards offer a
+/// pane action only where launch::target() finds the pane.
+fn for_wall(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.insert("native".into(), Value::Bool(crate::launch::NATIVE));
+    }
+    v
 }
 
 /// Show the card wall with session `focus`'s card in view. The wall is made
@@ -507,6 +524,35 @@ mod tests {
         ] {
             assert_eq!(session_of(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn the_walls_snapshot_says_whether_the_app_reaches_tmux_itself() {
+        let v = for_wall(serde_json::json!({"sessions": [{"session_id": "a"}]}));
+        assert_eq!(v["native"], Value::Bool(cfg!(not(windows))));
+        assert_eq!(v["sessions"][0]["session_id"], "a");
+    }
+
+    struct Window;
+    impl Sink for Window {
+        fn send(&self, _: Value) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn the_windows_get_the_flag_and_the_phone_does_not() {
+        let hub: Hub<Window> = Hub::default();
+        let mut phone = None;
+        hand_out(&hub, serde_json::json!({"sessions": []}), |v| {
+            phone = Some(v.clone())
+        });
+        assert_eq!(
+            hub.with_latest(|v| v.get("native").cloned()),
+            Some(Some(Value::Bool(crate::launch::NATIVE))),
+            "the wall and the launcher's record carry it"
+        );
+        assert_eq!(phone.expect("the phone got it").get("native"), None);
     }
 
     #[test]

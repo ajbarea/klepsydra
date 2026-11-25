@@ -807,6 +807,31 @@ ln -s "$work/p-target/x" "$dir/lock-refused"
 fire user-prompt.json ".session_id = \"$(lsid 4)\"" KLEPSYDRA_STATE="$work/s-gw" >/dev/null 2>&1
 check "#518: a symlink planted as the trace is not written through" "$(cat "$work/p-target/x")" ""
 rm -f -- "$dir/lock-refused"
+: >"$work/p-target/x"
+jq -c --arg cwd "$wt" --arg sid "$(lsid 4)" '.cwd = $cwd | .session_id = $sid' "$fixtures/user-prompt.json" >"$work/up-trace.json"
+# shellcheck disable=SC2016 # the child shell expands its own variables
+out=$(env KLEPSYDRA_DIR="$dir" KLEPSYDRA_STATE="$work/state-link" KLEPSYDRA_NOW="$now" KLEPSYDRA_PROC="$work/proc" KLEPSYDRA_PID=600 \
+  KERYX_VOICES="$work/voices.json" XDG_RUNTIME_DIR="$work/no-runtime" KLEPSYDRA_CAST="$work/test-cast.json" \
+  KLEPSYDRA_BOOT_ID="$boot_file" TMUX= TMUX_PANE= WSL_DISTRO_NAME= CLAUDE_CONFIG_DIR="$work/nocfg" \
+  FLEET_STATE="$work/fleet-state" KLEPSYDRA_AGENT= KLEPSYDRA_ASK_WATCH=0 \
+  bash -c 'ln -s "$1" "$KLEPSYDRA_DIR/lock-refused.$$.tmp"; exec bash "$2" <"$3"' \
+  _ "$work/p-target/x" "$hook" "$work/up-trace.json" 2>&1); rc=$?
+check "#518 r4: a symlink at the temp name is not written through" "$rc|$out|$(cat "$work/p-target/x")" "0||"
+rm -f -- "$dir/lock-refused" "$dir/lock-refused."*".tmp"
+mkdir -p "$work/ro-data/dev.ajsoftworks.klepsydra"
+chmod 500 "$work/ro-data/dev.ajsoftworks.klepsydra"
+out=$(fire user-prompt.json ".session_id = \"$(lsid 4)\"" KLEPSYDRA_DIR="$work/ro-data/dev.ajsoftworks.klepsydra" KLEPSYDRA_STATE="$work/state-link" 2>&1); rc=$?
+check "#518 r4: unwritable data dir: silent, no trace, no tmp" \
+  "$rc|$out|$(find "$work/ro-data/dev.ajsoftworks.klepsydra" -mindepth 1 | wc -l)" "0||0"
+chmod 700 "$work/ro-data/dev.ajsoftworks.klepsydra"
+mkdir -p "$work/other-data"
+out=$(fire user-prompt.json ".session_id = \"$(lsid 4)\"" KLEPSYDRA_DIR="$work/other-data" KLEPSYDRA_STATE="$work/state-link" 2>&1); rc=$?
+check "#518 r4: a data dir with another name gets no trace" \
+  "$rc|$out|$([[ -e $work/other-data/lock-refused ]] && echo trace)" "0||"
+mkdir -p "$work/full-trace/dev.ajsoftworks.klepsydra"
+( KLEPSYDRA_DIR="$work/full-trace/dev.ajsoftworks.klepsydra"; trap '' XFSZ; ulimit -f 0; lock_trace "x" ) 2>/dev/null
+check "#518 r4: lock_trace: a failed write leaves no tmp file" \
+  "$(find "$work/full-trace/dev.ajsoftworks.klepsydra" -name '*.tmp' | wc -l)" "0"
 mkfifo "$dir/lock-refused"
 s=$EPOCHREALTIME
 out=$(FIRE_TIMEOUT=5 fire user-prompt.json ".session_id = \"$(lsid 4)\"" KLEPSYDRA_STATE="$work/s-gw" 2>&1); rc=$?

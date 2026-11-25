@@ -1197,7 +1197,7 @@ echo 44444444-4444-4444-8444-444444444444 >"$work/dboot"
 doc_prefs() { local c=${DOC_PREFS-'{"phone_wall": true}'}; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; [[ $c == none ]] || printf '%s' "$c" >"$KLEPSYDRA_DIR/prefs.json"; }
 doctor() { local rc; doc_prefs; FLEET_HEAVY_LOCK="$work/heavy.lock" FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" FLEET_RETRY_S=0 FLEET_PROC="$work/dproc" FLEET_BOOT_ID="$work/dboot" FLEET_UNITS="$work/dunits" bash "$here/doctor.sh" 2>/dev/null; rc=$?
-  rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return $rc; }
+  rm -f -- "$KLEPSYDRA_DIR/prefs.json"; return "$rc"; }
 phone_lines() { grep -E '^(ok|warn|FAIL) +phone wall' | cut -d: -f1 | paste -sd'|'; }
 sid_of() { case $1 in w1) echo dddddddd-0000-4000-8000-000000000001 ;; w2) echo dddddddd-0000-4000-8000-000000000002 ;; *) echo dddddddd-0000-4000-8000-0000000000"${1#o}"0 ;; esac; }
 w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); settle
@@ -1416,15 +1416,19 @@ ln -s "$KLEPSYDRA_STATE" "$work/lk-link"
 check "#518: one they cannot use fails with the reason" "$(KLEPSYDRA_STATE="$work/lk-link" doctor | grep 'lock folder' | cut -d: -f1-2)" \
   "FAIL lock folder: $(tilde "$work/lk-link") is a symlink"
 rm -f -- "$work/lk-link"
-lkbt=$(awk '$1 == "btime" { print $2 }' /proc/stat); lknow=$(date +%s)
+lknow=$(date +%s)
+printf 'btime %s\n' $((lknow - 600)) >"$work/dproc/stat"
 printf '%s %s\n' $((lknow - 60)) "cannot make x: No space left on device" >"$KLEPSYDRA_DIR/lock-refused"
 check "#518: a refusal the hook traced in the last hour is a warning, with its reason" \
   "$(doctor | grep 'lock folder' | grep -c '^warn lock folder: the fleet hook could not lock at [0-9:]* (cannot make x: No space left on device), so it recorded no session then; it can now')" "1"
-printf '%s old\n' $((lkbt - 10)) >"$KLEPSYDRA_DIR/lock-refused"
+printf '%s old\n' $((lknow - 900)) >"$KLEPSYDRA_DIR/lock-refused"
 check "#518: one from before this boot is not" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+printf 'btime %s\n' $((lknow - 7200)) >"$work/dproc/stat"
 printf '%s old\n' $((lknow - 3700)) >"$KLEPSYDRA_DIR/lock-refused"
 check "#518: nor one over an hour old" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
-rm -f -- "$KLEPSYDRA_DIR/lock-refused"
+printf '%s future\n' $((lknow + 600)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: nor one stamped in the future" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+rm -f -- "$KLEPSYDRA_DIR/lock-refused" "$work/dproc/stat"
 printf '#!/usr/bin/env bash\n# an old hook with no lock folder of its own\n' >"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "#518: an installed hook with no lock_dir is checked with the checkout's" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"
 cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
