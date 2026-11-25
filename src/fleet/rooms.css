@@ -573,6 +573,51 @@ body[data-layout="D"] .needs-row:not(.is-focused):not(.blocked-row) {
   padding: 10px 14px;
 }
 
+body[data-layout="D"] .card.card-needs-edge {
+  box-shadow: 0 0 0 2px var(--needs, #e69f00) !important;
+}
+
+body[data-layout="D"] .card.card-done-dimmed {
+  opacity: 0.45;
+}
+
+.no-session-strip {
+  padding: 20px 28px 48px;
+  border-top: 1px solid var(--card-line, #3b3125);
+  margin-top: 24px;
+}
+
+.strip-head {
+  font: 600 13px/1 var(--font, sans-serif);
+  color: var(--text-dim, #b9a993);
+  margin-bottom: 12px;
+}
+
+.strip-head em {
+  font-style: normal;
+  color: var(--text-faint, #8c7d68);
+}
+
+.strip-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.strip-chip {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.strip-chip.review {
+  border-color: var(--band-line, #6f5a2c);
+  color: var(--gold, #c9a24a);
+}
+
+.strip-chip.done {
+  opacity: 0.65;
+}
+
 /* Layout E: "Amber Door" Right Panel */
 body[data-layout="E"] .needs-room {
   position: fixed;

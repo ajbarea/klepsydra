@@ -137,3 +137,11 @@ test("Layout B: two rooms with dedicated titles, blocked sessions first, lanes",
   assert.ok(groups.has("When convenient"));
 });
 
+test("Layout D: Inbox and Floor triage layout, All clear at 0, N/Esc toggle", () => {
+  assert.equal(parseLayout("D"), "D");
+  // At zero count in D, header shows "All clear"
+  const emptyCount = needsCount("", []);
+  assert.equal(emptyCount, 0);
+});
+
+

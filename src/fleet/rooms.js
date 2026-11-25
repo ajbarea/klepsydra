@@ -633,6 +633,38 @@ export function createRooms({
         fqSec.innerHTML = `<div class="fq-head">Plan & Queue <em>from queue.md</em></div>${lanesHtml}`;
         wallContainer.after(fqSec);
       }
+    } else if (currentLayout === "D") {
+      // Desktop Layout D: The wall itself + "No session" strip below
+      const noSessionItems = qItems.filter((q) => ["review", "scheduled", "parked", "done"].includes(q.state));
+
+      // Style wall cards in Layout D: amber edge on needs_you, dimmed on done
+      if (wallContainer) {
+        wallContainer.querySelectorAll(".card").forEach((c) => {
+          const s = sessions.find((item) => item.id === c.dataset.id);
+          if (s) {
+            c.classList.toggle("card-needs-edge", s.status === "needs_you");
+            c.classList.toggle("card-done-dimmed", s.status === "done");
+          }
+        });
+      }
+
+      if (noSessionItems.length > 0) {
+        const stripSec = document.createElement("section");
+        stripSec.id = "fleet-queue-lanes";
+        stripSec.className = "no-session-strip";
+        stripSec.innerHTML = `
+          <div class="strip-head">No session <em>review, scheduled, parked, done today (links only)</em></div>
+          <div class="strip-chips">
+            ${noSessionItems.map((q) => {
+              const url = q.links[0]?.url || "#";
+              const label = q.links[0]?.label || q.title;
+              const ico = q.state === "review" ? "⑂" : q.state === "done" ? "✓" : "↗";
+              return `<a class="chip strip-chip ${q.state}" href="${url}" target="_blank" rel="noopener" title="${q.title}"><i>${ico}</i>${label}</a>`;
+            }).join("")}
+          </div>
+        `;
+        wallContainer.after(stripSec);
+      }
     }
   }
 
@@ -714,7 +746,11 @@ export function createRooms({
     if (e.key === "n" || e.key === "N") {
       if (!e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        switchView("needs");
+        if (currentLayout === "D" && currentView === "needs") {
+          switchView("agents");
+        } else {
+          switchView("needs");
+        }
         return;
       }
     }
