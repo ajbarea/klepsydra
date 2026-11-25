@@ -112,6 +112,7 @@ if [[ ${1:-} == --refresh ]]; then
       failed=1
       continue
     fi
+    touch -r "$f" -- "$tmp"  # its time stays when it was written: fleet tidy ages briefs by it
     mv -f -- "$tmp" "$f"
     flog INFO "brief refreshed with the current shared rules" path="$f" lines="$(wc -l <"$f")"
     echo "refreshed: ${f##*/}"

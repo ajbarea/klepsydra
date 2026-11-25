@@ -1,28 +1,34 @@
-# IMPL: #460 Debian Linux launch parity (PR #458, branch feat/linux-launch-parity)
+# IMPL: klepsydra#511, fleet cleanup enforced in code (PR #514)
 
-Issue: https://github.com/ajbarea/klepsydra/issues/460. The Windows/WSL path must not change.
+Branch feat/fleet-cleanup-511 (worktree .claude/worktrees/cleanup-511). Refs #349 (the roll now
+deletes; `fleet done` line moves stay open there). Needs techne#394 (`_shared/cleanup.py`).
+Rule (AJ 11-20): finished work lives only in git + GitHub; nothing else keeps a done list.
 
 ## Slice
-Live check on the Debian 13 / XFCE PC (RIT), and fix what it finds.
-
-## Done
-- Earlier: review fixes for the Linux launcher, `launch.rs` Linux argv, xdg-open verbs, pane-died on tmux 3.8 (see `git log`).
-- Live check found every card action dead on native Linux: the hook records `"distro": null` there, and five readers (Rust `launch::target`, `folder_of`, `github_of`; JS `jumpable`, `inFleet`) required one. Now one Rust helper, `distro_words(distro, native)`, needs a distro only through wsl.exe; `recorded_distro` is the one reader; JS shares `paneKnown` (end.js). On Windows a record without a distro still gets no pane target (`target_on`), as before.
-- Open terminal did not restore a minimized terminal: xfwm4 unmaps it, so `xdotool search --onlyvisible` missed it. `managed_window` picks the window with WM_STATE (xprop); without xprop, the old visible-only search.
-- A missing `KLEPSYDRA_TERMINAL` is named in the error (`no_terminal`).
-- README Linux: the wall buttons' tools and terminal order.
-- Each fix has a test that fails without it (mutation-checked: 4 Rust, 2 JS, 1 shell, plus the Windows arm).
-- Delta review r1 (Heph, 11-23, `reports/linux-458-delta-r1.md`): S1, the wall lost the platform and offered End/Interrupt, a typed wrap-up and an unnamed Jump to a null-distro session on Windows. The app now adds `native` (launch.rs `NATIVE`) to the wall's snapshot (fleet.rs `for_wall`; the phone gets none), and `paneKnown(s, native)` needs `str(s.distro) || native`. N1: `session_distro(s, native)` is the one reader for `target_on`, `folder_of`, `github_of`, so Folder/GitHub on Windows say again that klepsydra does not know the folder/page. N2: `managed_window` falls back to the visible-only search when no window reports WM_STATE. Six JS mutants killed.
-- Delta review r2 (Heph, 11-23, `reports/linux-458-delta-r2.md`): S1, `jumpStyle` read jumpability again without `native`, so an unnamed native session's Open terminal lost its needs fill and accent marker; it now takes the card's `jump`. S2, the flag's path was unpinned: `hand_out` (fleet.rs) gives the phone the bare snapshot and the windows `for_wall`'s; `folder_request` / `github_request` (launch.rs) read the snapshot for Folder/GitHub as this build does; a browser case feeds a null-distro snapshot with `native: true` and without it. N1: `wrapupLine` takes the flag too.
-
-## Verified
-Live, Debian 13 XFCE X11: + New session (cold and warm), Open terminal (switches tmux window; restores a minimized terminal), `KLEPSYDRA_TERMINAL=nope` (error on + and on Open terminal, nothing created). Suites: cargo fmt/clippy/test workspace, node 508, test-launch 285, test_fleet 599, test-headless 125, statusline, shellcheck, Biome.
-
-Merged main (15 commits) at 1619197; IMPL.md kept as the branch's. On the merged tree: cargo 113+439+7, node 584, test-launch 321, test_fleet 599, test-headless 125, statusline 143, browser 33, shellcheck, Biome; live after a reboot: + New session twice from cold, Open terminal restores a minimized terminal.
+- `fleet/tidy.py` (`fleet tidy [--apply] [PART...]`, dry run by default, --apply only what its
+  saved list shows): heph (head + START HERE + undated sections + standing lines + the last
+  FLEET_HEPH_KEEP lines, by position; refuses no START HERE, a dated later START HERE just above
+  the cut, a file time past the clock, a write in the last 2 min, another holder; dropped lines copied to
+  archive/ for 7 days; keeps the file time for recover.sh), briefs, archive (archive/briefs/ per file), queue (Done lines before this
+  Monday, under the briefing lock), done, expired (git rm under .git/fleet-sync.lock, restores
+  only what it removed). `--report FILE`: prune_shots --apply then a report (error and
+  briefing: null fields on failure).
+- fleet-cleanup.service/.timer every 6 h; doctor `cleanup` line reads the report.
+- brief-tail: evidence by commit permalink; workers delete their own transient files.
+- ✅ Reader round 1 (1 Blocking + 3 Should-fix + minors) fixed in 7bde675; Heph's CI red (doctor
+  lists every warn; cut-over expects fleet-cleanup.timer) fixed there too. Pushed for relaunch.
+- ✅ test_tidy.py 78 pass locally (TECHNE_CLEANUP=<techne worktree cleanup-390>/plugins/techne/_shared/cleanup.py).
 
 ## Next
-1. ✅ Delta r1 fixes (S1, N1, N2) pushed.
-2. 📋 Delta r2 fixes (S1, S2, N1): suites, mutants, push, CI.
-3. 📋 Heph runs round 3 and merges; do not merge here.
-4. Not done live: End, Interrupt, wrap-up typing, unnamed Jump style, Folder, GitHub on native Linux (tests only; AJ's next Debian session, needs-you).
-5. Follow-ups filed, not in this PR: #527 deb dependencies, #528 "wsl" log lines on Linux, #529 multi-window terminal, #530 xdotool BadWindow, #531 hardcoded fleet-briefing path.
+- ✅ Orchestrator rounds r1-r3 and 13 verify passes fixed. r3 changed the spec: HEPH.md keeps its
+  last FLEET_HEPH_KEEP lines (600) by position, no clock; the first-seen record is gone
+  (f687f3f). Verify round 14 (cut from line 0, undated sections by heading text alone, refusal
+  names times + touch) fixed after it. --apply drops only what the saved dry-run list shows.
+1. 📋 PARKED 11-20 17:10. Ready for Heph's review r6 at caf85c1 (r5 fixes verified clean,
+   plus the verify's two minors). The live HEPH.md copy refused at keep 600 by ~3 lines (the
+   dated 11-11 START HERE block reaches the margin); it clears as Heph appends.
+2. 📋 After techne#394 merges: repin ci.yml's techne ref to its merge SHA, then #514.
+3. 📋 Skill fix (own techne PR): bug-classes.md learned class "test child reaches a live
+   default" (env restored after import; a subprocess falls back to the live path).
+- Live dry run on a copy 11-20: HEPH.md 1522 → 713 lines; 175 stale briefs; 2 queue lines.
+- Never `--apply heph` on the live file yourself; the orchestrator runs it after the dry run.

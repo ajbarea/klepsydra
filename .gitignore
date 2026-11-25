@@ -12,3 +12,4 @@ __pycache__/
 # logs (the app's own go to its data dir)
 *.log
 logs/
+.techne/

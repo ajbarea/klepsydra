@@ -21,6 +21,8 @@
 #   fleet pause NAME WHY  set aside an agent whose session is gone (paused.tsv keeps its row)
 #   fleet unpause NAME    put it back; the next fleet recover launches it
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
+#   fleet tidy [--apply] [PART...]  delete finished history kept outside git and GitHub: heph, briefs,
+#                         archive, queue, done, expired (dry run without --apply; fleet tidy --help)
 #   fleet install [--dry-run] [--hooks] [--force] [--no-cutover]  link this checkout's scripts and units into place,
 #                         copy the hooks, status line, launcher and cast
 #   fleet cutover         move the fleet's units onto the installed unit files and start them
@@ -43,6 +45,7 @@ case $cmd in
   shots)
     # shellcheck source=fleet/lib.sh
     FLEET_BRIEFING=$(. "$here/lib.sh" && printf %s "$FLEET_BRIEFING") exec python3 -I "$here/prune_shots.py" "$@" ;;
+  tidy) exec python3 -I "$here/tidy.py" "$@" ;;
   accounts)
     if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
     # shellcheck source=fleet/lib.sh
