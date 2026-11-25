@@ -104,7 +104,32 @@ fn usage_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
 /// is a session appearing in both folders.
 #[tauri::command]
 fn read_usage(app: tauri::AppHandle) -> serde_json::Value {
-    serde_json::Value::Array(klepsydra_fleet::usage::read(usage_dirs(&app)))
+    serde_json::Value::Array(readings(&app))
+}
+
+/// The one usage reader the gauge, the wall, the launcher and the phone
+/// server share, so each tick opens only the readings written since the last.
+#[derive(Clone, Default)]
+pub struct UsageReader(std::sync::Arc<std::sync::Mutex<klepsydra_fleet::usage::Reader>>);
+
+impl UsageReader {
+    /// Every reading under `dirs`. A panic mid-read leaves the memo holding
+    /// only values read whole (at worst it forgets some), so a poisoned lock
+    /// is taken as is.
+    pub fn read<P: AsRef<std::path::Path>>(
+        &self,
+        dirs: impl IntoIterator<Item = P>,
+    ) -> Vec<serde_json::Value> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .read(dirs)
+    }
+}
+
+/// Every published reading, through the shared reader.
+fn readings(app: &tauri::AppHandle) -> Vec<serde_json::Value> {
+    app.state::<UsageReader>().read(usage_dirs(app))
 }
 
 /// The prefs file's name in the data folder.
@@ -831,6 +856,7 @@ fn with_state<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         .manage(launch::PaneFlight::default())
         .manage(launch::JumpFlight::default())
         .manage(phone::Phone::default())
+        .manage(UsageReader::default())
         .manage(theme::Themes::default())
         .manage(opacity::Opacities::default())
         .manage(theme::ThemeMenu::default())

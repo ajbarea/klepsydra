@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::ledger::{lock, Shared};
-use crate::scan::{scan, Problem, Reporter};
+use crate::scan::{Problem, Reporter, Scanner};
 use crate::speaking::{read as read_speaking, speaking};
 use crate::view::{snapshot, Snapshot, Status};
 
@@ -77,6 +77,7 @@ pub struct Reader {
     watcher: Option<RecommendedWatcher>,
     watched: Option<u64>,
     reporter: Reporter,
+    scanner: Scanner,
     last: Option<Snapshot>,
     ledger: Option<Shared>,
     picks: crate::picks::Picks,
@@ -98,6 +99,7 @@ impl Reader {
             watcher: None,
             watched: None,
             reporter: Reporter::default(),
+            scanner: Scanner::default(),
             last: None,
             ledger: None,
             picks: crate::picks::Picks::load(klepsydra_dir),
@@ -188,7 +190,7 @@ impl Reader {
                 broken.extend(self.attach());
             }
         }
-        let listing = scan(&self.fleet);
+        let listing = self.scanner.scan(&self.fleet);
         broken.extend(listing.problems);
         if listing.unread {
             // No word on the sessions: the wall keeps what it shows, so an
@@ -474,6 +476,28 @@ mod tests {
         assert!(r.step(Duration::ZERO, unix_now).0.is_some());
         root.write(&format!("fleet/{A}.json.5.tmp"), "{half");
         assert_eq!(r.step(Duration::from_millis(300), unix_now).0, None);
+    }
+
+    #[test]
+    fn a_step_over_an_unchanged_fleet_opens_no_session_file() {
+        let (root, mut r) = reader("still-step");
+        root.write(&format!("fleet/{A}.json"), &session(A, "error"));
+        std::fs::File::options()
+            .write(true)
+            .open(root.0.join(format!("fleet/{A}.json")))
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+            .unwrap();
+        assert!(r.step(Duration::ZERO, unix_now).0.is_some());
+        // Counted per thread, so a reader that starts a fresh scanner each
+        // step is caught too.
+        let opens = crate::scan::OPENS.with(std::cell::Cell::get);
+        assert_eq!(r.step(Duration::ZERO, unix_now).0, None);
+        assert_eq!(
+            crate::scan::OPENS.with(std::cell::Cell::get) - opens,
+            0,
+            "an unchanged file was re-read"
+        );
     }
 
     #[test]

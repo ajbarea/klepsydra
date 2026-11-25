@@ -1077,7 +1077,7 @@ pub async fn launch_session(
     )?;
     let args = session_args(&prefs, engine.as_ref(), keryx_voice.as_deref())?;
     if matches!(engine, Some(Engine::Claude { .. })) {
-        let readings = klepsydra_fleet::usage::read(crate::usage_dirs(&app));
+        let readings = crate::readings(&app);
         refuse_spent(
             &readings,
             engine.as_ref(),

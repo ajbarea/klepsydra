@@ -6,6 +6,8 @@ use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::path::Path;
 
+use crate::memo::Stamp;
+
 /// Why a file was not read.
 #[derive(Debug)]
 pub enum Refused {
@@ -39,6 +41,11 @@ fn open(path: &Path) -> std::io::Result<File> {
 /// symlink or FIFO swapped in between the two is refused; on Windows a
 /// swapped-in link is followed to a regular file, read within the cap.
 pub fn read_text(path: &Path, max: u64) -> Result<String, Refused> {
+    read_text_stamped(path, max).map(|(text, _)| text)
+}
+
+/// `read_text`, with the stamp of the handle the text was read through.
+pub fn read_text_stamped(path: &Path, max: u64) -> Result<(String, Option<Stamp>), Refused> {
     let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     let meta = match std::fs::symlink_metadata(path) {
         Ok(m) => m,
@@ -64,13 +71,18 @@ pub fn read_text(path: &Path, max: u64) -> Result<String, Refused> {
     }
     // One byte past the cap tells a file that grew since the check.
     let mut bytes = Vec::new();
-    file.take(max + 1)
+    (&file)
+        .take(max + 1)
         .read_to_end(&mut bytes)
         .map_err(Refused::Unreadable)?;
+    // Stamped after the read, as scan's reads are: a write during the read
+    // moves the stamp off the listed one, so the text is not kept.
+    let stamp = Stamp::of_file(&file);
     if bytes.len() as u64 > max {
         return Err(Refused::TooLarge);
     }
-    String::from_utf8(bytes).map_err(|_| Refused::NotUtf8)
+    let text = String::from_utf8(bytes).map_err(|_| Refused::NotUtf8)?;
+    Ok((text, stamp))
 }
 
 #[cfg(test)]

@@ -7,7 +7,8 @@ use std::io::Read;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use crate::session::{beat_name, is_session_id, parse};
+use crate::memo::{list, Kind, Memo, Stamp};
+use crate::session::{beat_name, is_session_id, parse, SessionFile};
 use crate::speaking::FILE as SPEAKING;
 use crate::view::Entry;
 
@@ -27,100 +28,156 @@ pub struct Listing {
     pub unread: bool,
 }
 
-/// The text of an open file and its mtime in seconds, both from this one
-/// handle, so a rename over the path mid-read cannot pair old time with new text.
-fn stamped(mut file: File) -> std::io::Result<(String, i64)> {
+/// The text of an open file, its mtime in seconds and its stamp, all from
+/// this one handle, so a rename over the path mid-read cannot pair old time
+/// with new text.
+fn stamped(mut file: File) -> std::io::Result<(String, i64, Option<Stamp>)> {
+    #[cfg(test)]
+    OPENS.with(|n| n.set(n.get() + 1));
     let mut text = String::new();
     file.read_to_string(&mut text)?;
-    let t = file
-        .metadata()?
+    let meta = file.metadata()?;
+    let t = meta
         .modified()?
         .duration_since(UNIX_EPOCH)
         .map_err(std::io::Error::other)?;
     let secs = i64::try_from(t.as_secs()).map_err(std::io::Error::other)?;
-    Ok((text, secs))
+    Ok((text, secs, Stamp::of_file(&file)))
 }
 
-/// A regular file's text and mtime. The type is checked from the directory
-/// entry before opening, so a FIFO named like a session file is never opened
-/// (an open would block); symlinks are not followed. `None` is a file that is
-/// not one or has vanished, passed over silently; an error is a real failure.
-fn read_regular(item: &std::fs::DirEntry) -> Option<std::io::Result<(String, i64)>> {
-    if !item.file_type().ok()?.is_file() {
-        return None;
-    }
-    match File::open(item.path()).and_then(stamped) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        r => Some(r),
-    }
+// Files this thread's scans have read, whichever scanner read them.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static OPENS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Every `<uuid>.json` in `fleet` with its `<uuid>.beat`. Anything else there
-/// (temp files mid-write, the hook's lock, stray files) is not a session and is
-/// passed over without a word. A missing directory is an empty fleet; one
-/// that cannot be listed is `unread`, with a problem saying why.
+/// What a session file read as: its mtime and the parsed file, or why not.
+type Parsed = (i64, Result<SessionFile, String>);
+/// What a heartbeat read as: its mtime and the name it carries.
+type Beat = (i64, Option<String>);
+
+/// Every `<uuid>.json` in `fleet` with its `<uuid>.beat`, read afresh. A
+/// reader that lists the folder again and again keeps a `Scanner` instead.
 pub fn scan(fleet: &Path) -> Listing {
-    let mut out = Listing::default();
-    let dir = match std::fs::read_dir(fleet) {
-        Ok(dir) => dir,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return out,
-        Err(e) => {
-            out.unread = true;
-            out.problems.push(Problem {
-                file: fleet.display().to_string(),
-                what: format!("fleet folder not read: {e}"),
-            });
-            return out;
-        }
-    };
-    let mut files = Vec::new();
-    let mut beats: HashMap<String, (i64, Option<String>)> = HashMap::new();
-    for item in dir.flatten() {
-        let name = item.file_name().to_string_lossy().into_owned();
-        if name == SPEAKING {
-            continue; // keryx's, read on its own by `speaking::read`
-        }
-        let Some((stem, ext)) = name.rsplit_once('.') else {
-            continue;
-        };
-        if !is_session_id(stem) || !matches!(ext, "json" | "beat") {
-            continue;
-        }
-        let (text, mtime) = match read_regular(&item) {
-            None => continue,
-            Some(Ok(read)) => read,
-            Some(Err(e)) => {
-                if ext == "json" {
-                    out.problems.push(Problem {
-                        file: name,
-                        what: format!("unreadable: {e}"),
-                    });
-                }
-                continue;
+    Scanner::default().scan(fleet)
+}
+
+/// Reads a fleet folder pass after pass, opening only the files written
+/// since the last pass (`memo`).
+#[derive(Debug, Default)]
+pub struct Scanner {
+    sessions: Memo<Parsed>,
+    beats: Memo<Beat>,
+}
+
+impl Scanner {
+    /// Files opened since this scanner was made.
+    pub fn reads(&self) -> u64 {
+        self.sessions.reads() + self.beats.reads()
+    }
+
+    /// Values held between passes.
+    #[cfg(test)]
+    pub fn kept(&self) -> usize {
+        self.sessions.kept() + self.beats.kept()
+    }
+
+    /// Every `<uuid>.json` in `fleet` with its `<uuid>.beat`. Anything else
+    /// there (temp files mid-write, the hook's lock, stray files) is not a
+    /// session and is passed over without a word. A missing directory is an
+    /// empty fleet; one that cannot be listed is `unread`, with a problem
+    /// saying why. The type is checked from the directory entry before
+    /// opening, so a FIFO named like a session file is never opened (an open
+    /// would block); symlinks are not followed.
+    pub fn scan(&mut self, fleet: &Path) -> Listing {
+        let mut out = Listing::default();
+        let dir = match list(fleet) {
+            Ok(dir) => dir,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return out,
+            Err(e) => {
+                out.unread = true;
+                out.problems.push(Problem {
+                    file: fleet.display().to_string(),
+                    what: format!("fleet folder not read: {e}"),
+                });
+                return out;
             }
         };
-        if ext == "beat" {
-            beats.insert(stem.to_string(), (mtime, beat_name(&text)));
-        } else {
-            files.push((stem.to_string(), name, mtime, text));
+        let now = crate::memo::now();
+        let mut sessions = self.sessions.pass();
+        let mut beat_pass = self.beats.pass();
+        let mut files = Vec::new();
+        let mut beats: HashMap<String, Beat> = HashMap::new();
+        for item in dir {
+            let name = item.name.to_string_lossy().into_owned();
+            if name == SPEAKING {
+                continue; // keryx's, read on its own by `speaking::read`
+            }
+            let Some((stem, ext)) = name.rsplit_once('.') else {
+                continue;
+            };
+            if !is_session_id(stem) || !matches!(ext, "json" | "beat") {
+                continue;
+            }
+            if item.kind != Kind::File {
+                continue;
+            }
+            let path = fleet.join(&item.name);
+            let listed = item.stamp;
+            // `None`: the file went between the listing and the open.
+            let open = || match File::open(&path).and_then(stamped) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(None),
+                r => r.map_err(Some),
+            };
+            let read = if ext == "beat" {
+                beat_pass
+                    .get(&path, listed, now, || {
+                        open().map(|(text, mtime, held)| ((mtime, beat_name(&text)), held))
+                    })
+                    .map(|beat| {
+                        beats.insert(stem.to_string(), beat);
+                    })
+            } else {
+                sessions
+                    .get(&path, listed, now, || {
+                        open().map(|(text, mtime, held)| {
+                            (
+                                (mtime, parse(&text, stem, mtime).map_err(|e| e.to_string())),
+                                held,
+                            )
+                        })
+                    })
+                    .map(|parsed| files.push((name.clone(), parsed)))
+            };
+            match read {
+                Ok(()) | Err(None) => {}
+                Err(Some(e)) => {
+                    if ext == "json" {
+                        out.problems.push(Problem {
+                            file: name,
+                            what: format!("unreadable: {e}"),
+                        });
+                    }
+                }
+            }
         }
-    }
-    for (stem, name, mtime, text) in files {
-        match parse(&text, &stem, mtime) {
-            Ok(file) => out.entries.push(Entry {
-                file,
-                modified: mtime,
-                beat: beats.remove(&stem),
-            }),
-            Err(e) => out.problems.push(Problem {
-                file: name,
-                what: e.to_string(),
-            }),
+        for (name, (mtime, parsed)) in files {
+            match parsed {
+                Ok(file) => {
+                    let beat = beats.remove(&file.session_id);
+                    out.entries.push(Entry {
+                        file,
+                        modified: mtime,
+                        beat,
+                    });
+                }
+                Err(what) => out.problems.push(Problem { file: name, what }),
+            }
         }
+        out.entries
+            .sort_by(|a, b| a.file.session_id.cmp(&b.file.session_id));
+        out
     }
-    out.entries
-        .sort_by(|a, b| a.file.session_id.cmp(&b.file.session_id));
-    out
 }
 
 /// Reports each skipped file once, not on every re-read; a file that recovers
@@ -187,6 +244,251 @@ pub(crate) mod tests {
         let l = scan(&dir.0);
         assert_eq!(l.entries.len(), 1);
         assert!(l.problems.is_empty());
+    }
+
+    /// Date `name` in `dir` to `secs` past the epoch.
+    pub fn age(dir: &Scratch, name: &str, secs: u64) {
+        File::options()
+            .write(true)
+            .open(dir.0.join(name))
+            .unwrap()
+            .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    /// A fleet of `n` sessions with beats, all last written long ago.
+    fn still_fleet(dir: &Scratch, n: usize) -> Vec<String> {
+        (0..n)
+            .map(|i| {
+                let id = format!("{i:08x}-1514-44d1-a31c-eba4a7cb41ed");
+                dir.write(&format!("{id}.json"), &session(&id, "working"));
+                dir.write(&format!("{id}.beat"), "Plan\t179235300\n");
+                age(dir, &format!("{id}.json"), 1_700_000_000);
+                age(dir, &format!("{id}.beat"), 1_700_000_000);
+                id
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pass_over_an_unchanged_fleet_opens_no_file() {
+        let dir = Scratch::new("still");
+        let ids = still_fleet(&dir, 30);
+        let mut s = Scanner::default();
+        let first = s.scan(&dir.0);
+        assert_eq!((first.entries.len(), s.reads()), (30, 60));
+        let again = s.scan(&dir.0);
+        assert_eq!(s.reads(), 60, "an unchanged file was opened again");
+        assert_eq!(again.entries, first.entries);
+        // One session written: that file alone is opened, and its new text read.
+        let id = &ids[7];
+        dir.write(&format!("{id}.json"), &session(id, "done"));
+        age(&dir, &format!("{id}.json"), 1_700_000_100);
+        let third = s.scan(&dir.0);
+        assert_eq!(s.reads(), 61);
+        assert_eq!(third.entries[7].file.state, crate::session::State::Done);
+        // A beat removed, and a session: gone from the listing, nothing opened.
+        std::fs::remove_file(dir.0.join(format!("{}.beat", ids[3]))).unwrap();
+        std::fs::remove_file(dir.0.join(format!("{}.json", ids[4]))).unwrap();
+        let fourth = s.scan(&dir.0);
+        assert_eq!((fourth.entries.len(), s.reads()), (29, 61));
+        assert_eq!(fourth.entries[3].beat, None);
+    }
+
+    #[test]
+    fn a_replace_with_the_same_length_is_read() {
+        let dir = Scratch::new("same-len");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let mut s = Scanner::default();
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Error
+        );
+        // The hook's write: a temp file renamed over the path.
+        let tmp = format!("{A}.json.9.tmp");
+        dir.write(&tmp, &session(A, "ended"));
+        age(&dir, &tmp, 1_700_000_001);
+        std::fs::rename(dir.0.join(&tmp), dir.0.join(&name)).unwrap();
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Ended
+        );
+    }
+
+    // A copy that keeps its source's time written in place (`cp -p` over
+    // the file): the same file id, length and modification time; only the
+    // change time moves (NTFS `ChangeTime` on Windows).
+    #[test]
+    fn an_in_place_rewrite_with_the_same_length_and_time_is_read() {
+        let dir = Scratch::new("in-place");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let stamp = || Stamp::of_file(&File::open(dir.0.join(&name)).unwrap()).unwrap();
+        let before = stamp();
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        // Rewrite until the change time moves: before multigrain timestamps
+        // (Linux 6.13) it moves once per tick, not on every write.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            std::fs::write(dir.0.join(&name), session(A, "ended")).unwrap();
+            age(&dir, &name, 1_700_000_000);
+            if stamp().changed != before.changed {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the change time never moved"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let after = stamp();
+        assert_eq!(
+            (after.id, after.len, after.modified),
+            (before.id, before.len, before.modified),
+            "only the change time differs"
+        );
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Ended
+        );
+    }
+
+    #[test]
+    fn a_file_deleted_and_made_again_is_read() {
+        let dir = Scratch::new("recreate");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        std::fs::remove_file(dir.0.join(&name)).unwrap();
+        assert!(s.scan(&dir.0).entries.is_empty());
+        dir.write(&name, &session(A, "ended"));
+        age(&dir, &name, 1_700_000_000);
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Ended
+        );
+        // With no pass between: a new file id and change time.
+        std::fs::remove_file(dir.0.join(&name)).unwrap();
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Error
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_opened_is_tried_on_every_pass() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = Scratch::new("eacces");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let p = dir.0.join(&name);
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&p).is_ok() {
+            return; // root reads it anyway
+        }
+        let mut s = Scanner::default();
+        for _ in 0..2 {
+            let l = s.scan(&dir.0);
+            assert_eq!((l.entries.len(), l.problems.len()), (0, 1));
+        }
+        assert_eq!(s.reads(), 2);
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(s.scan(&dir.0).entries.len(), 1);
+        assert_eq!(s.reads(), 3);
+    }
+
+    #[test]
+    fn a_time_in_the_future_is_read_on_every_pass() {
+        let dir = Scratch::new("future");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        File::options()
+            .write(true)
+            .open(dir.0.join(&name))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        s.scan(&dir.0);
+        assert_eq!(s.reads(), 2);
+    }
+
+    #[test]
+    fn sessions_that_come_and_go_leave_nothing_held() {
+        let dir = Scratch::new("churn");
+        let mut s = Scanner::default();
+        for i in 0..200u32 {
+            let id = format!("{i:08x}-1514-44d1-a31c-eba4a7cb41ed");
+            let name = format!("{id}.json");
+            dir.write(&name, &session(&id, "working"));
+            age(&dir, &name, 1_700_000_000);
+            s.scan(&dir.0);
+            assert_eq!(s.kept(), 1, "the one listed session is held");
+            std::fs::remove_file(dir.0.join(&name)).unwrap();
+        }
+        s.scan(&dir.0);
+        assert_eq!(s.kept(), 0);
+    }
+
+    // A copy that keeps its source's time (`cp -p`, `touch -r`, a restore)
+    // renamed over the path: same length and time, a new file id and change
+    // time.
+    #[test]
+    fn a_replace_with_the_same_length_and_time_is_read() {
+        let dir = Scratch::new("same-len-time");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        age(&dir, &name, 1_700_000_000);
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        let tmp = format!("{A}.json.9.tmp");
+        dir.write(&tmp, &session(A, "ended"));
+        age(&dir, &tmp, 1_700_000_000);
+        std::fs::rename(dir.0.join(&tmp), dir.0.join(&name)).unwrap();
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Ended
+        );
+    }
+
+    #[test]
+    fn a_file_written_just_now_is_read_on_every_pass() {
+        crate::memo::REAL_CLOCK.with(|c| c.set(true));
+        let dir = Scratch::new("racy");
+        let name = format!("{A}.json");
+        dir.write(&name, &session(A, "error"));
+        let mut s = Scanner::default();
+        s.scan(&dir.0);
+        // Rewritten within the same timestamp tick: same length, maybe same time.
+        dir.write(&name, &session(A, "ended"));
+        assert_eq!(
+            s.scan(&dir.0).entries[0].file.state,
+            crate::session::State::Ended
+        );
+        assert_eq!(s.reads(), 2);
+    }
+
+    #[test]
+    fn a_bad_file_is_reported_on_every_pass_though_read_once() {
+        let dir = Scratch::new("bad-kept");
+        dir.write(&format!("{A}.json"), "{not json");
+        age(&dir, &format!("{A}.json"), 1_700_000_000);
+        let mut s = Scanner::default();
+        assert_eq!(s.scan(&dir.0).problems, s.scan(&dir.0).problems);
+        assert_eq!(s.scan(&dir.0).problems.len(), 1);
+        assert_eq!(s.reads(), 1);
     }
 
     #[test]
@@ -313,10 +615,17 @@ pub(crate) mod tests {
             .set_modified(new)
             .unwrap();
         std::fs::rename(&tmp, &path).unwrap();
-        assert_eq!(stamped(handle).ok(), Some(("old".into(), 1_700_000_000)));
+        let text_time = |r: std::io::Result<(String, i64, Option<Stamp>)>| {
+            r.ok()
+                .map(|(text, secs, held)| (text, secs, held.map(|h| h.modified)))
+        };
         assert_eq!(
-            stamped(File::open(&path).unwrap()).ok(),
-            Some(("new".into(), 1_800_000_000))
+            text_time(stamped(handle)),
+            Some(("old".into(), 1_700_000_000, Some(old)))
+        );
+        assert_eq!(
+            text_time(stamped(File::open(&path).unwrap())),
+            Some(("new".into(), 1_800_000_000, Some(new)))
         );
     }
 

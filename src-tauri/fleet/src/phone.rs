@@ -65,7 +65,8 @@ pub type Assets = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 /// keryx's latest reply clip for a session id (`reply::read`).
 pub type Clips = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
-/// Every usage reading, as `read_usage` gives the gauge (`usage::read`).
+/// Every usage reading, as `read_usage` gives the gauge (the app's one
+/// `usage::Reader`).
 pub type Usage = Arc<dyn Fn() -> Vec<Value> + Send + Sync>;
 
 /// `resolve` held to the paths in `known`, the bundle's own (with or
