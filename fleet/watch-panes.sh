@@ -67,18 +67,19 @@ ci_wake() {
 # until it clears (#246), so a watcher started during a shared limit does not
 # wake the orchestrator at once on each of them.
 declare -A held
+DONE_RE='done [0-9]{1,2}:[0-9][0-9] [AP]M' BG_RE='still running|Waiting for [0-9]+ background'
 resets=""
 for p in "$@"; do
   s=$(screen "$p")
-  if ! busy "$s" && l=$(limit_line "$s"); then
+  if l=$(pane_limited "$p" "$s"); then
     held[$p]=1
-    r=$(grep -oE 'resets [^(]*[ap]m' <<<"$l" | tail -1)
+    r=$(reset_label "${l%%$'\t'*}" "${l#*$'\t'}")
     [[ -n $r && $resets != *"${r#resets }"* ]] && resets+="${r#resets }, "
   fi
 done
 flog INFO "watching" panes="$*" idle_s="$IDLE_S" limited_at_start="${!held[*]}" resets="${resets%, }"
 while :; do
-  now=$(date +%s)
+  now=${FLEET_NOW:-$(date +%s)}
   if ci_wake; then
     flog INFO "CI alert for the orchestrator" alert="$WAKE"
     echo "$WAKE"
@@ -89,25 +90,34 @@ while :; do
     if ! fleet_panes | grep -qx "$p"; then
       flog INFO "watched pane gone" pane="$p"; echo "GONE $p"; exit 0
     fi
-    s=$(screen "$p") ps=$(plain <<<"$s")
+    s=$(screen "$p")
+    screen_parse "$s"
+    ps=$SCR_PLAIN
     if [[ -n ${held[$p]:-} ]]; then
-      if ! busy "$s" && limit_line "$s" >/dev/null; then continue; fi
+      if pane_limited "$p" "$s" >/dev/null; then continue; fi
       unset "held[$p]"
       flog INFO "watched pane's limit cleared: watching it now" pane="$p"
     fi
     # A usage limit wakes the orchestrator too; the resume service restarts the
     # pane, unless its agent ran `fleet done`.
-    if ! busy "$s" && limit=$(limit_line "$s"); then
-      flog INFO "watched pane limited" pane="$p" message="$limit"
-      echo "LIMIT $p $(grep -oE 'resets [^(]*[ap]m' <<<"$limit" | tail -1)"; exit 0
+    if limit=$(pane_limited "$p" "$s"); then
+      limit_line=${limit#*$'\t'}
+      flog INFO "watched pane limited" pane="$p" reason="limit" message="$limit_line" reset_at="${limit%%$'\t'*}" screen="$limit_line"
+      echo "LIMIT $p $(reset_label "${limit%%$'\t'*}" "$limit_line")"; exit 0
     fi
-    if busy "$s" || grep -qE 'still running|Waiting for [0-9]+ background' <<<"$ps" || ! grep -q 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps"; then
+    if busy "$s" || ! [[ $ps =~ $DONE_RE ]]; then
+      unset "since[$p]"; continue
+    fi
+    if [[ $ps =~ $BG_RE ]] || pane_background "$p" "$now"; then
       unset "since[$p]"; continue
     fi
     : "${since[$p]:=$now}"
     if (( now - since[$p] >= IDLE_S )); then
       done_at=$(grep -o 'done [0-9:]* [AP]M' <<<"$ps" | tail -1)
-      flog INFO "watched pane idle" pane="$p" since="$done_at"
+      done_line=$(grep 'done [0-9]\{1,2\}:[0-9][0-9] [AP]M' <<<"$ps" | tail -1)
+      bg_summary=$(pane_background_summary "$p" "$now")
+      decided=$(printf '%s\n%s' "$done_line" "session=$bg_summary" | paste -sd '~' -)
+      flog INFO "watched pane idle" pane="$p" reason="idle" since="$done_at" screen="$decided" session="$bg_summary"
       echo "IDLE $p $done_at"; exit 0
     fi
   done

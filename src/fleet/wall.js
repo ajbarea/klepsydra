@@ -1,7 +1,7 @@
 // The card wall: a card per Claude Code session, in the reader's order, with
 // a way back to its terminal.
-import { RINGS, accountsDiffer, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, showsRingKey, startedNeeding, transitionName, statuses, tally } from "./model.js";
-import { announcer, press, say, setOff, syncChildren } from "./dom.js";
+import { RINGS, accountsDiffer, arrivalLine, arrivals, branchPage, announcements, card, castPicks, identity, needsFirst, shouldSlide, startedNeeding, transitionName, statuses, tally } from "./model.js";
+import { announcer, press, say, setOff, setWaiting, syncChildren } from "./dom.js";
 import { ARM_MS, confirmCopy, createEnder, endAllCopy, endingAnnouncement, endingText, withdrawnText } from "./end.js";
 import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy, wrapupLines } from "./wrapup.js";
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
@@ -10,6 +10,7 @@ import { createDrawer } from "./drawer.js";
 import { createQueuePanel } from "./queuepanel.js";
 import { createEdge } from "./sidepanel.js";
 import { showFace } from "./face.js";
+import { MAKER_ICONS } from "./icons.js";
 import { GOLD, SPEAK_FADE_MS, STILL, Speaker, WAVE, waves } from "./speaking.js";
 import { parseDensity, resolveDensity } from "./density.js";
 import { clearAll, clearLabel, endedIds, startLabel, wallState } from "./empty.js";
@@ -17,19 +18,22 @@ import { wireSplit } from "./split.js";
 import { follow } from "../ipc.js";
 import { ciView } from "./ci.js";
 import { healthView } from "./health.js";
-import { agoraView, reactLabel, reactedLabel } from "./agora.js";
 import { createReplayer } from "./replay.js";
 import { cutsText } from "./fulltext.js";
-import { WAITING, usageRows } from "../gauge.js";
+import { WAITING, toRows, usageRows } from "../gauge.js";
+import { hiddenRows } from "./chips.js";
+import { wireOpacityPick } from "./opacitypick.js";
+import { subscribeOpacity } from "../opacity.js";
 import { readMode, readStops, syncEntries } from "../gaugeview.js";
 import { createLog } from "../log.js";
+import { FIX_STEPS, buildEntries, buttonTitle, firstModel, launchArgs, menuEntries, pickDefault, roomWords } from "./newsession.js";
 
 const FIRST_THEME_MS = 1500; // the longest the first paint waits for the app to name the theme
 const TICK_MS = 15_000; // ages re-render between snapshots, as on the gauge
 const FACE_PX = 62; // the comfortable --wall-face less twice its --face-inset
 const SVG_NS = "http://www.w3.org/2000/svg";
 const SEGMENT_FADE_MS = 200; // wall.css .seg.leave
-const MARK_ARC = "M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"; // the ring key's arc (wall.html)
+const MARK_ARC = "M 4.5 16 A 11.5 11.5 0 0 1 27.5 16"; // a background-work mark's arc, in a 32 x 18 viewBox
 const RESIZE_SETTLE_MS = 100; // Auto measures once a drag pauses, not every frame of it
 // GitHub's mark (octicon mark-github, 16 px).
 const GITHUB_ICON =
@@ -39,6 +43,7 @@ const BRANCH_ICON =
 // A head and shoulders: the account a session runs on, told apart from the branch beside it.
 const ACCOUNT_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 14c.6-2.8 2.6-4.2 5-4.2s4.4 1.4 5 4.2"/></svg><span class="visually-hidden">account </span><span></span>';
+
 const TALLY = [
   ["needs", "needs you"],
   ["working", "working"],
@@ -58,31 +63,342 @@ const newButton = document.getElementById("new-session");
 const newNote = document.getElementById("new-note");
 const bar = document.querySelector(".bar");
 const densityPicker = document.querySelector(".density");
-const ringKey = document.querySelector(".ring-key");
 const startButton = document.getElementById("start-session");
 const clearNote = document.getElementById("clear-note");
 const clearEnded = document.getElementById("clear-ended");
 const emptyTitle = document.getElementById("empty-title");
 const limits = document.querySelector(".limits");
 const limitRows = limits.querySelector(".limit-rows");
+
+// The gear's view menu is a disclosure over the wall's corner: Escape closes it
+// and gives focus back to the gear, and so does a press anywhere outside it.
+const gear = document.querySelector(".gear");
+gear.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !gear.open) return;
+  e.preventDefault();
+  e.stopPropagation();
+  gear.open = false;
+  gear.querySelector("summary").focus();
+});
+document.addEventListener("pointerdown", (e) => {
+  if (gear.open && !gear.contains(e.target)) gear.open = false;
+});
 const limitWait = limits.querySelector(".limit-wait");
-// + New session and the empty state's button start a session the same way,
-// and while one runs the other is off too.
-async function startSession(button, note) {
+// + New session (#440, Variant A): the split button names the engine it
+// starts; its caret opens one row per other engine with its account, room and
+// models. Room comes from read_usage through the gauge's own toRows (the
+// desktop snapshot carries no readings), engines and accounts from the
+// launcher, the default and the last used from prefs.json.
+let sessions = [];
+let latestSnapshot = null; // its usage readings draw the limit gauges
+const newKind = document.getElementById("new-kind");
+const newMenu = document.getElementById("new-menu");
+const engList = newMenu.querySelector(".eng-list");
+const footWhy = newMenu.querySelector(".mfoot-why");
+const footReset = newMenu.querySelector(".eng-reset");
+const engTpl = document.getElementById("eng-tpl");
+const modelTpl = document.getElementById("model-tpl");
+const USAGE_MS = 60_000; // readings change only as sessions reply; the menu reads again on opening
+const ENGINES_MS = 60_000; // a newly installed engine shows by the next opening after this
+const ns = {
+  rows: [],
+  engines: null,
+  agy: { state: inTauri ? "waiting" : "missing", models: [] },
+  prefs: { default: null, last: null },
+  enginesError: null,
+  ready: !inTauri, // the saved default can be judged: prefs, engines and (when it names agy) agy answered
+  open: null, // the menu row shown open
+  picked: new Map(), // entry id -> model id the user picked
+  fixShown: new Set(), // entry ids whose fix step is shown
+  enginesAt: 0,
+};
+
+// The engine icons as nodes, parsed once from their constant markup.
+const iconCache = new Map();
+function iconNode(key) {
+  if (!iconCache.has(key)) {
+    // The HTML parser puts <svg> in the SVG namespace; the markup carries no xmlns for an XML parse.
+    const doc = new DOMParser().parseFromString(MAKER_ICONS[key] ?? MAKER_ICONS.claude, "text/html");
+    iconCache.set(key, doc.body.firstElementChild);
+  }
+  return document.importNode(iconCache.get(key), true);
+}
+
+function nsState() {
+  const entries = buildEntries({ rows: ns.rows, engines: ns.engines, enginesError: ns.enginesError, agy: ns.agy, nowMs: Date.now() });
+  const pick = pickDefault(entries, { userDefault: ns.prefs.default, lastUsed: ns.prefs.last });
+  return { entries, pick };
+}
+
+const modelOf = (entry) => (ns.picked.has(entry.id) ? ns.picked.get(entry.id) : firstModel(entry));
+
+async function startSession(button, note, args) {
   if (button.getAttribute("aria-disabled") === "true") return;
-  const other = button === newButton ? startButton : newButton;
-  setOff(other, true);
+  const others = [newButton, startButton, newKind].filter((b) => b !== button);
+  for (const b of others) setOff(b, true);
   try {
-    await press(button, note, () => window.__TAURI__.core.invoke("launch_session"), "Starting…");
+    await press(button, note, () => window.__TAURI__.core.invoke("launch_session", args ?? {}), "Starting…");
   } finally {
-    setOff(other, false);
+    for (const b of others) setOff(b, false);
+    loadPrefs(); // a launch that started is now the last used
   }
 }
+const startDefault = (button) => {
+  if (!ns.ready) return; // a click before the saved default is known would start the wrong engine
+  const { entry } = nsState().pick;
+  startSession(button, newNote, launchArgs(entry, modelOf(entry)));
+};
 newButton.hidden = !inTauri;
-newButton.addEventListener("click", () => startSession(newButton, newNote));
+newButton.addEventListener("click", () => startDefault(newButton));
+
+function paintButton() {
+  const { entry, reason } = nsState().pick;
+  newButton.querySelector(".ico").replaceChildren(iconNode(entry.engine));
+  const label = newButton.querySelector(".new-label");
+  label.replaceChildren(`New ${entry.shortName}`, Object.assign(document.createElement("span"), { className: "ns-word", textContent: " session" }));
+  const mono = newButton.querySelector(".mono");
+  mono.hidden = !entry.badge;
+  mono.textContent = entry.badge;
+  newButton.title = buttonTitle(entry);
+  setWaiting(newButton, !ns.ready);
+  setWaiting(startButton, !ns.ready);
+  newButton.setAttribute("aria-label", `New ${entry.name} session`);
+  newKind.hidden = !inTauri;
+  footWhy.textContent = `Default: ${entry.name}, ${reason}.`;
+  footReset.hidden = !ns.prefs.default;
+}
+
+/** One menu row. Keys in data-fk let a redraw put focus back where it was. */
+function engRow(e, openId) {
+  const row = engTpl.content.firstElementChild.cloneNode(true);
+  const head = row.querySelector(".eng-h");
+  row.dataset.id = e.id;
+  row.setAttribute("aria-label", e.name);
+  head.dataset.fk = `h:${e.id}`;
+  row.querySelector(".ico").append(iconNode(e.engine));
+  row.querySelector(".eng-name").textContent = e.name;
+  row.querySelector(".rec").hidden = !e.recommended;
+  const words = roomWords(e.room);
+  row.querySelector(".room b").textContent = e.usable ? words.bold : "";
+  row.querySelector(".room-detail").textContent = e.usable ? words.detail : "";
+  row.querySelector(".eng-acct").textContent = e.usable
+    ? e.accountLabel
+    : e.fix === "install"
+      ? "Not installed on this PC"
+      : e.fix === "signin"
+        ? "Installed, not signed in"
+        : e.failed ?? (e.engine === "copilot" ? "Checking whether Copilot is installed…" : "Asking Antigravity for its models…");
+  if (!e.usable) {
+    row.classList.add("off");
+    head.setAttribute("aria-disabled", "true");
+    head.removeAttribute("aria-expanded");
+    const fixRow = row.querySelector(".eng-fixrow");
+    const fix = row.querySelector(".eng-fix");
+    const step = FIX_STEPS[e.engine]?.[e.fix];
+    fixRow.hidden = !e.fix || (e.fix !== "retry" && !step);
+    fix.dataset.fk = `f:${e.id}`;
+    fix.dataset.fix = e.fix ?? "";
+    fix.textContent = e.fix === "install" ? "How to install" : e.fix === "signin" ? "Sign in" : "Try again";
+    if (step && e.fix !== "retry") {
+      const shown = ns.fixShown.has(e.id);
+      fix.setAttribute("aria-expanded", String(shown));
+      const p = row.querySelector(".eng-step");
+      p.hidden = !shown;
+      p.id = `step-${e.id.replace(/[^A-Za-z0-9-]/g, "-")}`;
+      fix.setAttribute("aria-controls", p.id);
+      p.querySelector("code").textContent = step;
+    } else fix.removeAttribute("aria-expanded");
+    return row;
+  }
+  const open = e.id === openId;
+  head.setAttribute("aria-expanded", String(open));
+  if (!open) return row;
+  row.classList.add("open");
+  const models = row.querySelector(".models");
+  const picked = modelOf(e);
+  if (e.models.length) {
+    models.hidden = false;
+    models.querySelector("legend").textContent = `${e.name} model`;
+    const groups = e.groups ?? [{ key: "all", label: e.engine === "claude" ? "Model · Claude Code's default unless you pick one" : "", models: e.models }];
+    for (const g of groups) {
+      if (g.label) models.append(Object.assign(document.createElement("div"), { className: "mgrp", textContent: g.label }));
+      for (const m of g.models) {
+        const lab = modelTpl.content.firstElementChild.cloneNode(true);
+        const input = lab.querySelector("input");
+        input.name = `model-${e.id}`;
+        input.value = m.id;
+        input.checked = m.id === picked;
+        input.disabled = m.disabled; // a spent model: arrow keys pass over it
+        input.dataset.fk = `m:${e.id}:${m.id}`;
+        lab.querySelector(".model-name").textContent = m.label;
+        lab.querySelector(".why").textContent = m.why;
+        models.append(lab);
+      }
+    }
+  }
+  row.querySelector(".eng-actions").hidden = false;
+  const start = row.querySelector(".eng-start");
+  start.textContent = `Start ${e.shortName} session`;
+  start.dataset.fk = `s:${e.id}`;
+  if ((e.engine === "agy" && !picked) || e.spent) start.setAttribute("aria-disabled", "true");
+  row.querySelector(".eng-default").dataset.fk = `d:${e.id}`;
+  return row;
+}
+
+/** Draw the menu, keeping focus on the control that had it. Only while it is open. */
+function paintMenu() {
+  if (!newMenu.matches(":popover-open")) return;
+  const { entries, pick } = nsState();
+  const menu = menuEntries(entries, pick.entry.id);
+  if (!menu.some((e) => e.id === ns.open && e.usable)) ns.open = menu.find((e) => e.usable)?.id ?? null;
+  const active = newMenu.contains(document.activeElement) ? document.activeElement : null;
+  const had = active?.dataset.fk;
+  const hadRow = active?.closest(".eng")?.dataset.id;
+  engList.replaceChildren(...menu.map((e) => engRow(e, ns.open)));
+  if (active) {
+    // The same control, else its row's header, else the footer's button, else the caret: never the page.
+    const same = had && engList.querySelector(`[data-fk="${CSS.escape(had)}"]`);
+    const head = hadRow && engList.querySelector(`.eng[data-id="${CSS.escape(hadRow)}"] .eng-h:not([aria-disabled="true"])`);
+    const keep = active === footReset && !footReset.hidden ? footReset : null;
+    (same && same.getAttribute("aria-disabled") !== "true" && !same.disabled ? same : head || keep || newKind).focus();
+  }
+}
+
+function paintNewSession() {
+  paintButton();
+  paintMenu();
+}
+
+async function readRows() {
+  try {
+    ns.rows = toRows(await window.__TAURI__.core.invoke("read_usage"), Date.now());
+  } catch (err) {
+    log.warnRepeat("read_usage", "read_usage failed, so + New session shows no room", err);
+  }
+}
+async function readEngines(force = false) {
+  if (!force && Date.now() - ns.enginesAt < ENGINES_MS) return;
+  ns.enginesAt = Date.now();
+  try {
+    ns.engines = await window.__TAURI__.core.invoke("engines_status");
+    ns.enginesError = null;
+  } catch (err) {
+    ns.enginesAt = 0;
+    if (!ns.engines) ns.enginesError = `klepsydra could not ask which engines are here: ${err}`;
+    log.warnRepeat("engines_status", "engines_status failed, so + New session lists every engine as it last knew", err);
+  }
+}
+// agy's models: "not found" alone means not installed; any other failure is
+// an error to show, with a retry, never a sign-in.
+async function readAgy() {
+  ns.agy = { state: "waiting", models: [] };
+  try {
+    const models = await window.__TAURI__.core.invoke("agy_models");
+    ns.agy = Array.isArray(models) && models.length ? { state: "ok", models } : { state: "error", models: [], error: "Antigravity listed no models." };
+  } catch (err) {
+    const msg = String(err ?? "");
+    ns.agy = /not found/i.test(msg)
+      ? { state: "missing", models: [] }
+      : /not (logged|signed) in|log ?in required|unauthori[sz]ed/i.test(msg)
+        ? { state: "signedout", models: [] }
+        : { state: "error", models: [], error: msg || "Antigravity did not list its models." };
+  }
+}
+async function loadPrefs() {
+  try {
+    ns.prefs = await window.__TAURI__.core.invoke("new_session_prefs");
+  } catch (err) {
+    log.warnRepeat("new_session_prefs", "new_session_prefs failed, so + New session uses the first engine set up", err);
+  }
+  paintNewSession();
+}
+
+newKind.addEventListener("click", () => {
+  // Fresh room and engines for the opening menu; the open menu redraws as they land.
+  if (!inTauri) return;
+  readRows().then(paintNewSession);
+  readEngines().then(paintNewSession);
+});
+newMenu.addEventListener("toggle", (e) => {
+  const open = e.newState === "open";
+  newKind.setAttribute("aria-expanded", String(open));
+  if (open) {
+    paintMenu();
+    engList.querySelector('.eng-h:not([aria-disabled="true"]), .eng-fix')?.focus();
+  } else if (newMenu.contains(document.activeElement) || document.activeElement === document.body) {
+    newKind.focus(); // Escape or a click outside: back to the caret, never the page
+  }
+});
+
+newMenu.addEventListener("click", async (e) => {
+  const head = e.target.closest(".eng-h");
+  if (head?.getAttribute("aria-disabled") === "true") return;
+  if (head) {
+    const id = head.closest(".eng").dataset.id;
+    ns.open = ns.open === id ? null : id;
+    paintMenu();
+    return;
+  }
+  const fix = e.target.closest(".eng-fix");
+  if (fix) {
+    const id = fix.closest(".eng").dataset.id;
+    if (fix.dataset.fix === "retry") {
+      if (id === "copilot") await readEngines(true);
+      else await readAgy();
+    } else if (ns.fixShown.has(id)) ns.fixShown.delete(id);
+    else ns.fixShown.add(id);
+    paintNewSession();
+    return;
+  }
+  const start = e.target.closest(".eng-start");
+  if (start?.getAttribute("aria-disabled") === "true") return;
+  if (start) {
+    const entry = nsState().entries.find((x) => x.id === start.closest(".eng").dataset.id);
+    newMenu.hidePopover();
+    if (entry) startSession(newKind, newNote, launchArgs(entry, modelOf(entry)));
+    return;
+  }
+  const def = e.target.closest(".eng-default");
+  if (def) {
+    await saveDefault(def.closest(".eng").dataset.id);
+    return;
+  }
+  if (e.target.closest(".eng-reset")) await saveDefault(null);
+});
+newMenu.addEventListener("change", (e) => {
+  const input = e.target.closest(".model input");
+  if (!input) return;
+  ns.picked.set(input.closest(".eng").dataset.id, input.value);
+  paintMenu();
+});
+
+async function saveDefault(id) {
+  try {
+    await window.__TAURI__.core.invoke("set_new_session_default", { id });
+    ns.prefs = { ...ns.prefs, default: id };
+  } catch (err) {
+    say(newNote, String(err));
+  }
+  // The new default leaves the menu: focus goes to the caret, not the page.
+  paintNewSession();
+  if (!newMenu.contains(document.activeElement)) newKind.focus();
+}
+
+if (inTauri) {
+  const agyRead = readAgy();
+  agyRead.then(paintNewSession);
+  Promise.all([readRows(), readEngines(true), loadPrefs()])
+    .then(() => ([ns.prefs.default, ns.prefs.last].includes("agy") ? agyRead : null))
+    .finally(() => {
+      ns.ready = true;
+      paintNewSession();
+    });
+  setInterval(() => readRows().then(paintNewSession), USAGE_MS);
+}
+paintNewSession();
 startButton.hidden = !inTauri;
 // Its answer goes to the bar's note, which stays in view once the empty state gives way.
-startButton.addEventListener("click", () => startSession(startButton, newNote));
+startButton.addEventListener("click", () => startDefault(startButton));
 // A cleared id stays off the link until the snapshot that drops its card.
 let cleared = new Set();
 // The phone cards whose Full text is open, by id; a card that leaves drops out.
@@ -95,7 +411,7 @@ clearEnded.addEventListener("click", () => {
 });
 // On the phone (the page came from the phone wall server) only the look and
 // the Remote Control link act: wall.css hides every other button there.
-document.documentElement.classList.toggle("served", served);
+// scheme.js, in the head, marks the page `.served` before the first paint.
 if (served) navigator.serviceWorker?.register("/sw.js").catch(() => {});
 const linkNote = document.getElementById("link");
 // The phone's stream is down: what the wall shows may be old, so it says so.
@@ -109,9 +425,18 @@ const phoneNarrow = () => served && matchMedia("(max-width: 600px)").matches;
 // The character theme the wall wears: who each voice is and how they look.
 let worn = DEFAULT_THEME;
 let cast = loadedTheme(worn);
-let sessions = [];
+const wallBackdrop = document.getElementById("wall-backdrop");
+function updateBackdrop(theme) {
+  if (!wallBackdrop) return;
+  const bd = theme?.backdrop;
+  const motif = bd?.motif || "forge";
+  wallBackdrop.dataset.motif = motif;
+  if (bd?.glow) wallBackdrop.style.setProperty("--bg-glow", bd.glow);
+  if (bd?.secondary) wallBackdrop.style.setProperty("--bg-secondary", bd.secondary);
+}
+updateBackdrop(cast);
 let request = null; // the snapshot's wrap-up, while one is shown
-let latestSnapshot = null; // its usage readings draw the limit gauges
+let native = false; // the snapshot's flag for a native Linux app, which reaches tmux itself (launch.rs NATIVE)
 // The Ledger and the Queue share the right edge, one open at a time. Docked,
 // a panel narrows the wall, and Auto measures again (its ResizeObserver).
 const edge = createEdge();
@@ -203,6 +528,7 @@ function paint(el, c) {
   // A repaint must not cut the pulse or the arrival short.
   const playing = ["pulse", "arriving"].filter((cls) => el.classList.contains(cls)).map((cls) => ` ${cls}`).join("");
   el.className = `card ${c.dim ? "dim" : ""} tone-${c.tone}${c.ask ? " asking" : ""}${c.figure ? " has-figure" : ""}${c.actions.menu ? " has-menu" : ""}${openText.has(c.id) ? " open-text" : ""}${playing}`;
+  el.dataset.motif = c.motif || "burst";
   el.style.viewTransitionName = transitionName(c.id);
   el.setAttribute("aria-label", c.label);
   el.querySelector(".portrait").title = c.voiceTitle ?? "";
@@ -221,8 +547,15 @@ function paint(el, c) {
   setText(el.querySelector(".pill .age"), c.pill.age);
   setText(el.querySelector(".pill .when"), c.pill.when);
   const crewLine = el.querySelector(".crew-line");
-  crewLine.hidden = !c.crew;
+  crewLine.hidden = !c.crew && !c.delegate;
   setText(crewLine.querySelector(".count"), c.crew);
+  const delChip = crewLine.querySelector(".delegate");
+  if (delChip) {
+    delChip.hidden = !c.delegate;
+    delChip.textContent = c.delegate || "";
+    if (c.delegate) delChip.title = `Delegated to ${c.delegate}`;
+    else delChip.removeAttribute("title");
+  }
   crewLine.querySelector(".free").hidden = !c.promptFree;
   const ask = el.querySelector(".ask");
   ask.hidden = !c.ask;
@@ -243,6 +576,21 @@ function paint(el, c) {
     repo.setAttribute("aria-label", opens === "button" ? `Open ${c.place.repo} folder` : `Open ${c.place.repo} on GitHub`);
   } else {
     for (const a of ["role", "tabindex", "aria-label"]) repo.removeAttribute(a);
+  }
+  const engineBadge = el.querySelector(".engine-badge");
+  if (engineBadge) {
+    if (c.engineInfo) {
+      const iconSvg = MAKER_ICONS[c.engineInfo.maker] || MAKER_ICONS[c.engineInfo.engine] || "";
+      engineBadge.innerHTML = iconSvg;
+      engineBadge.hidden = !iconSvg;
+      engineBadge.title = c.engineInfo.tooltip;
+      engineBadge.setAttribute("aria-label", c.engineInfo.ariaLabel);
+    } else {
+      engineBadge.hidden = true;
+      engineBadge.innerHTML = "";
+      engineBadge.removeAttribute("title");
+      engineBadge.removeAttribute("aria-label");
+    }
   }
   const gh = el.querySelector(".gh");
   gh.hidden = !page;
@@ -369,9 +717,10 @@ function paintLedger(el, c) {
   line.hidden = !c.ledger;
   const receipt = el.querySelector(".receipt");
   receipt.hidden = !c.ledger?.full;
+  receipt.classList.toggle("warn", Boolean(c.ledger?.warn));
   setText(receipt.querySelector(".r-full"), c.ledger?.full);
   setText(receipt.querySelector(".r-short"), c.ledger?.short);
-  receipt.title = c.ledger?.full ?? "";
+  receipt.title = c.ledger?.why ? `${c.ledger.full}\n${c.ledger.why}` : (c.ledger?.full ?? "");
   const partial = el.querySelector(".partial");
   show(partial, c.ledger?.partial?.text);
   partial.title = c.ledger?.partial?.label ?? "";
@@ -387,13 +736,15 @@ function paintLedger(el, c) {
 // The header band: the character's light and figure, epithet, and the crew
 // marks on the figure's plinth. Colours ride on the card as custom properties.
 function paintBand(el, c) {
-  for (const [prop, value] of [["--accent", c.accent], ["--accent-ink", c.accentInk]]) {
+  for (const [prop, value] of [["--accent", c.accent], ["--accent-ink", c.accentInk], ["--accent-light", c.accentLight]]) {
     if (value) el.style.setProperty(prop, value);
     else el.style.removeProperty(prop);
   }
   const epithet = el.querySelector(".epithet");
   epithet.hidden = !c.epithet;
   setText(epithet.lastElementChild, c.epithet);
+  setText(el.querySelector(".herald-name"), c.name);
+  setText(el.querySelector(".herald-epithet"), c.epithet);
   const look = el.querySelector(".look");
   look.hidden = !c.full;
   look.dataset.id = c.id;
@@ -464,9 +815,12 @@ function paintRing(el, c) {
 // The usage-limit gauges: the desktop gauge's rows, drawn by its own code,
 // for a snapshot that carries readings (the phone server's).
 function paintLimits(now) {
-  const rows = usageRows(latestSnapshot, now);
-  limits.hidden = rows === null;
-  if (rows === null) return;
+  const all = usageRows(latestSnapshot, now);
+  limits.hidden = all === null;
+  if (all === null) return;
+  // A spent week hides its account's session row, as on the gauge strip (#421).
+  const hidden = hiddenRows(all);
+  const rows = all.filter((r) => !hidden.has(r));
   limitWait.hidden = rows.length > 0;
   limitWait.textContent = WAITING;
   syncEntries(limitRows, rows, { compact: true, stops: readStops(), mode: readMode() }, true);
@@ -485,6 +839,13 @@ function paintTally() {
 
 const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+// Arrivals (#373): the ids seen so far (null until the first snapshot seeds
+// them), those announced whose card is not built yet, and those built while
+// the window was hidden, played once it is shown.
+const ARRIVE_STAGGER_MS = 450;
+let seenIds = null;
+const arriving = new Set();
+const heldArrivals = new Set();
 // The slide needs the browser's view transitions and a reader who allows motion.
 const canSlide = () =>
   typeof document.startViewTransition === "function" && !reducedMotion();
@@ -500,16 +861,14 @@ function render(snapshot) {
   wasState = state;
   paintTally();
   paintLimits(now);
-  const cards = sessions.map((s) => card(s, cast, now, request));
+  const cards = sessions.map((s) => card(s, cast, now, request, native));
   const twoAccounts = accountsDiffer(cards);
   for (const c of cards) c.showAccount = twoAccounts && Boolean(c.account);
-  const prior = new Set(cardOf.keys()); // a card for one of these is not new
   cardOf = new Map(cards.map((c) => [c.id, c]));
   replayer.keep(new Set(cardOf.keys()));
   latest = { state, cards };
   cleared = new Set([...cleared].filter((id) => cardOf.has(id)));
   openText = new Set([...openText].filter((id) => cardOf.has(id)));
-  ringKey.hidden = !showsRingKey(visibleCards());
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
   const r = readiness(sessions, request);
@@ -520,16 +879,26 @@ function render(snapshot) {
     const focused = document.activeElement;
     const inside = wall.contains(focused) || empty.contains(focused);
     const visible = visibleCards();
-    // A new session's card arrives once: its figure steps in and its light rises
-    // (wall.css .arriving). Only on the comfortable band; a compact card has no
-    // stage to run it. An ended card shown again is not new.
+    // A session's first appearance is an event (#373, wall.css .arriving): its
+    // figure steps in over the frame and its banner settles into the header.
+    // Several at once arrive in turn; a hidden window keeps theirs until shown.
+    let turn = 0;
     const make = (c) => {
       const el = tpl.content.firstElementChild.cloneNode(true);
-      if (!prior.has(c.id) && shown === "comfortable" && !reducedMotion()) el.classList.add("arriving");
+      el.dataset.motif = c.motif || "burst";
+      if (arriving.has(c.id)) {
+        arriving.delete(c.id);
+        el.style.setProperty("--arrive-at", `${ARRIVE_STAGGER_MS * turn++}ms`);
+        if (document.hidden) heldArrivals.add(c.id);
+        else el.classList.add("arriving");
+      }
       return el;
     };
     paintEmpty(!showsCards());
     syncChildren(wall, visible, (c) => c.id, make, paint);
+    for (const id of arriving) if (!cardOf.has(id)) arriving.delete(id); // left before it was ever shown
+    const shown = new Set([...wall.children].map((el) => el.dataset.key));
+    for (const id of heldArrivals) if (!shown.has(id)) heldArrivals.delete(id); // its card left while the window was hidden
     for (const el of wall.children) if (started.has(el.dataset.key) && !reducedMotion()) el.classList.add("pulse");
     // Moving a card in the DOM drops focus; give it back to what had it.
     if (focused !== document.body && focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
@@ -555,8 +924,17 @@ function render(snapshot) {
 
 // The pulse and the arrival play once; a later repaint must not replay them.
 const arrived = (e) => {
-  if (e.animationName === "light-rise") e.target.closest(".card")?.classList.remove("arriving");
+  if (e.animationName !== "herald" && e.animationName !== "herald-calm") return;
+  const el = e.target.closest(".card");
+  el?.classList.remove("arriving");
+  el?.style.removeProperty("--arrive-at");
 };
+document.addEventListener("visibilitychange", () => {
+  wallBackdrop?.classList.toggle("paused", document.hidden);
+  if (document.hidden || !heldArrivals.size) return;
+  for (const el of wall.children) if (heldArrivals.has(el.dataset.key)) el.classList.add("arriving");
+  heldArrivals.clear();
+});
 wall.addEventListener("animationend", (e) => {
   e.target.classList?.remove("pulse");
   arrived(e);
@@ -695,13 +1073,20 @@ function notShown(message, err) {
   log.errorRepeat("snapshot", `a fleet snapshot (${n} sessions, theme ${message?.theme}) could not be shown`, err);
 }
 
+// A bar button hidden while its popover is open takes the popover with it (#248
+// hides CI and Fleet while all is well): nothing stays open with no way back.
+function showButton(button, panel, hidden) {
+  button.hidden = hidden;
+  if (hidden && panel.matches(":popover-open")) panel.hidePopover();
+}
+
 // CI watch: the bar's CI button and its popover (ci.js). The phone's view
 // comes with each snapshot; the app's through ci_subscribe.
 const ciButton = document.getElementById("ci-open");
 const ciPanel = document.getElementById("ci");
 function showCi(view) {
   const v = ciView(view);
-  ciButton.hidden = v.hidden;
+  showButton(ciButton, ciPanel, v.hidden);
   ciButton.textContent = v.label;
   ciButton.title = v.title;
   ciButton.dataset.tone = v.tone;
@@ -732,7 +1117,7 @@ const healthButton = document.getElementById("health-open");
 const healthPanel = document.getElementById("health");
 function showHealth(view) {
   const v = healthView(view);
-  healthButton.hidden = v.hidden;
+  showButton(healthButton, healthPanel, v.hidden);
   healthButton.textContent = v.label;
   healthButton.title = v.title;
   healthButton.dataset.tone = v.tone;
@@ -753,97 +1138,19 @@ function showHealth(view) {
 }
 if (inTauri) follow("health_subscribe", showHealth).catch(() => {});
 
-// The Agora: the bar's Agora button and its feed of posts (agora.js). The
-// phone's view comes with each snapshot and is read-only; the app's comes
-// through agora_subscribe, and AJ reacts there.
-const agoraButton = document.getElementById("agora-open");
-const agoraPanel = document.getElementById("agora");
-const agoraNote = agoraPanel.querySelector(".agora-note");
-const reactTpl = document.getElementById("agora-react-tpl");
-let agoraLatest = null;
-function showAgora(view) {
-  agoraLatest = view;
-  const v = agoraView(view, cast, Date.now());
-  agoraButton.hidden = v.hidden;
-  agoraButton.textContent = v.label;
-  agoraButton.title = v.title;
-  agoraPanel.querySelector(".agora-title").textContent = v.title;
-  // A redraw replaces the buttons: the focused reaction keeps the focus.
-  const had = document.activeElement?.closest?.(".agora-react");
-  const list = agoraPanel.querySelector(".agora-posts");
-  list.replaceChildren(...v.rows.map((r) => agoraPost(r, v.emoji)));
-  if (had) {
-    for (const b of list.querySelectorAll(".agora-react")) {
-      if (b.dataset.id === had.dataset.id && b.dataset.emoji === had.dataset.emoji) b.focus();
-    }
-  }
-}
-function agoraPost(r, emoji) {
-  const li = Object.assign(document.createElement("li"), { className: "agora-post" });
-  li.dataset.kind = r.kind;
-  const face = Object.assign(document.createElement("img"), { className: "agora-face", alt: "", width: 32, height: 32, decoding: "async" });
-  showFace(face, r.face, r.face2x, 32);
-  const head = Object.assign(document.createElement("p"), { className: "agora-head" });
-  const meta = Object.assign(document.createElement("span"), { className: "agora-meta", textContent: [r.repo, r.when].filter(Boolean).join(" \u00b7 "), title: r.whenLong });
-  head.append(
-    Object.assign(document.createElement("span"), { className: "agora-name", textContent: r.name }),
-    Object.assign(document.createElement("span"), { className: "agora-kind", textContent: r.kindLabel }),
-    meta,
-  );
-  li.append(face, head, Object.assign(document.createElement("p"), { className: "agora-text", textContent: r.text }));
-  if (r.link) {
-    // A link on the phone; on the desktop the address is its tooltip, as the CI popover's.
-    const link = document.createElement(served ? "a" : "span");
-    link.className = "agora-link";
-    link.textContent = r.linkLabel;
-    if (served) Object.assign(link, { href: r.link, target: "_blank", rel: "noopener noreferrer" });
-    else link.title = r.link;
-    li.append(link);
-  }
-  if (inTauri && emoji.length) {
-    const group = Object.assign(document.createElement("div"), { className: "agora-reacts" });
-    group.setAttribute("role", "group");
-    group.setAttribute("aria-label", `Reactions to ${r.name}'s post`);
-    for (const e of emoji) {
-      const b = reactTpl.content.firstElementChild.cloneNode(true);
-      Object.assign(b.dataset, { id: r.id, emoji: e });
-      b.setAttribute("aria-pressed", String(r.reaction === e));
-      b.setAttribute("aria-label", reactLabel(e, r.name));
-      b.firstElementChild.textContent = e;
-      group.append(b);
-    }
-    li.append(group);
-  } else if (r.reaction) {
-    const shown = Object.assign(document.createElement("span"), { className: "agora-reacted", textContent: r.reaction });
-    shown.setAttribute("role", "img");
-    shown.setAttribute("aria-label", reactedLabel(r.reaction));
-    li.append(shown);
-  }
-  return li;
-}
-agoraPanel.addEventListener("click", (e) => {
-  const b = e.target.closest(".agora-react");
-  if (!b) return;
-  window.__TAURI__.core.invoke("agora_react", { id: b.dataset.id, emoji: b.dataset.emoji }).then(
-    (now) => {
-      for (const other of b.parentElement.querySelectorAll(".agora-react")) other.setAttribute("aria-pressed", String(other.dataset.emoji === now));
-    },
-    (why) => say(agoraNote, String(why)),
-  );
-});
-// Ages move on while the feed is shut: it is drawn again each time it opens.
-agoraPanel.addEventListener("toggle", (e) => {
-  if (e.newState === "open" && agoraLatest) showAgora(agoraLatest);
-});
-if (inTauri) follow("agora_subscribe", showAgora).catch(() => {});
-
 function take(message) {
   if (served && "ci" in (message ?? {})) showCi(message.ci);
-  if (served && "agora" in (message ?? {})) showAgora(message.agora);
   if (served && "health" in (message ?? {})) showHealth(message.health);
   if (Array.isArray(message?.sessions)) {
     const fresh = castPicks(message.sessions, cast);
-    const said = announcements(before, fresh, cast, Date.now());
+    const got = arrivals(seenIds, fresh);
+    seenIds = got.seen;
+    const came = new Set(got.arrived);
+    for (const id of came) arriving.add(id);
+    const said = [
+      ...fresh.filter((s) => came.has(s.session_id)).map((s) => arrivalLine(s, cast)),
+      ...announcements(before, fresh.filter((s) => !came.has(s.session_id)), cast, Date.now()),
+    ];
     const speaking = speaker.update(message.speaking ?? null, Date.now());
     const who = speaking && fresh.find((s) => s.session_id === speaking);
     if (who) said.push(`${identity(who, cast).name} speaking`);
@@ -851,6 +1158,7 @@ function take(message) {
     before = statuses(fresh);
     sessions = served ? needsFirst(fresh) : fresh;
     request = message.wrapup ?? null;
+    native = message.native === true;
     latestSnapshot = message;
     said.push(...render(started));
     if (said.length) announce(said.join(". "));
@@ -1344,8 +1652,6 @@ function showDensity() {
   if (shown !== was) for (const el of wall.children) if (cardOf.has(el.dataset.key)) paintRing(el, cardOf.get(el.dataset.key));
   wall.dataset.density = shown;
   bar.dataset.density = shown;
-  // Cards that arrived while the wall was compact do not arrive again when it turns comfortable.
-  if (shown !== "comfortable") for (const el of wall.querySelectorAll(".arriving")) el.classList.remove("arriving");
   densityPicker.querySelector('label:has([value="auto"])').title =
     `Compact while the comfortable cards would scroll; ${shown} now`;
   syncFullText();
@@ -1365,6 +1671,7 @@ function syncFullText() {
 }
 if (served) document.fonts?.ready.then(syncFullText);
 
+const densityNote = document.getElementById("density-note");
 function choose(value) {
   choice = parseDensity(value);
   for (const input of densityPicker.querySelectorAll("input")) input.checked = input.value === choice;
@@ -1373,7 +1680,11 @@ function choose(value) {
 
 densityPicker.addEventListener("change", (e) => {
   choose(e.target.value);
-  if (inTauri) window.__TAURI__.core.invoke("set_wall_density", { density: choice }).catch(() => {});
+  if (inTauri)
+    window.__TAURI__.core.invoke("set_wall_density", { density: choice }).then(
+      () => setText(densityNote, ""),
+      (err) => setText(densityNote, `Not saved: ${err}`),
+    );
 });
 let resizeTimer = 0;
 addEventListener("resize", () => {
@@ -1390,6 +1701,21 @@ new ResizeObserver(() => {
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
+
+// The floating gauge's background opacity (#438), in the app only.
+if (inTauri) {
+  const input = document.getElementById("gauge-opacity");
+  const opacityNote = document.getElementById("opacity-note");
+  input.closest("label").hidden = false;
+  wireOpacityPick({
+    input,
+    value: input.nextElementSibling,
+    invoke: tauri,
+    subscribe: (fn) => subscribeOpacity(fn, { inTauri, follow }),
+    note: (text) => setText(opacityNote, text),
+    log,
+  });
+}
 
 // Characters (#135): the theme picker, the tray's Characters menu and the
 // phone all wear one theme. html[data-theme] names it, as a CSS colour theme
@@ -1481,6 +1807,7 @@ function put(next, theme, paint) {
   cast = theme;
   document.documentElement.dataset.theme = next;
   themePicker.value = next;
+  updateBackdrop(theme);
   const src = keeperOf(cast);
   if (src && keeper.getAttribute("src") !== src) keeper.src = src;
   if (!paint || next === was) return;
@@ -1496,7 +1823,6 @@ function repaintTheme() {
   refillPortrait();
   drawer.repaint();
   queue.retheme();
-  if (agoraLatest) showAgora(agoraLatest);
 }
 put(DEFAULT_THEME, loadedTheme(DEFAULT_THEME), false);
 // The picker wears each step once its file is in, and only then is the step

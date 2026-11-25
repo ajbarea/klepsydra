@@ -407,7 +407,7 @@ def main() -> int:
                 arcs = [round(float(r["dash"].replace(",", " ").split()[0]) + cap) if r["dash"] else None for r in g["rows"][:2]]
                 run.check(arcs == [57, 27], "each ring's arc is its percent, on a gauge drawn fresh", [r["dash"] for r in g["rows"]])
                 run.check(all(0 <= r["box"][0] and r["box"][1] <= g["width"] for r in g["rows"]), "every gauge inside the screen", [r["box"] for r in g["rows"]])
-                run.check(g["rows"][0]["stroke"] == "rgb(59, 130, 246)", "the ramp's low stop under 60%", g["rows"][0]["stroke"])
+                run.check(g["rows"][0]["stroke"] == "rgb(217, 198, 165)", "the ramp's low stop under 60%", g["rows"][0]["stroke"])
                 for scheme in ("light", "dark"):
                     check_gauges(run, page, scheme)
                     page.screenshot(path=str(shot.with_name(f"{shot.stem}-{scheme}{shot.suffix}")))
@@ -635,6 +635,13 @@ def main() -> int:
                 run.check(g["barHeight"] == bar_height, "six gauges leave the sticky bar as tall as three did", [bar_height, g["barHeight"]])
                 s = page.evaluate(LAYOUT)
                 run.check(s["hscroll"] <= 0 and s["small"] == [], "no horizontal scroll, every control 44 px, with the gauges", [s["hscroll"], s["small"]])
+
+                # A spent week hides its account's session ring until the week resets (#421).
+                write_reading(klepsydra, TEAM, "Team", {"five_hour": (12, 2 * 3600 + 600), "seven_day": (100, 2 * 86400)}, session="00000000-0000-4000-8000-000000000002")
+                wait_until(page, "[...document.querySelectorAll('.limit-rows > li')].some((li) => /Team \u00b7 week/.test(li.textContent))", 15)
+                texts = [r["text"] for r in page.evaluate(GAUGES)["rows"]]
+                team = [t for t in texts if "Team" in t]
+                run.check(len(team) == 1 and re.match(r"100% ", team[0]) and "week" in team[0], "a spent week hides its session ring", texts)
 
                 # No reading left: the gauges wait, as the strip does.
                 for f in (klepsydra / "accounts").glob("*/*.json"):

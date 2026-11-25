@@ -32,6 +32,7 @@ self.addEventListener("fetch", (e) => {
         }
         return res;
       })
-      .catch(() => caches.match(e.request).then((hit) => hit ?? Response.error())),
+      // A theme asked again at ?retry=N (theme.js) is still the copy cached without it.
+      .catch(() => caches.match(e.request, { ignoreSearch: url.searchParams.has("retry") }).then((hit) => hit ?? Response.error())),
   );
 });

@@ -82,9 +82,10 @@ test("the empty state: the theme keeper's portrait as decoration, the title, wha
 
 test("the start button runs the same launch as + New session, in the app only", () => {
   const src = read("fleet/wall.js");
-  assert.equal((src.match(/invoke\("launch_session"\)/g) ?? []).length, 1, "one launch call, shared by both buttons");
-  assert.match(src, /newButton\.addEventListener\("click", \(\) => startSession\(newButton, newNote\)\)/);
-  assert.match(src, /startButton\.addEventListener\("click", \(\) => startSession\(startButton, newNote\)\)/, "its answer shows in the bar, where it outlives the empty state");
+  assert.equal((src.match(/invoke\("launch_session"/g) ?? []).length, 1, "one launch call, shared by both buttons");
+  assert.match(src, /newButton\.addEventListener\("click", \(\) => startDefault\(newButton\)\)/);
+  assert.match(src, /startButton\.addEventListener\("click", \(\) => startDefault\(startButton\)\)/, "both start the default engine (#440)");
+  assert.match(src, /const startDefault = \(button\) => \{[\s\S]*?startSession\(button, newNote,/, "its answer shows in the bar, where it outlives the empty state");
   assert.match(src, /startButton\.hidden = !inTauri/);
   assert.match(src, /invoke\("get_launch_dir"\)/);
   assert.match(src, /const toClear = \(\) => endedIds\(sessions\)\.filter[\s\S]*press\(clearEnded, clearNote, \(\) => clearAll\(ids, tauri, \(id\) => cleared\.add\(id\)\)/, "the link clears through clear_session, ended sessions only, into its own note");
@@ -103,7 +104,10 @@ test("the empty state fades in, and not under reduced motion", () => {
 
 test("the app registers the read-only launch folder command", () => {
   const main = read("../src-tauri/src/main.rs");
-  assert.match(main, /launch::launch_session,\s*launch::get_launch_dir\s*\]/);
+  const handler = main.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] ?? "";
+  for (const cmd of ["launch::launch_session", "launch::get_launch_dir", "launch::agy_models"]) {
+    assert.match(handler, new RegExp(`(^|[\\s,])${cmd}\\s*(,|$)`), cmd);
+  }
   const launch = read("../src-tauri/src/launch.rs");
   assert.match(launch, /pub async fn get_launch_dir\(app: tauri::AppHandle\) -> Option<String>/);
 });

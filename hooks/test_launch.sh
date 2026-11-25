@@ -2,12 +2,19 @@
 # Tests for the launcher against a private tmux server and a stub wt.exe.
 # Run: make test-launch (it takes the heavy lock)
 set -uo pipefail
+# A fleet session runs with its own KERYX_VOICE; no test may inherit it.
+unset KERYX_VOICE
 
 here=$(cd "$(dirname "$0")" && pwd)
 launch="$here/klepsydra-launch.sh"
 work=$(mktemp -d)
 unset KLEPSYDRA_BACKGROUND # a fleet pane's own, never this suite's
-sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$"
+# A headless job's own config folder sets an API key helper, which the
+# launcher refuses (#260): the suite runs on none of its caller's.
+unset CLAUDE_CONFIG_DIR
+# The launcher reads the fleet's account list when set; the suite builds its own.
+unset FLEET_ACCOUNTS FLEET_DEFAULT_CONFIG FLEET_DEFAULT_JSON
+sock="kl-test-$$" sock2="kl-test2-$$" sock3="kl-test3-$$" sock4="kl-test4-$$" sock5="kl-test5-$$"
 sockdir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" # where tmux puts a -L socket
 clients=()
 cleanup() {
@@ -16,7 +23,8 @@ cleanup() {
   tmux -L "$sock2" kill-server 2>/dev/null
   tmux -L "$sock3" kill-server 2>/dev/null
   tmux -L "$sock4" kill-server 2>/dev/null
-  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3" "$sockdir/$sock4"
+  tmux -L "$sock5" kill-server 2>/dev/null
+  rm -f -- "$sockdir/$sock" "$sockdir/$sock2" "$sockdir/$sock3" "$sockdir/$sock4" "$sockdir/$sock5"
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -116,12 +124,211 @@ check "second: the new window comes forward" "$(t display -p -t =fleet: '#{windo
 t select-window -t =fleet:0
 KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "#216: a fleet launch opens behind, the window in view keeps focus" "$(windows) $(t display -p -t =fleet: '#{window_index}')" "3 0"
+
+echo "new: Antigravity (#323)"
+mkdir -p "$work/bin"
+cat >"$work/bin/agy" <<'EOF'
+#!/usr/bin/env bash
+if [[ ${1:-} == models ]]; then
+  printf 'Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nbad;id\tEvil\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\nmystery-1\tMystery One\n'
+  exit 0
+fi
+# The quota as agy -p /quota --output-format json reports it (captured 11-19);
+# AGY_3P_LEFT sets the Claude and GPT group's five-hour fraction, AGY_QUOTA=none answers nothing.
+if [[ ${1:-} == -p && ${2:-} == /quota ]]; then
+  [[ ${AGY_QUOTA:-} == none ]] && exit 1
+  printf '{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","description":"Models within this group: Gemini 3.8 Flash","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.68,"reset_time":"2026-11-25T15:15:16Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":0.74,"reset_time":"2026-11-19T11:15:16Z"}]},{"name":"Claude and GPT models","description":"Models within this group: Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B","buckets":[{"id":"3p-weekly","window":"weekly","remaining_fraction":0.49,"reset_time":"2026-11-25T15:32:48Z"},{"id":"3p-5h","window":"5h","remaining_fraction":%s,"reset_time":"2026-11-19T13:24:14Z"}]}]}}}\n' "${AGY_3P_LEFT:-1}"
+  exit 0
+fi
+exec sleep 600
+EOF
+chmod +x "$work/bin/agy"
+printf '# Helper rules\nRead only.\n' >"$work/rules.md"
+export KLEPSYDRA_AGY="$work/bin/agy" KLEPSYDRA_RULES_SRC="$work/rules.md" KLEPSYDRA_AGY_RULES="$work/gemini/config/rules/klepsydra-fleet.md"
+export KLEPSYDRA_AGY_LOCK="$here/klepsydra-agy-locked.json"
+w0=$(windows)
+check "#323: models lists agy's as one line of JSON, dropping its fetching line and any id that is not one" \
+  "$(AGY_QUOTA=none bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)"},{"id":"mystery-1","label":"Mystery One"}]'
+check "#440: each model carries its quota group as agy's /quota names its members, never by id; one no group names gets none" \
+  "$(bash "$launch" models 2>&1)" '[{"id":"gemini-3.8-flash-high","label":"Gemini 3.8 Flash (High)","group":"gemini"},{"id":"claude-opus-4-6-thinking","label":"Claude Opus 4.6 (Thinking)","group":"3p"},{"id":"mystery-1","label":"Mystery One"}]'
+check "#440: a spent group says when it comes back" \
+  "$(AGY_3P_LEFT=0 bash "$launch" models 2>&1 | jq -c '[.[] | .spent // "-"]')" '["-","2026-11-19T13:24:14Z","-"]'
+before=$(windows)
+out=$(AGY_3P_LEFT=0 bash "$launch" new "$work/repos" agy claude-opus-4-6-thinking 2>&1); rc=$?
+check "#440: a model whose group is spent starts nothing, even from a menu drawn before it ran out" "$rc $(( $(windows) - before )) $out" \
+  "1 0 Not started: Antigravity's quota for claude-opus-4-6-thinking is spent until 2026-11-19T13:24:14Z."
+out=$(AGY_3P_LEFT=0 bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#440: the other group's model still starts" "$rc $(( $(windows) - before ))" "0 1"
+out=$(AGY_3P_LEFT=0 AGY_QUOTA=none bash "$launch" new "$work/repos" agy claude-opus-4-6-thinking 2>&1); rc=$?
+check "#440: with no quota answer the launch goes ahead (agy reports a spent quota itself)" "$rc $(( $(windows) - before ))" "0 2"
+# The cases after count agy's windows from here.
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/agy" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323: an agy session starts in a window of its own, said so" "$rc $(( $(windows) - before )) $out" "0 1 Started a locked Antigravity session (gemini-3.8-flash-high) in $work/repos."
+check "#323: on the model asked for" "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "$work/bin/agy --model gemini-3.8-flash-high")" "1"
+# The lock (agy-copilot lanes): every agy session the fleet starts is read-only, no shell, sandboxed.
+sf=$(t list-panes -a -F '#{pane_start_command}' | grep -o -- "--settings [^ ]*" | head -1 | cut -d' ' -f2 | tr -d "'\"")
+check "#323 lock: the session gets --sandbox and a settings file of its own, never AJ's" \
+  "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "--sandbox") $([[ $sf == "$KLEPSYDRA_AGY_LOCK" ]] && echo policy)" "1 policy"
+check "#323 lock: that file denies writes, the shell, MCP, URL reads and the browser, and asks before anything else (headless, that is a denial)" \
+  "$(jq -r '[.toolPermission, .allowNonWorkspaceAccess, .enableTerminalSandbox, (.permissions.deny | sort | join(","))] | join(" ")' "$sf")" \
+  "request-review false true command(*),execute_url(*),mcp(*),read_url(*),write_file(*)"
+check "#323 lock: it names no trusted workspace, so agy asks before trusting a folder (a repo's hooks load only under trust)" "$(jq -c '.trustedWorkspaces // "none"' "$sf")" '"none"'
+check "#323: the helper rules reach agy as an always-on rule made from the one source" \
+  "$(sed -n 2p "$KLEPSYDRA_AGY_RULES") $(grep -c '^Read only.$' "$KLEPSYDRA_AGY_RULES")" "trigger: always_on 1"
+check "#323: the shipped rules fit agy's 24000-byte limit and name no person, course or account" \
+  "$([[ $(stat -c %s "$here/klepsydra-engine-rules.md") -le 24000 ]] && echo fits) $(grep -cwE 'AJ|ajbar|RIT|CISC|Ben|makesense|Anthropic|Claude' "$here/klepsydra-engine-rules.md")" "fits 0"
+touch -d '2026-01-01' "$KLEPSYDRA_AGY_RULES"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: unchanged rules are not written again" "$(date -r "$KLEPSYDRA_AGY_RULES" +%F)" "2026-01-01"
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" agy 'x;touch /tmp/pwned' 2>&1); rc=$?
+check "#323: a model that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not an agy model id: x;touch /tmp/pwned"
+out=$(KLEPSYDRA_RULES_SRC="$work/no-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323: with the helper rules unreadable, no agy session starts" "$rc $(( $(windows) - before ))" "1 0"
+lb=$(windows)
+out=$(KLEPSYDRA_AGY_LOCK="$work/no-lock.json" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: with the lock policy unreadable, no agy session starts (never an unlocked one)" "$rc $(( $(windows) - lb ))" "1 0"
+lb=$(windows)
+for f in hooks plugins skills; do
+  mkdir -p "$work/ships-$f/.agents"; echo '{}' >"$work/ships-$f/.agents/$f.json"
+  out=$(bash "$launch" new "$work/ships-$f" agy gemini-3.8-flash-high 2>&1); rc=$?
+  check "#323 lock: a folder that ships .agents/$f.json is no locked agy workspace (its trust dialog is the only gate)" "$rc $(( $(windows) - lb )) $(grep -c "ships agy workspace configuration" <<<"$out")" "1 0 1"
+done
+git init -q "$work/anc" && mkdir -p "$work/anc/.agents" "$work/anc/sub" && echo '{}' >"$work/anc/.agents/hooks.json"
+out=$(bash "$launch" new "$work/anc/sub" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: a folder whose repo root ships .agents is refused (agy walks up to it)" "$rc $(( $(windows) - lb ))" "1 0"
+for nm in _agents _agent .agent; do
+  mkdir -p "$work/nm$nm/$nm"
+  out=$(bash "$launch" new "$work/nm$nm" agy gemini-3.8-flash-high 2>&1); rc=$?
+  check "#323 lock: $nm is refused too (agy loads workspace configuration from all four folder names)" "$rc $(( $(windows) - lb ))" "1 0"
+done
+mkdir -p "$work/winmnt/c/proj"
+out=$(KLEPSYDRA_WINDOWS_MOUNT="$work/winmnt" bash "$launch" new "$work/winmnt/c/proj" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: a folder on the Windows side is no agy workspace (its user folders hold credentials)" "$rc $(( $(windows) - lb )) $(grep -c 'Windows side' <<<"$out")" "1 0 1"
+out=$(bash "$launch" new / agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: / is no agy workspace" "$rc $(( $(windows) - lb ))" "1 0"
+out=$(bash "$launch" new "${HOME%/*}" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: neither is a folder that holds the home folder (the parent of it)" "$rc $(( $(windows) - lb ))" "1 0"
+out=$(bash "$launch" new "$HOME" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323 lock: the whole home folder is never an agy workspace (its reads would reach every secret in it)" "$rc $(( $(windows) - before ))" "1 0"
+mkdir -p "$work/gemini/config/rules"
+printf -- '---\ntrigger: always_on\ndescription: "AJ'"'"'s global rules, made from /x/CLAUDE.md by klepsydra; edit that file, not this one."\n---\nold\n' >"$work/gemini/config/rules/claude-global.md"
+printf -- 'my own rule\n' >"$work/gemini/config/rules/mine.md"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: the earlier launcher's whole-CLAUDE.md rule is removed; a rule that is not klepsydra's stays" "$([[ -e $work/gemini/config/rules/claude-global.md ]] && echo old-kept || echo gone) $(cat "$work/gemini/config/rules/mine.md")" "gone my own rule"
+printf -- 'someone else\n' >"$work/gemini/config/rules/claude-global.md"
+bash "$launch" new "$work/repos" agy gemini-3.8-flash-high >/dev/null 2>&1
+check "#323: and a claude-global.md that is not klepsydra's is left alone" "$(cat "$work/gemini/config/rules/claude-global.md")" "someone else"
+before=$(windows) # the two launches above opened windows
+head -c 24100 /dev/zero | tr '\0' x >"$work/big-rules.md"
+out=$(KLEPSYDRA_RULES_SRC="$work/big-rules.md" bash "$launch" new "$work/repos" agy gemini-3.8-flash-high 2>&1); rc=$?
+check "#323: rules over agy's 24000-byte limit start nothing" "$rc $(( $(windows) - before ))" "1 0"
+check "#323: a launch of anything else is refused" "$(bash "$launch" new "$work/repos" codex x >/dev/null 2>&1; echo $?) $(( $(windows) - before ))" "1 0"
+# The cases after count the fleet's windows: the agy ones this section opened go.
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/agy" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+check "#323: and its windows are closed again" "$(windows)" "$w0"
+
+echo "new: Copilot (#440)"
+printf '#!/usr/bin/env bash\nexec sleep 600\n' >"$work/bin/copilot"; chmod +x "$work/bin/copilot"
+export KLEPSYDRA_COPILOT="$work/bin/copilot"
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" copilot 2>&1); rc=$?
+check "#440: a Copilot session starts in a window of its own, on auto when no model is named" "$rc $(( $(windows) - before )) $out" "0 1 Started a locked Copilot session (auto) in $work/repos."
+check "#440: locked as fleet delegate runs it: reads only, no writes, no shell, no built-in MCP" \
+  "$(t list-panes -a -F '#{pane_start_command}' | grep -c -- "$work/bin/copilot --model auto --allow-all-tools --available-tools view,grep,glob --deny-tool=write --deny-tool=shell --disable-builtin-mcps --disallow-temp-dir")" "1"
+out=$(bash "$launch" new "$work/repos" copilot gpt-5.6-sol 2>&1); rc=$?
+check "#440: on the model asked for" "$rc $(t list-panes -a -F '#{pane_start_command}' | grep -c -- "copilot --model gpt-5.6-sol ")" "0 1"
+before=$(windows)
+out=$(bash "$launch" new "$work/repos" copilot 'x;id' 2>&1); rc=$?
+check "#440: a Copilot model that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not a Copilot model id: x;id"
+for f in .github/hooks .github/mcp.json .mcp.json .vscode/mcp.json .copilot .claude/skills .agents/skills; do
+  d="$work/cp-${f//\//_}"; mkdir -p "$d/$f"
+  out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
+  check "#440 lock: a folder that ships $f is no locked Copilot workspace (folder trust loads it)" "$rc $(( $(windows) - before )) $(grep -c 'ships Copilot workspace configuration' <<<"$out")" "1 0 1"
+done
+mkdir -p "$work/cphk/.claude"
+printf '{"permissions": {}}\n' >"$work/cphk/.claude/settings.json"
+out=$(bash "$launch" new "$work/cphk" copilot 2>&1); rc=$?
+check "#440 lock: Claude Code project settings without hooks are no bar to Copilot" "$rc $(( $(windows) - before ))" "0 1"
+before=$(windows)
+for f in settings.json settings.local.json; do
+  d="$work/cphk-$f"; mkdir -p "$d/.claude"; printf '{"hooks": {"Stop": []}}\n' >"$d/.claude/$f"
+  out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
+  check "#440 lock: .claude/$f with hooks is refused (Copilot runs them)" "$rc $(( $(windows) - before )) $(grep -c 'sets hooks' <<<"$out")" "1 0 1"
+done
+d="$work/cphk-bad"; mkdir -p "$d/.claude"; printf 'not json' >"$d/.claude/settings.json"
+out=$(bash "$launch" new "$d" copilot 2>&1); rc=$?
+check "#440 lock: a settings file that does not read is refused (fail closed)" "$rc $(( $(windows) - before ))" "1 0"
+git init -q "$work/cpanc" && mkdir -p "$work/cpanc/.github/hooks" "$work/cpanc/sub"
+out=$(bash "$launch" new "$work/cpanc/sub" copilot 2>&1); rc=$?
+check "#440 lock: a folder whose repo root ships Copilot hooks is refused" "$rc $(( $(windows) - before ))" "1 0"
+out=$(bash "$launch" new "$HOME" copilot 2>&1); rc=$?
+check "#440 lock: the home folder is never a Copilot workspace" "$rc $(( $(windows) - before )) $(grep -c 'whole home folder' <<<"$out")" "1 0 1"
+mkdir -p "$work/winmnt/c/proj"
+out=$(KLEPSYDRA_WINDOWS_MOUNT="$work/winmnt" bash "$launch" new "$work/winmnt/c/proj" copilot 2>&1); rc=$?
+check "#440 lock: nor the Windows side" "$rc $(( $(windows) - before ))" "1 0"
+out=$(KLEPSYDRA_COPILOT=no-such-copilot bash "$launch" new "$work/repos" copilot 2>&1); rc=$?
+check "#440: no copilot: says so, starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 copilot (GitHub Copilot CLI) was not found on PATH."
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/copilot" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+check "#440: Copilot's windows are closed again" "$(windows)" "$w0"
+
+echo "new: Claude on a chosen account (#440)"
+# Two logins whose folder names say the opposite of what they hold, as on AJ's PC
+# (~/.claude is one account, ~/.claude-rit the other), and a folder with no login.
+mkdir -p "$HOME/.claude" "$HOME/.claude-rit" "$HOME/.claude-nologin"
+printf '{"oauthAccount":{"accountUuid":"aaaa1111-0000-0000-0000-000000000001"}}\n' >"$HOME/.claude.json"
+printf '{"oauthAccount":{"accountUuid":"bbbb2222-0000-0000-0000-000000000002"}}\n' >"$HOME/.claude-rit/.claude.json"
+printf '{"oauthAccount":{"accountUuid":"cccc3333-0000-0000-0000-000000000003"}}\n' >"$HOME/.claude-nologin/.claude.json"
+: >"$HOME/.claude/.credentials.json"; : >"$HOME/.claude-rit/.credentials.json"
+printf '#!/usr/bin/env bash\nexec sleep 600\n' >"$work/bin/claude"; chmod +x "$work/bin/claude"
+check "#440: engines names each account with a login here, and the engines on PATH" \
+  "$(KLEPSYDRA_AGY=no-agy bash "$launch" engines 2>&1)" '{"claude":["aaaa1111-0000-0000-0000-000000000001","bbbb2222-0000-0000-0000-000000000002"],"agy":false,"copilot":true}'
+check "#440: FLEET_ACCOUNTS, when set, is the list" \
+  "$(FLEET_ACCOUNTS="$HOME/.claude-rit" bash "$launch" engines 2>&1 | jq -c .claude)" '["bbbb2222-0000-0000-0000-000000000002"]'
+before=$(windows)
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude bbbb2222-0000-0000-0000-000000000002 opus 2>&1); rc=$?
+check "#440: claude starts on the folder logged in to the account, found by its login, on the model asked for" \
+  "$rc $(( $(windows) - before )) $(t list-panes -a -F '#{pane_start_command}' | grep -c -- "env CLAUDE_CONFIG_DIR=$HOME/.claude-rit $work/bin/claude --model opus")" "0 1 1"
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude aaaa1111-0000-0000-0000-000000000001 2>&1); rc=$?
+check "#440: the default folder's account starts with CLAUDE_CONFIG_DIR unset, no --model when none is named" \
+  "$rc $(t list-panes -a -F '#{pane_start_command}' | grep -c -- "env -u CLAUDE_CONFIG_DIR $work/bin/claude\"\$")" "0 1"
+check "#440: both still run on the subscription only (#260)" \
+  "$(t list-panes -a -F '#{pane_start_command}' | grep -- "$work/bin/claude" | grep -c 'env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_PROFILE env ')" "2"
+before=$(windows)
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude cccc3333-0000-0000-0000-000000000003 2>&1); rc=$?
+check "#440: an account whose folder holds no login starts nothing" "$rc $(( $(windows) - before )) $(grep -c 'No Claude Code folder here is logged in' <<<"$out")" "1 0 1"
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude '../x;id' 2>&1); rc=$?
+check "#440: an account that is no id starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not a Claude account id: ../x;id"
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude bbbb2222-0000-0000-0000-000000000002 'opus;id' 2>&1); rc=$?
+check "#440: a model that is no alias or name starts nothing" "$rc $(( $(windows) - before )) $out" "1 0 That is not a Claude model: opus;id"
+printf '{"apiKeyHelper": "x"}\n' >"$HOME/.claude-rit/settings.json"
+out=$(KLEPSYDRA_CLAUDE="$work/bin/claude" bash "$launch" new "$work/repos" claude bbbb2222-0000-0000-0000-000000000002 2>&1); rc=$?
+check "#440: the key check reads the chosen account's folder, not the server's" "$rc $(( $(windows) - before )) $(grep -c 'sets an API key or key helper' <<<"$out")" "1 0 1"
+rm -f -- "$HOME/.claude-rit/settings.json"
+t list-panes -a -F '#{window_id} #{pane_start_command}' | awk -v a="$work/bin/claude" 'index($0, a) { print $1 }' | xargs -r -n1 tmux -L "$sock" kill-window -t
+rm -rf -- "${HOME:?}/.claude" "${HOME:?}/.claude-rit" "${HOME:?}/.claude-nologin" "${HOME:?}/.claude.json"
+check "#440: its windows are closed again" "$(windows)" "$w0"
+unset KLEPSYDRA_COPILOT
+unset KLEPSYDRA_AGY KLEPSYDRA_RULES_SRC KLEPSYDRA_AGY_RULES KLEPSYDRA_AGY_LOCK
 # A fleet launch that starts the server (a cold recover) must not hand the flag
 # to the server's environment, or every later pane, the wall's included, opens behind.
 # Its own stub log: the tab it opens is not one of the fleet socket's tabs counted below.
 WT_LOG="$work/wt4.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "#229 review: a flagged launch that starts the server keeps the flag out of its environment" \
   "$(tmux -L "$sock4" has-session -t =fleet 2>/dev/null && echo up) $(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_BACKGROUND=')" "up 0"
+tmux -L "$sock4" kill-server 2>/dev/null
+# Nor the command a fleet launch passes (#440 live check): the 11-16 server kept Heph's,
+# session id and all, and a launch from one of its panes ran that instead of claude.
+WT_LOG="$work/wt6.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KLEPSYDRA_BACKGROUND=1 KLEPSYDRA_CLAUDE="sleep 601" bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#440: a fleet launch that starts the server keeps its command out of the server's environment" \
+  "$(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KLEPSYDRA_CLAUDE=') $(tmux -L "$sock4" list-panes -a -F '#{pane_start_command}' 2>/dev/null | grep -c 'sleep 601')" "0 1"
+tmux -L "$sock4" kill-server 2>/dev/null
+# Nor a session's voice (#395 review): it goes into the session's command alone.
+WT_LOG="$work/wt5.log" KLEPSYDRA_TMUX_SOCKET="$sock4" KERYX_VOICE=bf_emma bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "#395 review: a launch with a voice that starts the server keeps it out of the server's environment" \
+  "$(tmux -L "$sock4" show-environment -g 2>/dev/null | grep -c '^KERYX_VOICE=') $(tmux -L "$sock4" list-panes -a -F '#{pane_start_command}' 2>/dev/null | grep -c 'KERYX_VOICE=bf_emma')" "0 1"
 tmux -L "$sock4" kill-server 2>/dev/null
 t kill-window -t "=fleet:$(t list-windows -t =fleet -F '#{window_index}' | tail -1)"
 detach_all
@@ -389,6 +596,14 @@ for verb in end interrupt wrapup; do
 done
 check "pane locked: no key sent" "$(wc -c <"$work/fake.log")" "0"
 exec {held}>&-
+# A fleet script typing into the pane (#325) holds its typing lock: End waits, then gives up untyped.
+mkdir -p "$HOME/.local/state/fleet-orchestrator/locks"
+exec {held}>>"$HOME/.local/state/fleet-orchestrator/locks/send-${p#%}"; flock -n "$held"
+out=$(KLEPSYDRA_TYPING_WAIT=1 send end "$p" 2>&1); rc=$?
+check "fleet typing: end exits 1 and says why" "$rc $out" "1 A fleet script is typing into that session; try again in a moment."
+check "fleet typing: no key sent" "$(wc -c <"$work/fake.log")" "0"
+exec {held}>&-
+rm -rf -- "${HOME:?}/.local/state/fleet-orchestrator"
 out=$(send interrupt "$p" 2>&1)
 check "pane unlocked: interrupt runs" "$out" "Sent Esc to the session."
 t kill-pane -t "$p"
@@ -485,7 +700,7 @@ t kill-pane -t "$p"
 
 out=$(bash "$launch" bogus 2>&1); rc=$?
 check "unknown command: exit 1" "$rc" "1"
-check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
+check "unknown command: says so" "$out" "usage: klepsydra-launch.sh new DIR [agy MODEL | claude ACCOUNT [MODEL] | copilot [MODEL]] | models | engines | voices | jump|end|interrupt|wrapup SOCKET PANE PID START"
 check "unknown command: no tab" "$(tabs)" "1"
 
 # #273: the tray's Voices change runs the installed fleet voices at once, with
@@ -622,6 +837,230 @@ check "a socket path wt.exe would split: says so" "$out" \
 check "a socket path wt.exe would split: nothing running, no tab" \
   "$(TMUX_TMPDIR="$odd" tmux -L "$sock" list-sessions 2>/dev/null | wc -l)|$(tabs)" "0|0"
 
+echo "native Linux (Debian): no WSL, stub terminals and xdotool"
+# The suite runs on WSL, so the launcher is told it is not there: no
+# WSL_DISTRO_NAME and a fake /proc whose kernel release has no "microsoft".
+# PATH holds only the tools the launcher needs, so no terminal on the host can
+# be found by accident.
+lbin="$work/lx-bin" lbase="$work/lx-base" lproc="$work/lx-proc"
+mkdir -p "$lbin" "$lbase" "$lproc/sys/kernel"
+for c in awk tail sort find xargs uniq tee printenv realpath tmux flock seq sleep head cat rm mktemp stat cmp mkdir date env bash sh grep sed tr wc cut dirname basename readlink ln id uname touch chmod mv cp script jq timeout; do
+  p=$(command -v "$c") && ln -sf "$p" "$lbase/$c"
+done
+printf '6.12.0-amd64\n' >"$lproc/sys/kernel/osrelease"
+mkproc() { # a fake /proc that reads every live process as the real one does
+  local d; for d in /proc/[0-9]*; do ln -sfn "$d" "$lproc/${d##*/}"; done
+}
+cat >"$lbin/.term" <<'EOF'
+#!/usr/bin/env bash
+# A stub terminal emulator: logs its name and arguments, then by TERM_MODE
+#   attach (default): stays up as the tab, running the tmux command (from the
+#     first "tmux" argument) on a pty
+#   fail: exits 1 at once
+#   handoff: exits 0 at once; a detached child carries the tab, as a terminal server does
+printf '%s %s\n' "${0##*/}" "$*" >>"$TERM_LOG"
+[[ ${TERM_MODE:-attach} == fail ]] && exit 1
+args=("$@")
+for i in "${!args[@]}"; do [[ ${args[i]} == tmux ]] && { cmd=("${args[@]:i}"); break; }; done
+tab() { TERM=xterm-256color exec script -qfc "$(printf '%q ' "${cmd[@]}")" /dev/null; }
+if [[ ${TERM_MODE:-attach} == handoff ]]; then
+  ( tab ) >/dev/null 2>&1 </dev/null &
+  echo $! >>"$WT_PIDS"
+  exit 0
+fi
+echo $$ >>"$WT_PIDS"
+tab
+EOF
+chmod +x "$lbin/.term"
+mkterm() { for n in "$@"; do cp "$lbin/.term" "$lbin/$n"; done; }
+rmterm() { for n in "$@"; do rm -f -- "${lbin:?}/$n"; done; }
+cat >"$lbin/.xdg" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$XDG_LOG"
+exit "${XDG_RC:-0}"
+EOF
+cat >"$lbin/.xdotool" <<'EOF'
+#!/usr/bin/env bash
+# search [--onlyvisible] --pid PID answers for XDO_PID alone: all windows are
+# the unmanaged leader 4241 and the terminal's own 4242; visible only, 4242,
+# unless XDO_HIDDEN (a minimized window is unmapped). windowactivate is logged.
+printf '%s\n' "$*" >>"$XDO_LOG"
+if [[ $1 == search && $2 == --onlyvisible ]]; then
+  [[ $4 == "$XDO_PID" && -z ${XDO_HIDDEN:-} ]] && echo 4242
+elif [[ $1 == search ]]; then
+  [[ $3 == "$XDO_PID" ]] && printf '4241\n4242\n'
+fi
+exit 0
+EOF
+cat >"$lbin/.xprop" <<'EOF'
+#!/usr/bin/env bash
+# xprop -id WID WM_STATE: 4242 is in state XPROP_STATE (Normal by default,
+# none for a window manager that sets no WM_STATE); any other window has none.
+if [[ $2 == 4242 && ${XPROP_STATE:-Normal} != none ]]; then
+  printf 'WM_STATE(WM_STATE):\n\t\twindow state: %s\n\t\ticon window: 0x0\n' "${XPROP_STATE:-Normal}"
+else
+  printf 'WM_STATE:  not found.\n'
+fi
+EOF
+chmod +x "$lbin/.xdg" "$lbin/.xdotool" "$lbin/.xprop"
+export TERM_LOG="$work/term.log" XDG_LOG="$work/xdg.log" XDO_LOG="$work/xdo.log"
+lx() { env -u WSL_DISTRO_NAME KLEPSYDRA_PROC="$lproc" PATH="$lbin:$lbase" "$@"; }
+pending="$work/klepsydra-tab-pending-$UID"
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+
+out=$(lx bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: no terminal found: exit 1" "$rc" "1"
+check "linux: no terminal found: says so" "$out" "No terminal emulator found (e.g. xfce4-terminal, gnome-terminal, x-terminal-emulator, xterm)."
+check "linux: no terminal found: nothing was created" "$(t list-sessions 2>/dev/null | wc -l)" "0"
+out=$(lx env KLEPSYDRA_TERMINAL=no-such-term bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: KLEPSYDRA_TERMINAL that is missing fails, never another terminal" "$rc $(t list-sessions 2>/dev/null | wc -l)" "1 0"
+check "linux: KLEPSYDRA_TERMINAL that is missing is named" "$out" "KLEPSYDRA_TERMINAL is no-such-term, which is not a command that can be run."
+
+# The order: xfce4-terminal, gnome-terminal, konsole, kitty, alacritty, x-terminal-emulator, xterm.
+order=(xfce4-terminal gnome-terminal konsole kitty alacritty x-terminal-emulator xterm)
+for n in "${order[@]}"; do mkterm "$n"; done
+got=()
+for n in "${order[@]}"; do
+  stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+  lx bash "$launch" new "$work/repos" >/dev/null 2>&1
+  got+=("$(head -1 "$TERM_LOG" | cut -d' ' -f1)")
+  rmterm "$n"
+done
+check "linux: the first emulator on PATH in the documented order is the one started" "${got[*]}" "${order[*]}"
+mkterm xterm gnome-terminal
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+lx env KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "linux: KLEPSYDRA_TERMINAL picks its own" "$(head -1 "$TERM_LOG" | cut -d' ' -f1)" "xterm"
+
+# What each emulator is asked to run: a titled tab attached by the socket's path.
+sp=$(t display -p '#{socket_path}')
+want_tail="tmux -S $sp attach -t =fleet"
+check "linux: xterm gets title, -e and the attach" "$(head -1 "$TERM_LOG")" "xterm -T klepsydra sessions -e $want_tail"
+check "linux: an attached tab: windows 1, pending stamp gone" "$(windows) $([[ -e $pending ]] && echo left)" "1 "
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+lx bash "$launch" new "$work/repos" >/dev/null 2>&1
+check "linux: gnome-terminal gets a titled tab" "$(head -1 "$TERM_LOG")" "gnome-terminal --tab --title=klepsydra sessions -- $want_tail"
+mkterm xfce4-terminal konsole kitty alacritty
+for n in xfce4-terminal:"--disable-server -T klepsydra sessions -x" konsole:"--new-tab -p tabtitle=klepsydra sessions -e" kitty:"-T klepsydra sessions" alacritty:"-T klepsydra sessions -e"; do
+  stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+  lx env KLEPSYDRA_TERMINAL="${n%%:*}" bash "$launch" new "$work/repos" >/dev/null 2>&1
+  check "linux: ${n%%:*} command line" "$(head -1 "$TERM_LOG")" "${n%%:*} ${n#*:} $want_tail"
+done
+
+# A launch that fails: the terminal exits non-zero, nothing is left behind.
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+out=$(lx env TERM_MODE=fail KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: a terminal that fails: exit 1" "$rc" "1"
+check "linux: a terminal that fails: says so" "$out" "xterm did not open a tab."
+check "linux: a terminal that fails: the session made for it is undone" "$(t list-sessions 2>/dev/null | wc -l)" "0"
+check "linux: a terminal that fails: no pending stamp" "$([[ -e $pending ]] && echo left)" ""
+# With a session already there, a failed launch leaves it and its windows.
+lx bash "$launch" new "$work/repos" >/dev/null 2>&1; detach_all; rm -f "$pending"
+out=$(lx env TERM_MODE=fail KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: a failed terminal over a live session: exit 1, windows unchanged" "$rc $(windows)" "1 1"
+# gnome-terminal's server model: the command returns 0 and the tab arrives from elsewhere.
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+out=$(lx env TERM_MODE=handoff KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "linux: a terminal that hands off and exits 0 is not a failure, its tab attaches" "$rc $(windows) $([[ -n $(t list-clients -t =fleet 2>/dev/null) ]] && echo attached)" "0 1 attached"
+
+# Jump: raise the terminal window that owns the tmux client, found by walking
+# up from the client's pid; the fleet's own tab and a hand-started tmux alike.
+echo "native Linux: jump raises the session's own window"
+cp "$lbin/.xdotool" "$lbin/xdotool"
+mkproc
+detach_all
+attach
+cpid=$(t list-clients -t =fleet -F '#{client_pid}' | head -1)
+cparent=$(stat_fields "$cpid" 1)
+lpane=$(t list-panes -s -t =fleet -F '#{pane_id}' | head -1); lpid=$(pane_pid "$lpane"); lstart=$(pstart "$lpid")
+mkproc; : >"$XDO_LOG"
+out=$(lx env XDO_PID="$cparent" bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: exit 0, says so" "$rc $out" "0 Selected the session's tmux window."
+check "linux jump: asks about the client, then its parent, and activates the parent's window" \
+  "$(tr '\n' '|' <"$XDO_LOG")" "search --onlyvisible --pid $cpid|search --onlyvisible --pid $cparent|windowactivate 4242|"
+: >"$XDO_LOG"
+out=$(lx env XDO_PID=1999999 bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: no window found: still selects the window, activates nothing" "$rc $(grep -c windowactivate "$XDO_LOG")" "0 0"
+# With xprop: the managed window (WM_STATE), minimized too, never the leader.
+cp "$lbin/.xprop" "$lbin/xprop"
+for state in Normal Iconic; do
+  : >"$XDO_LOG"
+  hidden=""; [[ $state == Iconic ]] && hidden=1
+  out=$(lx env XDO_PID="$cparent" XDO_HIDDEN="$hidden" XPROP_STATE="$state" bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+  check "linux jump: a $state terminal is raised by its managed window, not the leader" \
+    "$rc $(grep windowactivate "$XDO_LOG" | tr '\n' '|')" "0 windowactivate 4242|"
+done
+: >"$XDO_LOG"
+# A withdrawn window is unmapped, so the visible-only search misses it too.
+out=$(lx env XDO_PID="$cparent" XDO_HIDDEN=1 XPROP_STATE=Withdrawn bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: a withdrawn window is not raised" "$rc $(grep -c windowactivate "$XDO_LOG")" "0 0"
+# A window manager that sets no WM_STATE: the visible window, as without xprop.
+: >"$XDO_LOG"
+out=$(lx env XDO_PID="$cparent" XPROP_STATE=none bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: no window reports WM_STATE: the visible window is raised, never the leader" \
+  "$rc $(grep windowactivate "$XDO_LOG" | tr '\n' '|')" "0 windowactivate 4242|"
+rm -f "$lbin/xprop"
+rm -f "$lbin/xdotool"
+out=$(lx bash "$launch" jump "$sp" "$lpane" "$lpid" "$lstart" 2>&1); rc=$?
+check "linux jump: no xdotool: still exit 0" "$rc $out" "0 Selected the session's tmux window."
+# A hand-started tmux (another socket): its own client's window, never the fleet's title.
+hand="kl-test2-$$"
+tmux -L "$hand" new-session -d -s hand "sleep 600"
+hsock=$(tmux -L "$hand" display -p '#{socket_path}')
+TERM=xterm-256color script -qfc "tmux -L $hand attach -t =hand" /dev/null >/dev/null 2>&1 </dev/null &
+clients+=($!)
+for _ in $(seq 50); do [[ -n $(tmux -L "$hand" list-clients -t =hand 2>/dev/null) ]] && break; sleep 0.1; done
+hcpid=$(tmux -L "$hand" list-clients -t =hand -F '#{client_pid}' | head -1)
+hpane=$(tmux -L "$hand" display -p '#{pane_id}'); hpid=$(tmux -L "$hand" display -p '#{pane_pid}'); hstart=$(pstart "$hpid")
+cp "$lbin/.xdotool" "$lbin/xdotool"; mkproc; : >"$XDO_LOG"
+out=$(lx env XDO_PID="$hcpid" bash "$launch" jump "$hsock" "$hpane" "$hpid" "$hstart" 2>&1); rc=$?
+check "linux jump: a hand-started tmux raises its own client's window, not the fleet's title" \
+  "$rc $(tr '\n' '|' <"$XDO_LOG")" "0 search --onlyvisible --pid $hcpid|windowactivate 4242|"
+check "linux jump: the fleet's title is never searched" "$(grep -c -- '--name' "$XDO_LOG")" "0"
+tmux -L "$hand" kill-server 2>/dev/null
+rm -f -- "$sockdir/${hand:?}" "$lbin/xdotool"
+
+# The folder and github verbs: xdg-open, which must exist and must not fail at once.
+echo "native Linux: folder and github verbs"
+cp "$lbin/.xdg" "$lbin/xdg-open"; : >"$XDG_LOG"
+out=$(lx bash "$launch" folder "$work/repos" 2>&1); rc=$?
+check "linux folder: opens the folder with xdg-open" "$rc [$out] $(cat "$XDG_LOG")" "0 [] $work/repos"
+: >"$XDG_LOG"
+# shellcheck disable=SC2088 # the literal ~/ the overlay sends
+out=$(lx bash "$launch" folder '~/' 2>&1); rc=$?
+check "linux folder: ~/ is the home folder" "$rc $(cat "$XDG_LOG")" "0 $HOME/"
+out=$(lx bash "$launch" folder "$work/gone" 2>&1); rc=$?
+check "linux folder: a folder that is gone is said" "$rc $out" "1 The folder $work/gone does not exist."
+: >"$XDG_LOG"
+out=$(lx bash "$launch" github "https://github.com/ajbarea/klepsydra/pull/458" 2>&1); rc=$?
+check "linux github: opens the page with xdg-open" "$rc [$out] $(cat "$XDG_LOG")" "0 [] https://github.com/ajbarea/klepsydra/pull/458"
+out=$(lx bash "$launch" github "https://evil.example/x" 2>&1); rc=$?
+check "linux github: only github.com" "$rc $out" "1 That is not a GitHub URL."
+out=$(lx env XDG_RC=3 bash "$launch" folder "$work/repos" 2>&1); rc=$?
+check "linux folder: xdg-open that fails is a failure, not a success" "$rc $out" "1 xdg-open could not open it."
+out=$(lx env XDG_RC=3 bash "$launch" github "https://github.com/a/b" 2>&1); rc=$?
+check "linux github: xdg-open that fails is a failure" "$rc $out" "1 xdg-open could not open it."
+rm -f "$lbin/xdg-open"
+out=$(lx bash "$launch" folder "$work/repos" 2>&1); rc=$?
+check "linux folder: no xdg-open is said, not reported as success" "$rc $out" "1 xdg-open was not found, so nothing could be opened."
+out=$(lx bash "$launch" github "https://github.com/a/b" 2>&1); rc=$?
+check "linux github: no xdg-open is said" "$rc $out" "1 xdg-open was not found, so nothing could be opened."
+# On WSL (WSL_DISTRO_NAME, or "microsoft" in the kernel release) the same verbs go to explorer.exe, unchanged.
+# shellcheck disable=SC2016 # the stub's own $* and $XDG_LOG
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$XDG_LOG"\nexit 1\n' >"$lbin/explorer.exe"; chmod +x "$lbin/explorer.exe"
+: >"$XDG_LOG"
+out=$(WSL_DISTRO_NAME=Test KLEPSYDRA_PROC="$lproc" PATH="$lbin:$lbase" bash "$launch" folder "$work/repos" 2>&1); rc=$?
+check "wsl folder: explorer.exe, its exit 1 is success" "$rc [$out] $(cat "$XDG_LOG")" "0 [] $work/repos"
+printf '5.15.153.1-microsoft-standard-WSL2\n' >"$lproc/sys/kernel/osrelease"
+: >"$XDG_LOG"
+out=$(lx bash "$launch" github "https://github.com/a/b" 2>&1); rc=$?
+check "wsl by kernel release alone (no WSL_DISTRO_NAME): explorer.exe" "$rc [$out] $(cat "$XDG_LOG")" "0 [] https://github.com/a/b"
+stop_server; detach_all; rm -f "$pending" # no live tab: a new session needs one
+out=$(lx bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "wsl by kernel release alone: takes the Windows Terminal path, which needs WSL_DISTRO_NAME" "$rc $out" "1 WSL_DISTRO_NAME is missing or not usable, so no tab could be opened."
+rm -f "$lbin/explorer.exe"
+stop_server; detach_all; rm -f "$pending"
+
 echo "a server started from a systemd unit gets its own scope (#292 review)"
 # A oneshot unit's end kills what it leaves in its cgroup: the tmux watchdog's
 # recover starts the fleet's server from one, so the launcher wraps it.
@@ -699,10 +1138,44 @@ check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_i
 ti kill-server 2>/dev/null; to kill-server 2>/dev/null
 rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
 
-echo "cleanup"
-cleanup; trap - EXIT
-check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" \) 2>/dev/null)" ""
+# tmux 3.8 prints an empty #{pane_pid} for a dead pane (3.4 and 3.5a print the
+# pid): a stub tmux answers as 3.8 does, so the hook's no-pid branch runs here.
+fakebin="$work/pane-died-bin"; mkdir -p "$fakebin"
+cat >"$fakebin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case $3 in
+  display-message) printf '1\t-\t-\t15\t%s\n' "$STUB_CMD" ;;
+  show) printf '%s\n' "$STUB_MARK" ;;
+esac
+exit 0
+EOF
+chmod +x "$fakebin/tmux"
+nopid() { # start command, mark: the hook's tmux calls
+  : >"$work/stub.log"
+  STUB_LOG="$work/stub.log" STUB_CMD="$1" STUB_MARK="$2" PATH="$fakebin:$PATH" FLEET_BIN="$work/nobin" \
+    KLEPSYDRA_DEAD_DIR="$work/dead38" bash "$here/klepsydra-pane-died.sh" /s %9 >/dev/null 2>&1
+  grep -c 'kill-pane' "$work/stub.log"
+}
+check "3.8: a dead viewer (empty pane_pid) is closed by its command" "$(nopid "cat /x/saved.txt; read -r _" "4242 its process ended on signal 15")" "1"
+check "3.8: a dead program that is not the viewer is not closed" "$(nopid "claude" "4242 its process ended on signal 15")" "0"
+
+# #260: a session runs on the tmux server's config folder whenever the server is
+# up, even with no fleet session (fleet delegate's engines session shares the
+# socket); a server started on a keyed folder refuses a clean caller's launch.
+mkdir -p "$work/keyed-cfg"
+printf '{"apiKeyHelper": "x"}\n' >"$work/keyed-cfg/settings.json"
+CLAUDE_CONFIG_DIR="$work/keyed-cfg" tmux -L "$sock5" new-session -d -s other "sleep 600"
+out=$(env -u CLAUDE_CONFIG_DIR KLEPSYDRA_TMUX_SOCKET="$sock5" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#260: a server on a keyed config folder: refused" "$rc $(grep -c "^Not started: $work/keyed-cfg/settings.json" <<<"$out")" "1 1"
+check "#260: and no fleet session was made" "$(tmux -L "$sock5" has-session -t =fleet 2>/dev/null && echo made || echo none)" "none"
+tmux -L "$sock5" kill-server 2>/dev/null
 
 check "#292 review 2: no case reached the host's systemd-run" "$(cat "$work/systemd-run-guard.calls" 2>/dev/null)" ""
+
+echo "cleanup"
+cleanup; trap - EXIT
+check "no socket files left" "$(find "$sockdir" -maxdepth 1 \( -name "$sock" -o -name "$sock2" -o -name "$sock3" -o -name "$sock4" -o -name "$sock5" \) 2>/dev/null)" ""
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
