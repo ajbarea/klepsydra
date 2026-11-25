@@ -231,6 +231,49 @@ def main() -> None:
             [("outer", 3)],
         )
 
+        # A # inside an expansion is no comment: the one-liner ends on its own line, and the
+        # line after it (a side effect) is never replayed as part of it.
+        hashy = [
+            'sid_of() { echo "${1#o}"; }\n',
+            'touch "$work/side-effect"\n',
+            "after() {\n",
+            "  :\n",
+            "}\n",
+        ]
+        fns = [d for d in m.find_defs(hashy, m.heredoc_mask(hashy)) if d.kind == "fn"]
+        check(
+            "a # inside ${1#o} does not hide a function's end",
+            [(d.name, d.start, d.end) for d in fns],
+            [("sid_of", 0, 0), ("after", 2, 4)],
+        )
+        check(
+            "a heredoc cut before its delimiter does not parse",
+            m.parses("cat <<EOF\nx\n"),
+            False,
+        )
+
+        # Every function of the real suite ends where bash says: the shortest run of lines
+        # from its first that bash -n reads whole, with no warning.
+        def bash_end(lines: list[str], i: int) -> int:
+            for j in range(i, len(lines)):
+                p = subprocess.run(
+                    ["bash", "-n"],
+                    input="".join(lines[i : j + 1]),
+                    text=True,
+                    capture_output=True,
+                )
+                if p.returncode == 0 and not p.stderr.strip():
+                    return j
+            return -1
+
+        suite = (repo / "fleet" / "test_fleet.sh").read_text().splitlines(keepends=True)
+        fns = [d for d in m.find_defs(suite, m.heredoc_mask(suite)) if d.kind == "fn"]
+        check(
+            "every function in the suite ends where bash -n says",
+            [(d.name, d.end) for d in fns if d.end != bash_end(suite, d.start)],
+            [],
+        )
+
         # Drift fails loudly instead of running a stale copy.
         src = repo / "fleet" / "test_fleet.sh"
         text = src.read_text()
@@ -274,7 +317,7 @@ def main() -> None:
         )
         src.write_text(text)
 
-        # A make that started a shard passes SHARD on; the suite's make -n checks must not see it.
+        # A make that started a shard passes FLEET_SHARD on; the suite's make -n checks must not see it.
         r = subprocess.run(
             [
                 "bash",
@@ -285,10 +328,10 @@ def main() -> None:
             ],
             capture_output=True,
             text=True,
-            env={**os.environ, "SHARD": "misc", "MAKEFLAGS": "SHARD=misc"},
+            env={**os.environ, "FLEET_SHARD": "misc", "MAKEFLAGS": "FLEET_SHARD=misc"},
         )
         check(
-            "a shard started by make SHARD= gives the suite a clean make",
+            "a shard started by make FLEET_SHARD= gives the suite a clean make",
             r.stdout.strip(),
             "bash fleet/test_fleet.sh",
         )

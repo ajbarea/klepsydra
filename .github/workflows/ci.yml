@@ -145,11 +145,13 @@ jobs:
             exit 1
           fi
 
-  # The whole fleet engine suite in one run (38 min on 11-19): on main, nightly and by hand.
-  # A pull request runs it as parallel shards instead (fleet-shard below, #547).
+  # The whole fleet engine suite in one run (38 min on 11-19): on main, nightly, by hand and
+  # on a pull request labelled ci:full, where one group's leftovers can break a later one.
+  # Any other pull request runs it as parallel shards only (fleet-shard below, #547).
   fleet:
     name: Fleet engine tests
-    if: ${{ github.event_name != 'pull_request' }}
+    needs: shards
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.shards.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -178,6 +180,7 @@ jobs:
     outputs:
       all: ${{ steps.pick.outputs.all }}
       run: ${{ steps.pick.outputs.run }}
+      full: ${{ steps.pick.outputs.full }}
     steps:
       - name: Set Git's default branch name
         run: git config --global init.defaultBranch main
@@ -198,10 +201,16 @@ jobs:
           all=$(bash scripts/split-fleet-suite.sh --list)
           echo "all=$all" >>"$GITHUB_OUTPUT"
           run=$all
+          full=false
           # Labels are read live, so "Re-run all jobs" after adding ci:full sees it;
           # labels that cannot be read run every shard.
-          if [[ $EVENT == pull_request ]] && labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name') \
-            && ! grep -qx 'ci:full' <<<"$labels"; then
+          read_labels=false
+          if [[ $EVENT == pull_request ]] && labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name'); then
+            read_labels=true
+          fi
+          if [[ $read_labels == true ]] && grep -qx 'ci:full' <<<"$labels"; then
+            full=true
+          elif [[ $read_labels == true ]]; then
             # --no-renames: a renamed file is listed under its old name too.
             if changed=$(git diff --name-only --no-renames HEAD^1 HEAD); then
               printf 'changed:\n%s\n' "$changed"
@@ -210,8 +219,9 @@ jobs:
               echo "::warning::could not list the changed files; running every shard"
             fi
           fi
-          echo "shards to run: $run"
+          echo "shards to run: $run; whole suite too: $full"
           echo "run=$run" >>"$GITHUB_OUTPUT"
+          echo "full=$full" >>"$GITHUB_OUTPUT"
 
   # Every shard reports a status, run or not, so the gate never waits on a missing one.
   # The shard's name is AREA, never SHARD: make reads SHARD from the environment.
@@ -271,9 +281,11 @@ jobs:
           PICK: ${{ needs.shards.result }}
           SHARDS: ${{ needs.fleet-shard.result }}
           IS_PR: ${{ github.event_name == 'pull_request' }}
+          FULL: ${{ needs.shards.outputs.full }}
         run: |
-          # A pull request runs the shards instead of the whole suite, so there it is skipped.
-          want_fleet=success; [[ $IS_PR == true ]] && want_fleet=skipped
+          # A pull request runs the shards instead of the whole suite, so there it is skipped,
+          # unless ci:full asked for the whole suite too.
+          want_fleet=success; [[ $IS_PR == true && $FULL != true ]] && want_fleet=skipped
           if [[ $SUITES != success || $FLEET != "$want_fleet" || $PICK != success || $SHARDS != success ]]; then
             echo "::error::other suites: $SUITES; whole fleet suite: $FLEET (want $want_fleet); shard pick: $PICK; fleet shards: $SHARDS"
             exit 1

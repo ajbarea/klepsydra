@@ -21,10 +21,10 @@ HEAVY = $(if $(filter 1,$(FLEET_HEAVY_HELD)),,FLEET_HEAVY_HELD=1 bash fleet/heav
 SHELLCHECK ?= bash scripts/shellcheck.sh
 SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 
-# SHARD=<area> runs one shard of it, as CI runs a pull request (#547); the shards a
+# FLEET_SHARD=<area> runs one shard of it, as CI runs a pull request (#547); the shards a
 # change reaches: git diff --name-only main... | bash scripts/split-fleet-suite.sh --select
 test-fleet:
-	$(HEAVY) bash $(if $(SHARD),-c 'bash scripts/split-fleet-suite.sh && exec bash fleet/tests/shards/$(SHARD).sh',fleet/test_fleet.sh)
+	$(HEAVY) bash $(if $(FLEET_SHARD),-c 'bash scripts/split-fleet-suite.sh && exec bash fleet/tests/shards/$(FLEET_SHARD).sh',fleet/test_fleet.sh)
 
 test-launch:
 	$(HEAVY) bash hooks/test_launch.sh
