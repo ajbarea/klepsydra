@@ -2526,8 +2526,8 @@ wait "$wrp" 2>/dev/null
 # The box is read once more just before Enter: text added to it within the settle window refuses the close and stays (#483 review 2).
 state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true}"; settle; : >"$work/wrk7.log"
 after_typed "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"exit_on_exit\":true,\"on_submit\":\"none\",\"log_typed\":true,\"input\":\"/exit now\"}"
-check "#483 review 2: text typed into the box within the settle window refuses the close (1) at check input_text, nothing submitted, the text kept" \
-  "$(FLEET_CLOSE_SETTLE=3 bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")")" "1 input_text 0 /exit now"
+check "#483 review 2: text typed into the box within the settle window refuses the close (1) at check input_text, nothing submitted, the text kept, and the refusal says to delete the \"/exit \" before it (#496 review 6)" \
+  "$(FLEET_CLOSE_SETTLE=3 bash "$here/fleet" close wrk7 >/dev/null 2>"$work/wrk7.err"; echo $?) $(lastclose wrk7 .check) $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")") $(grep -c 'delete "/exit " before pressing Enter' "$work/wrk7.err")" "1 input_text 0 /exit now 1"
 wait "$wrp" 2>/dev/null
 state wrk7 "{\"above\":$long,\"busy\":false,\"exit_on_exit\":true,\"on_submit\":\"none\",\"clear\":true}"; settle
 # With the menu an 84-column pane draws on "/exit" (the 11-19 ns477 refusals), "/exit " keeps it shut: it closes.

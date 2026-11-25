@@ -259,8 +259,11 @@ close_now() { # PANE NAME SID
   if [[ -n $check ]]; then
     # Back out only our own /exit: text typed after it stays, and so does the close's refusal.
     [[ $box == /exit ]] && back_out "$1"
-    refuse "$2" "$1" "$check" "$why" "${more[@]}"
-    return
+    local rc
+    refuse "$2" "$1" "$check" "$why" "${more[@]}"; rc=$?
+    # Text typed after our /exit stays, so the box still starts with it: Enter there would exit.
+    [[ $box == /exit?* ]] && printf '%s\n' "note: $2's box still starts with \"/exit \" before the text typed after it; delete \"/exit \" before pressing Enter there, or the session exits" >&2
+    return "$rc"
   fi
   t send-keys -t "$1" Enter
   exit_wait "$1"
