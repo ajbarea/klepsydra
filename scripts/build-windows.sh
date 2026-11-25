@@ -21,50 +21,49 @@ check_stage() {
   fi
 }
 
-# Stops any Windows process whose command line contains the stage folder name.
+# Returns the anchored PowerShell filter matching this stage folder on command lines.
+stage_filter() {
+  local stage_target=$1
+  cat <<END
+\$_.CommandLine -match ('(?i)' + [regex]::Escape('$stage_target') + '(?=[\\\\/"''\\s]|$)')
+END
+}
+
+# Stops any Windows process whose command line targets this stage folder.
 stop_windows_stage_processes() {
   local name=$1
+  local stage_target=${2:-C:\\Users\\$USER\\$name}
   if [[ ! $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ ]]; then
     return 0
   fi
+  local filter
+  filter=$(stage_filter "$stage_target")
   # shellcheck disable=SC2016 # PowerShell source: $ variables reach pwsh unexpanded.
   timeout 15s powershell.exe -NoProfile -Command \
-    "Get-CimInstance Win32_Process | Where-Object { \$_.ProcessId -ne \$PID -and \$_.CommandLine -like '*$name*' } | Stop-Process -Force -ErrorAction SilentlyContinue" 2>/dev/null || true
+    "Get-CimInstance Win32_Process | Where-Object { \$_.ProcessId -ne \$PID -and $filter } | Stop-Process -Force -ErrorAction SilentlyContinue" 2>/dev/null || true
 }
 
 # Runs powershell under a time limit, stopping stage processes on timeout.
 run_powershell() {
   local timeout_s=${FLEET_WINBUILD_TIMEOUT_S:-1800}
+  if [[ ! $timeout_s =~ ^[0-9]+$ ]] || (( timeout_s <= 0 )); then
+    timeout_s=1800
+  fi
   local min=$(( (timeout_s + 59) / 60 ))
   local stage=${stage_name:-${KLEPSYDRA_STAGE:-klepsydra-build}}
-  local timer_flag; timer_flag=$(mktemp -u /tmp/winbuild_timeout.XXXXXX)
-
-  powershell.exe "$@" &
-  local pwsh_pid=$!
-
-  (
-    sleep "$timeout_s" &
-    wait $!
-    touch "$timer_flag"
-    kill -TERM "$pwsh_pid" 2>/dev/null
-    pkill -P "$pwsh_pid" 2>/dev/null || true
-  ) &
-  local timer_pid=$!
+  local win=${stage_win:-C:\\Users\\$USER\\$stage}
 
   local rc=0
-  wait "$pwsh_pid" 2>/dev/null || rc=$?
+  timeout --foreground -k 10s "${timeout_s}s" powershell.exe "$@" || rc=$?
 
-  pkill -P "$timer_pid" 2>/dev/null || true
-  kill -9 "$timer_pid" 2>/dev/null || true
-  wait "$timer_pid" 2>/dev/null || true
-
-  if [[ -f "$timer_flag" ]]; then
-    rm -f "$timer_flag"
-    kill -KILL "$pwsh_pid" 2>/dev/null || true
-    pkill -9 -P "$pwsh_pid" 2>/dev/null || true
+  if (( rc == 124 || rc == 137 )); then
     cleaned_up=1
-    stop_windows_stage_processes "$stage"
-    echo "build-windows: hung: no compiler running after $min min; skip the local Windows check, CI windows-latest covers it" >&2
+    stop_windows_stage_processes "$stage" "$win"
+    if [[ ${check_mode:-0} == 1 || ${*:-} =~ --check|cargo\ (clippy|test) ]]; then
+      echo "build-windows: hung after $min min; skip the local Windows check, CI windows-latest covers it" >&2
+    else
+      echo "build-windows: hung after $min min" >&2
+    fi
     return 1
   fi
 
@@ -77,19 +76,32 @@ run_powershell() {
 repo=$(cd "$(dirname "$0")/.." && pwd)
 stage_name=${KLEPSYDRA_STAGE:-klepsydra-build}
 stage_root=${KLEPSYDRA_STAGE_ROOT:-/mnt/c/Users/$USER}
-stage_win="C:\\Users\\$USER\\$stage_name"
 stage="$stage_root/$stage_name"
 check_stage "$stage_name" "$stage" || exit 2
 
+if [[ -n ${KLEPSYDRA_STAGE_WIN:-} ]]; then
+  stage_win=$KLEPSYDRA_STAGE_WIN
+elif [[ -n ${KLEPSYDRA_STAGE_ROOT:-} ]]; then
+  stage_win=$(wslpath -w "$stage" 2>/dev/null || printf 'C:\\Users\\%s\\%s\n' "$USER" "$stage_name")
+else
+  stage_win="C:\\Users\\$USER\\$stage_name"
+fi
+
 cleaned_up=0
-cleanup() {
-  local rc=$?
-  if (( rc != 0 && cleaned_up == 0 )); then
+build_log=""
+
+on_signal() {
+  local sig=$1
+  if (( cleaned_up == 0 )); then
     cleaned_up=1
-    stop_windows_stage_processes "$stage_name"
+    stop_windows_stage_processes "$stage_name" "$stage_win"
   fi
+  [[ -n ${build_log:-} && -f $build_log ]] && rm -f "$build_log"
+  exit "$sig"
 }
-trap cleanup EXIT INT TERM
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap '[[ -n ${build_log:-} && -f $build_log ]] && rm -f "$build_log"' EXIT
 
 mkdir -p "$stage"
 # Everything except build output and VCS; target/ and node_modules/ stay put.
@@ -104,16 +116,34 @@ rsync -a --delete \
 tools='$env:Path = "C:\\Program Files\\nodejs;$env:USERPROFILE\\.cargo\\bin;" + $env:Path'
 
 if [[ ${1:-} == --check ]]; then
+  check_mode=1
   echo "==> cargo clippy and cargo test, on Windows"
   run_powershell -NoProfile -Command "$tools; cd '$stage_win\\src-tauri'; cargo clippy --workspace --all-targets -- -D warnings; if (\$LASTEXITCODE) { exit \$LASTEXITCODE }; cargo test --workspace; exit \$LASTEXITCODE"
   exit $?
 fi
 
+check_mode=0
 echo "==> installing frontend tooling"
-run_powershell -NoProfile -Command "$tools; cd '$stage_win'; npm install --no-fund --no-audit" 2>&1 | tail -5
+build_log=$(mktemp)
+run_powershell -NoProfile -Command "$tools; cd '$stage_win'; npm install --no-fund --no-audit" >"$build_log" 2>&1 || {
+  rc=$?
+  tail -5 "$build_log"
+  rm -f "$build_log"
+  exit "$rc"
+}
+tail -5 "$build_log"
+rm -f "$build_log"
 
 echo "==> cargo tauri build"
-run_powershell -NoProfile -Command "$tools; cd '$stage_win'; npx --yes tauri build" 2>&1 | tail -60
+build_log=$(mktemp)
+run_powershell -NoProfile -Command "$tools; cd '$stage_win'; npx --yes tauri build" >"$build_log" 2>&1 || {
+  rc=$?
+  tail -60 "$build_log"
+  rm -f "$build_log"
+  exit "$rc"
+}
+tail -60 "$build_log"
+rm -f "$build_log"
 
 exe="$stage/src-tauri/target/release/klepsydra.exe"
 if [[ -f "$exe" ]]; then
