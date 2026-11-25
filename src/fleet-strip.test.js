@@ -17,8 +17,10 @@ class El {
       add: (c) => this.classes.add(c),
       remove: (c) => this.classes.delete(c),
       has: (c) => this.classes.has(c),
+      toggle: (c, on) => (on ? this.classes.add(c) : this.classes.delete(c)),
     };
   }
+  removeAttribute(k) { delete this.attrs[k]; delete this.src; }
   get firstChild() { return this.children[0]; }
   get lastChild() { return this.children.at(-1); }
   append(...kids) { kids.forEach((k) => this.insertBefore(k, null)); }
@@ -55,10 +57,8 @@ const setup = () => {
   return { el, opened, render, pulsing };
 };
 
-test("the strip is hidden with no sessions and shows a portrait per session", () => {
+test("the strip shows a portrait per session", () => {
   const { el, render } = setup();
-  render([], NOW);
-  assert.equal(el.hidden, true);
   render([session("a", "working"), session("b", "done")], NOW);
   assert.equal(el.hidden, false);
   assert.deepEqual(el.children.map((b) => b.dataset.id), ["a", "b"]);
@@ -159,4 +159,130 @@ test("a theme switch redraws each portrait in the theme now worn, on the same bu
     assert.equal(button.firstChild.src, `fleet/faces/${id}/${c.face}-192.webp`, id);
     assert.match(button.attrs["aria-label"], new RegExp(`^${c.name},`), id);
   }
+});
+
+const KEEPER = { keeper: "am_michael", faces: "kourai", characters: { am_michael: { name: "Hephaestus", face: "hephaestus" } } };
+
+test("no sessions: the strip is the keeper's resting face as one button that opens the wall with no id", () => {
+  const opened = [];
+  const el = new El("div");
+  el.hidden = true; // index.html's start
+  const render = mountStrip(el, { open: (...a) => opened.push(a), cast: () => KEEPER });
+  render([], NOW);
+  assert.equal(el.hidden, false);
+  assert.equal(el.children.length, 1);
+  const [b] = el.children;
+  assert.equal(b.attrs["aria-label"], "Open the fleet wall");
+  assert.equal(b.firstChild.src, "fleet/faces/kourai/hephaestus-192.webp");
+  assert.equal(b.firstChild.hidden, false);
+  assert.equal(b.lastChild.innerHTML, "", "no badge");
+  assert.equal(b.classes.has("pulse") || b.classes.has("speaking"), false);
+  el.fire("click", b.firstChild);
+  assert.deepEqual(opened, [[undefined]]);
+});
+
+test("sessions replace the keeper, and their going brings it back", () => {
+  const el = new El("div");
+  const render = mountStrip(el, { open() {}, cast: () => KEEPER });
+  render([], NOW);
+  render([session("a", "working")], NOW);
+  assert.deepEqual(el.children.map((b) => b.dataset.id), ["a"]);
+  assert.equal(el.children[0].classes.has("rest"), false);
+  render([], NOW);
+  assert.equal(el.children.length, 1);
+  assert.equal(el.children[0].classes.has("rest"), true);
+});
+
+test("a theme without a keeper shows a plain button that still opens the wall", () => {
+  const opened = [];
+  const el = new El("div");
+  const render = mountStrip(el, { open: (...a) => opened.push(a), cast: () => ({ characters: {} }) });
+  render([], NOW);
+  const [b] = el.children;
+  assert.equal(b.attrs["aria-label"], "Open the fleet wall");
+  assert.equal(b.firstChild.hidden, true);
+  assert.match(b.lastChild.innerHTML, /^<svg class="glyph"/);
+  el.fire("click", b.lastChild);
+  assert.deepEqual(opened, [[undefined]]);
+});
+
+test("before the reader's first snapshot an empty draw leaves the strip hidden", () => {
+  const el = new El("div");
+  el.hidden = true;
+  const render = mountStrip(el, { open() {}, cast: () => KEEPER });
+  render([], NOW, false);
+  assert.equal(el.hidden, true);
+  assert.equal(el.children.length, 0);
+  render([], NOW, true);
+  assert.equal(el.hidden, false);
+  assert.equal(el.children.length, 1);
+});
+
+test("a theme switch turns the keeper's face and the plain button into each other on the same button", () => {
+  let cast = KEEPER;
+  const el = new El("div");
+  const render = mountStrip(el, { open() {}, cast: () => cast });
+  render([], NOW);
+  const b = el.children[0];
+  cast = { characters: {} };
+  render([], NOW);
+  assert.equal(el.children[0], b);
+  assert.equal(b.firstChild.hidden, true);
+  assert.equal(b.firstChild.src, undefined, "the keeper's face is gone, not just hidden");
+  assert.match(b.lastChild.innerHTML, /glyph/);
+  cast = KEEPER;
+  render([], NOW);
+  assert.equal(b.firstChild.hidden, false);
+  assert.equal(b.lastChild.innerHTML, "");
+});
+
+// ── #421: portraits dock beside their account's chip ──
+const docked = () => {
+  const root = new El("div");
+  const el = new El("div");
+  const slots = new Map([["acct-p", new El("span")], ["agy-primary", new El("span")]]);
+  const dockOf = { "acct-p": "acct-p", "agy-primary": "agy-primary" };
+  const opened = [];
+  const render = mountStrip(el, {
+    open: (id) => opened.push(id),
+    cast: () => ({ characters: {} }),
+    dock: { slots: () => slots, of: (item) => dockOf[item.account?.id] ?? null },
+    root,
+  });
+  return { root, el, slots, opened, render };
+};
+const ids = (e) => e.children.map((b) => b.dataset.id);
+
+test("a portrait docks in its account's slot; one with no slot stays in the strip", () => {
+  const { el, slots, render } = docked();
+  render([
+    session("a", "working", { account: { id: "acct-p", label: "Personal" } }),
+    session("b", "done", { account: { id: "agy-primary", label: "Google AI Pro" } }),
+    session("c", "working", { account: { id: "gone", label: "Old" } }),
+    session("d", "working"),
+  ], NOW);
+  assert.deepEqual(ids(slots.get("acct-p")), ["a"]);
+  assert.deepEqual(ids(slots.get("agy-primary")), ["b"]);
+  assert.deepEqual(ids(el), ["c", "d"]);
+  assert.equal(el.hidden, false);
+});
+
+test("a portrait that changes account leaves its old slot; an emptied strip hides", () => {
+  const { el, slots, render } = docked();
+  render([session("a", "working", { account: { id: "acct-p", label: "Personal" } }), session("d", "working")], NOW);
+  render([session("a", "working", { account: { id: "agy-primary", label: "Google AI Pro" } })], NOW);
+  assert.deepEqual(ids(slots.get("acct-p")), []);
+  assert.deepEqual(ids(slots.get("agy-primary")), ["a"]);
+  assert.deepEqual(ids(el), []);
+  assert.equal(el.hidden, true, "nothing loose: the strip beside the chips hides");
+});
+
+test("the resting keeper never docks, and a click on a docked portrait reaches the root", () => {
+  const { root, el, slots, opened, render } = docked();
+  render([], NOW);
+  assert.equal(el.children.length, 1, "the keeper");
+  assert.equal(el.hidden, false);
+  render([session("a", "working", { account: { id: "acct-p", label: "Personal" } })], NOW);
+  root.fire("click", slots.get("acct-p").children[0].firstChild);
+  assert.deepEqual(opened, ["a"]);
 });

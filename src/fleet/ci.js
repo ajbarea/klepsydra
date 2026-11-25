@@ -3,7 +3,7 @@
 // the app (ci_subscribe) or, on the phone, with each snapshot. Free of the DOM
 // so it can be unit tested; wall.js draws what this returns.
 
-/** What the bar button and its popover show for CI watch VIEW (ci.rs `view`); hidden without one. */
+/** What the bar button and its popover show for CI watch VIEW (ci.rs `view`); hidden without one, and while all is green with nothing to note (#248). */
 export function ciView(view) {
   if (!view || typeof view !== "object") return { hidden: true, label: "", tone: "", title: "", rows: [], note: "" };
   const red = Array.isArray(view.red) ? view.red : [];
@@ -23,7 +23,7 @@ export function ciView(view) {
   if (rows.length) {
     return { hidden: false, label: `CI ${rows.length} red`, tone: "red", title: `${rows.length} red CI ${rows.length === 1 ? "run" : "runs"} across ${repos} repos`, rows, note: extras.join("; ") };
   }
-  return { hidden: false, label: "CI ok", tone: "ok", title: `CI green across ${repos} repos`, rows, note: extras.join("; ") || `Green across ${repos} repos.` };
+  return { hidden: !extras.length, label: "CI ok", tone: "ok", title: `CI green across ${repos} repos`, rows, note: extras.join("; ") || `Green across ${repos} repos.` };
 }
 
 function triageNote(state) {

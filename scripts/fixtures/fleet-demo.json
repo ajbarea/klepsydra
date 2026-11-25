@@ -97,6 +97,10 @@
     "text": "regenerate figure 3 with the median and range",
     "at": 1792499910
    },
+   "said": {
+    "text": "Running sweep on seed 3 of 5 across all corpora",
+    "at": 1792499955
+   },
    "reply": {
     "text": "Re-running the sweep over 5 seeds before redrawing the bars.",
     "at": 1792499940
@@ -237,6 +241,10 @@
    "prompt": {
     "text": "put the ten kourai voices first in the pool",
     "at": 1792499950
+   },
+   "said": {
+    "text": "Editing src/keryx/voices.py to reorder the pool",
+    "at": 1792499990
    },
    "reply": {
     "text": "Editing src/keryx/voices.py.",

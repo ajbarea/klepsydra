@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import {
   STATUS, shortAge, longAge, statusParts, voiceName, identity, accessibleName,
   statuses, startedNeeding, orderChanged, shouldSlide, transitionName, announcements, updatedText, badgeSvg, stripItems, card,
-  askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, showsRingKey, alsoChip, ALSO_NAMED, pillWhen,
-  BAND, ORCHESTRATOR_VOICES, accountsDiffer, castPicks,
+  askText, askParts, plainText, tally, crewOf, crewText, crewRing, crewRings, crewMarks, RINGS, RING_MAX, alsoChip, ALSO_NAMED, pillWhen,
+  BAND, ORCHESTRATOR_VOICES, accountsDiffer, castPicks, arrivals, arrivalLine, ARRIVALS_KEPT,
   branchPage,
   githubPage,
   plainDir,
@@ -191,12 +191,14 @@ test("identity: a cast voice is its character", () => {
   assert.deepEqual(identity(session(), CAST), {
     name: "Hephaestus",
     voice: "Michael",
+    voiceKey: "am_michael",
     face: "fleet/faces/kourai/hephaestus-96.webp",
     face2x: "fleet/faces/kourai/hephaestus-192.webp",
     full: "fleet/faces/kourai/hephaestus-full.webp",
     accent: null, // CAST here has no accent
     epithet: null,
     figure: null, // nor a head to place the figure by
+    motif: "burst",
   });
 });
 
@@ -349,10 +351,18 @@ test("a card holds what the wall shows", () => {
   assert.deepEqual(card(session({ name: null }), CAST, NOW).jump, { enabled: false, why: "no session name yet" });
   const inTmux = { name: null, tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, claude: { pid: 2231, start: 8717628 }, distro: "Ubuntu" };
   assert.deepEqual(card(session(inTmux), CAST, NOW).jump, { enabled: true, why: null }, "tmux finds an unnamed session by its pane");
-  for (const missing of ["tmux", "claude", "distro"]) {
+  for (const missing of ["tmux", "claude"]) {
     assert.deepEqual(card(session({ ...inTmux, [missing]: null }), CAST, NOW).jump,
       { enabled: false, why: "no session name yet" }, `without ${missing}`);
   }
+  for (const distro of [null, undefined, 1]) {
+    assert.deepEqual(card(session({ ...inTmux, distro }), CAST, NOW).jump, { enabled: false, why: "no session name yet" },
+      `through wsl.exe an unnamed session needs its distro (${distro})`);
+    assert.deepEqual(card(session({ ...inTmux, distro }), CAST, NOW, null, true).jump, { enabled: true, why: null },
+      `a native Linux session records no distro and is found by its pane (${distro})`);
+  }
+  assert.deepEqual(card(session({ ...inTmux, claude: { pid: 0, start: 1 } }), CAST, NOW).jump,
+    { enabled: false, why: "no session name yet" }, "the launcher refuses a zero pid");
   assert.deepEqual(card(session({ ...inTmux, status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.deepEqual(card(session({ status: "ended" }), CAST, NOW).jump, { enabled: false, why: "session ended" });
   assert.equal(card(session({ status: "error", error: "API Error: Rate limit reached" }), CAST, NOW).error,
@@ -403,6 +413,18 @@ test("the Open terminal button: fill only for needs-you, a marker for a characte
   assert.deepEqual(style({ status: "needs_you", voice: "bm_lewis" }), ["needs", null]);
   assert.deepEqual(style({ status: "ended" }), ["off", null], "disabled: no marker, no fill");
   assert.deepEqual(style({ status: "needs_you", name: null }), ["off", null], "disabled needs-you stays quiet");
+  // Native Linux records no distro; the snapshot's flag makes an unnamed session in tmux jumpable, styled like any other.
+  const unnamed = { name: null, tmux: { socket: "/tmp/tmux-1001/klepsydra", pane: "%3" }, claude: { pid: 2231, start: 8717628 }, distro: null };
+  const onLinux = (o, native) => {
+    const k = card(session({ ...unnamed, ...o }), cast, NOW, null, native);
+    return [k.jump.enabled, k.jumpKind, k.jumpMark];
+  };
+  assert.deepEqual(onLinux({ status: "needs_you" }, true), [true, "needs", null], "native: the filled call to action");
+  assert.deepEqual(onLinux({ status: "done" }, true), [true, "accent", { color: "#DA8C20", width: 4 }], "native: the marker");
+  assert.deepEqual(onLinux({ status: "done", voice: "bm_lewis" }, true), [true, "plain", null], "native: a medallion");
+  for (const native of [false, undefined]) {
+    assert.deepEqual(onLinux({ status: "needs_you" }, native), [false, "off", null], `through wsl.exe it needs a distro (${native})`);
+  }
 });
 
 test("only an ended or silent card offers Clear", () => {
@@ -511,12 +533,7 @@ test("arcs sit on the ring with even gaps of a fixed length on the page, a lone 
   }
 });
 
-test("the ring key shows while any card has background work, and only then", () => {
-  const withCrew = (background) => card(session({ background }), CAST, NOW);
-  assert.equal(showsRingKey([]), false, "an empty wall");
-  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0 }), withCrew(undefined)]), false, "a quiet wall stays clean");
-  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0 }), withCrew({ agents: 0, shells: 1 })]), true);
-  assert.equal(showsRingKey([withCrew({ agents: 0, shells: 0, tasks: 1 })]), true, "another task draws a thin arc");
+test("a ring is drawn for each density", () => {
   assert.deepEqual(Object.keys(crewRings({ agents: 1, shells: 0 })), ["comfortable", "compact"]);
 });
 
@@ -731,6 +748,84 @@ test("card: prompt and reply are plain text", () => {
   assert.equal(c.reply, "a");
 });
 
+test("card: mid-turn narration (.said) shows in .reply while working and finished .reply replaces at Stop (#410)", () => {
+  // Working session with mid-turn narration: shows said in reply
+  const workingWithSaid = card(session({
+    status: "working",
+    said: { text: "now editing *src/model.js*", at: NOW },
+    reply: { text: "prior finished reply", at: NOW - 60 },
+  }), CAST, NOW);
+  assert.equal(workingWithSaid.reply, "now editing src/model.js");
+  assert.equal(workingWithSaid.said, "now editing src/model.js");
+
+  // Working session without narration yet: shows prior reply (not blank)
+  const workingNoSaid = card(session({
+    status: "working",
+    said: null,
+    reply: { text: "prior finished reply", at: NOW - 60 },
+  }), CAST, NOW);
+  assert.equal(workingNoSaid.reply, "prior finished reply");
+  assert.equal(workingNoSaid.said, null);
+
+  // Finished session that went silent: final reply outranks older mid-turn narration
+  const silentFinished = card(session({
+    status: "silent",
+    said: { text: "old mid-turn narration", at: NOW - 30 },
+    reply: { text: "Final finished reply", at: NOW - 10 },
+  }), CAST, NOW);
+  assert.equal(silentFinished.reply, "Final finished reply");
+
+  // Tie: reply wins
+  const tie = card(session({
+    status: "working",
+    said: { text: "narration at same second", at: NOW },
+    reply: { text: "reply at same second", at: NOW },
+  }), CAST, NOW);
+  assert.equal(tie.reply, "reply at same second");
+
+  // Turn over (status done): finished reply replaces narration
+  const doneWithSaid = card(session({
+    status: "done",
+    said: { text: "now editing src/model.js", at: NOW - 10 },
+    reply: { text: "Finished all edits cleanly", at: NOW },
+  }), CAST, NOW);
+  assert.equal(doneWithSaid.reply, "Finished all edits cleanly");
+  assert.equal(doneWithSaid.said, "now editing src/model.js");
+
+  // Turn over (status ended): finished reply replaces narration
+  const endedWithSaid = card(session({
+    status: "ended",
+    said: { text: "now editing src/model.js", at: NOW - 10 },
+    reply: { text: "Finished session", at: NOW },
+  }), CAST, NOW);
+  assert.equal(endedWithSaid.reply, "Finished session");
+
+  // Working in background: turnOver is true, finished reply shown
+  const bgWithSaid = card(session({
+    status: "working",
+    reason: "background",
+    said: { text: "subagent running", at: NOW - 10 },
+    reply: { text: "Turn ended with 1 subagent out", at: NOW },
+  }), CAST, NOW);
+  assert.equal(bgWithSaid.reply, "Turn ended with 1 subagent out");
+
+  // Needs you with said: shows said
+  const needsWithSaid = card(session({
+    status: "needs_you",
+    said: { text: "Asking: approve Bash?", at: NOW },
+    reply: { text: "prior reply", at: NOW - 60 },
+  }), CAST, NOW);
+  assert.equal(needsWithSaid.reply, "Asking: approve Bash?");
+
+  // Needs you without said: falls back to reply
+  const needsNoSaid = card(session({
+    status: "needs_you",
+    said: null,
+    reply: { text: "Should I proceed?", at: NOW },
+  }), CAST, NOW);
+  assert.equal(needsNoSaid.reply, "Should I proceed?");
+});
+
 test("the compact card folds the also-in list into a +N chip that names every repo", () => {
   assert.equal(alsoChip([]), null);
   assert.deepEqual(alsoChip(["ideas"]), { text: "+1", label: "Also in ideas" });
@@ -807,11 +902,12 @@ test("#148: a session with no character of its own gets one no live card shows, 
   const at = (id, voice, started, over = {}) => session({ session_id: id, voice, started_at: started, ...over });
   const faces = (list) => Object.fromEntries(castPicks(list, cast).map((s) => [s.session_id, identity(s, cast).name]));
 
-  // keryx muted, no home voice: a free character, and no keryx voice to name.
+  // keryx muted, no home voice: a free character, whose voice follows the pick (#389).
   const muted = castPicks([at("held", "v1", 1), at("cv", null, 2)], cast);
   assert.notEqual(identity(muted[1], cast).name, "One");
   assert.ok(["Two", "Three"].includes(identity(muted[1], cast).name));
-  assert.equal(identity(muted[1], cast).voice, null);
+  assert.equal(identity(muted[1], cast).voice, voiceName(muted[1].pick), "a pick gets that character's voice (#389)");
+  assert.equal(identity(muted[1], cast).voiceKey, muted[1].pick);
   assert.equal(identity(muted[0], cast).voice, voiceName("v1"), "an own voice is still named");
 
   // Free characters go first; a second voiceless session takes the other one.
@@ -883,6 +979,27 @@ test("#148: the medallion is only for a theme that did not load", () => {
   }
 });
 
+test("#389: a picked card exposes both voice and voiceKey, and voiceTitle names it", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
+  const s = session({ session_id: "s1", voice: null, pick: "af_nicole" });
+  const who = identity(s, cast);
+  assert.equal(who.name, "Hesychia");
+  assert.equal(who.voice, "Nicole");
+  assert.equal(who.voiceKey, "af_nicole");
+  const c = card(s, cast, NOW);
+  assert.equal(c.voiceTitle, "Voice: Nicole");
+  assert.equal(c.voiceKey, "af_nicole");
+
+  // A medallion session with no theme or voice has no voice or voiceKey
+  const med = session({ session_id: "s2", voice: null, pick: null });
+  const medWho = identity(med, null);
+  assert.equal(medWho.voice, null);
+  assert.equal(medWho.voiceKey, null);
+  const medCard = card(med, null, NOW);
+  assert.equal(medCard.voiceTitle, null);
+  assert.equal(medCard.voiceKey, null);
+});
+
 test("#149: a card's folder opens when the hook named it, and only a plain GitHub repo page is linked", () => {
   const at = { repo: "klepsydra", worktree: "fleet", branch: "feat/x", at: 1 };
   const place = (where) => card({ session_id: "s", status: "working", status_at: 1, where }, NOW).place;
@@ -913,4 +1030,52 @@ test("#222: the page's fallback pick never gives a session Hephaestus or Athena,
   const picked = castPicks(many, cast).map((s) => s.pick);
   assert.equal(picked.filter(Boolean).length, 60, "everyone got a character");
   assert.deepEqual(picked.filter((p) => ORCHESTRATOR_VOICES.includes(p)), []);
+});
+
+test("#373: the first snapshot only seeds; a later one names each new session once, in order", () => {
+  const ss = (...ids) => ids.map((session_id) => ({ session_id }));
+  const first = arrivals(null, ss("a", "b"));
+  assert.deepEqual(first.arrived, [], "a reload replays nothing");
+  const second = arrivals(first.seen, ss("a", "c", "b", "d"));
+  assert.deepEqual(second.arrived, ["c", "d"]);
+  assert.deepEqual(arrivals(second.seen, ss("a", "c")).arrived, [], "gone and back is not new");
+  assert.deepEqual(arrivals(second.seen, ss("a", "c", "d")).arrived, []);
+});
+
+test("#373: an ended or quiet session is remembered but never arrives", () => {
+  const { seen } = arrivals(null, []);
+  const got = arrivals(seen, [
+    { session_id: "e", status: "ended" },
+    { session_id: "q", status: "working", quiet_since: "2026-11-13T20:00:00Z" },
+    { session_id: "w", status: "working" },
+  ]);
+  assert.deepEqual(got.arrived, ["w"]);
+  assert.deepEqual(arrivals(seen, [{ session_id: "e", status: "working" }]).arrived, [], "seen, so a revival is not new");
+});
+
+test("#373: what a page remembers is bounded, the oldest dropped first", () => {
+  const ss = (n, from = 0) => Array.from({ length: n }, (_, i) => ({ session_id: `s${from + i}` }));
+  const { seen } = arrivals(null, ss(3));
+  arrivals(seen, ss(4, 3), 5);
+  assert.deepEqual([...seen], ["s2", "s3", "s4", "s5", "s6"]);
+  assert.equal(arrivals(null, ss(ARRIVALS_KEPT + 10)).seen.size, ARRIVALS_KEPT);
+});
+
+test("#373: a session still on the wall is never the one let go, so it never arrives twice", () => {
+  const ss = (...ids) => ids.map((session_id) => ({ session_id }));
+  const { seen } = arrivals(null, ss("long"));
+  const came = [];
+  for (const id of ["a", "b", "c", "d"]) came.push(...arrivals(seen, ss("long", id), 3).arrived);
+  assert.deepEqual(came, ["a", "b", "c", "d"]);
+  assert.ok(seen.has("long"));
+});
+
+test("#373: the live region says who arrived, with the epithet when the cast has one", () => {
+  const cast = JSON.parse(readFileSync(new URL("./fleet/themes/kourai.json", import.meta.url), "utf8"));
+  assert.equal(arrivalLine({ session_id: "x", voice: "am_michael" }, cast), "Hephaestus has arrived, Master of the Forge");
+  assert.match(arrivalLine({ session_id: "abcdef123456", name: "notes", launch_dir: "/home/aj/notes" }, null), /^\S.* has arrived$/);
+  assert.equal(arrivalLine({ session_id: "x", voice: "am_michael", status: "working", reason: "editing" }, cast), "Hephaestus has arrived, Master of the Forge");
+  const needs = { session_id: "x", voice: "am_michael", status: "needs_you", reason: "approve Bash(rm -rf build)" };
+  assert.equal(arrivalLine(needs, cast), `Hephaestus has arrived, Master of the Forge, ${announcements(new Map(), [needs], cast)[0].replace(/^Hephaestus, /, "")}`, "a loud state is said as a status change would say it");
+  assert.match(arrivalLine({ ...needs, status: "error" }, cast), /, error/);
 });

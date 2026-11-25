@@ -20,33 +20,34 @@
   --head-gap: var(--space-6);
   --wall-face: 80px;
   --face-inset: 9px; /* inside the thick arc (7 px at the edge), with a hairline of card between */
-  --wall-bg: #11151b;
-  --card-bg: #1a2029;
-  --card-quiet: #161b22;
-  --card-line: #2a323e;
-  --card-focus: #e9edf2; /* neutral: amber means needs you */
-  --text: #e9edf2;
-  --text-dim: #98a2b0;
-  --text-quiet: #7f8896;
-  --text-faint: #6b7584;
+  --wall-bg: #14100b; /* warm bronze near-black: klepsydra's own, never slate or blue (AJ 11-12) */
+  --card-bg: #1f1912;
+  --card-quiet: #19140e;
+  --card-line: #3b3125;
+  --card-focus: #f2eadf; /* neutral: amber means needs you */
+  --text: #f2eadf;
+  --text-dim: #b9a993;
+  --text-quiet: #a09079;
+  --text-faint: #8c7d68;
   --text-error: #e8743b;
-  --pill-age: #aab3bf; /* 4.5:1 on every tone's pill, on the card and the band */
+  --pill-age: #c4b6a0; /* 4.5:1 on every tone's pill, on the card and the band */
   --tone-needs: var(--badge-needs);
   --tone-error: var(--badge-error);
-  --tone-working: #56b4e9;
+  --tone-working: #d9c6a5; /* healthy stays quiet (#248): parchment, not a loud hue */
   --tone-done: var(--badge-done);
-  --tone-quiet: #8a93a0;
-  --ring-track: #263040;
+  --tone-quiet: #9a8d7b;
+  --ring-track: #322a1f;
   --crew-gold: #f0e442; /* Okabe-Ito yellow: an agent's segment with no character; amber means needs you */
-  --button-bg: #252d39;
-  --button-line: #344052;
-  --button-hover: #2e3846;
+  --button-bg: #2c241a;
+  --button-line: #4a3d2d;
+  --button-hover: #372d21;
+  --primary-hover: #ffffff; /* the primary button lifts toward the wall's far end; light deepens it instead */
   --needs-ink: #000000; /* on --tone-needs */
   --danger-bg: #b3261e; /* End <Character>: filled, so it reads as the weighty choice; never the default */
   --danger-hover: #9c1f18;
   --danger-ink: #ffffff;
   /* The usage-limit gauges' ramp: style.css's, which the gauge's own rows use. */
-  --ramp-low: #3b82f6;
+  --ramp-low: #d9c6a5;
   --ramp-mid: #eab308;
   --ramp-high: #ef4444;
   --ramp-mid-at: 60;
@@ -57,16 +58,21 @@
   --title: "Cinzel", "Trajan Pro", Georgia, serif;
   /* The comfortable card's header band (#62); model.js BAND holds the same numbers. */
   --band-h: 120px;
-  --plate-bg: #141820;
-  --plinth-bg: #0d1016;
+  --fig-over: 60px; /* the figure's 52 px over the card's top edge, and 8 px clear */
+  --plate-bg: #1a140d;
+  --plinth-bg: #0f0c08;
   --band-line: #6f5a2c; /* the band's gilded rule */
   --band-gold: #c9a24a; /* a medallion's light */
   --ivory: #f3ead7;
+  --working-ink: #000000; /* on --tone-working */
+  --pill-mix: white; /* a pill's word: its tone lifted toward the ground's opposite */
   --glow-alpha: 62%;
   --rays-alpha: 16%;
   --under-text: 15%; /* of the light that reaches past the figure to the text */
-  --dim-light-with: #3a414c;
+  --dim-light-with: #4a4034;
   --dim-light-share: 30%;
+  --bg-orb1-alpha: 13%;
+  --bg-orb2-alpha: 11%;
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 @font-face {
@@ -107,22 +113,86 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
   white-space: nowrap;
 }
 
+/* Living wall background (#385): subtle atmospheric drift that follows the chosen character theme.
+   Only compositor properties (transform and opacity) are animated; blur is static on the element.
+   Paused when the window is hidden, or on prefers-reduced-motion. */
+.wall-backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  contain: strict;
+}
+.wall-backdrop .glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform;
+}
+.wall-backdrop .orb-1 {
+  width: 720px;
+  height: 720px;
+  left: -120px;
+  top: -100px;
+  background: radial-gradient(circle, color-mix(in oklab, var(--bg-glow, #DA8C20) var(--bg-orb1-alpha), transparent) 0%, transparent 70%);
+  filter: blur(95px);
+}
+.wall-backdrop .orb-2 {
+  width: 860px;
+  height: 860px;
+  right: -140px;
+  bottom: -120px;
+  background: radial-gradient(circle, color-mix(in oklab, var(--bg-secondary, #7A8B3C) var(--bg-orb2-alpha), transparent) 0%, transparent 70%);
+  filter: blur(115px);
+}
+.wall-backdrop .ambient-drift {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.wall-backdrop[data-motif="studio"] .ambient-drift {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--bg-secondary, #00A3DC) 3.5%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--bg-glow, #FF8D70) 3.5%, transparent) 1px, transparent 1px);
+  background-size: 52px 52px;
+}
+.wall-backdrop[data-motif="geometric"] .ambient-drift {
+  background: radial-gradient(circle at 75% 20%, color-mix(in oklab, var(--bg-glow, #00D7CE) 6%, transparent) 0%, transparent 40%),
+              radial-gradient(circle at 25% 80%, color-mix(in oklab, var(--bg-secondary, #B073DA) 6%, transparent) 0%, transparent 45%);
+}
+.wall-backdrop.paused .glow-orb,
+.wall-backdrop.paused .ambient-drift {
+  animation-play-state: paused !important;
+}
+.served .wall-backdrop,
+@media (max-width: 600px) {
+  .wall-backdrop .orb-1,
+  .wall-backdrop .orb-2 {
+    filter: blur(60px);
+    animation: none;
+  }
+}
+
 /* Summary bar: who needs AJ, and how many are up. */
-.bar { display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
+.bar { position: relative; z-index: 2; display: flex; align-items: center; gap: 28px; padding: 20px var(--wall-pad) 8px; }
 /* At the window's narrowest (420 px) the density choice and + New session take a line of their own. */
-@media (max-width: 480px) { .bar { flex-wrap: wrap; } }
-/* The tally, and the ring key beside it, or on a quieter line under it when the bar is narrow. */
+@media (max-width: 480px) {
+  .bar { flex-wrap: wrap; }
+  /* Two rows of panels whether the gear is there or not, so it costs the bar no height. */
+  .tools { max-width: 220px; }
+  /* The right group takes its own line and the gear its foot and right end,
+     so the menu opens below the bar and on screen. */
+  .bar-right { flex: 1 1 100%; }
+  .gear { align-self: flex-end; margin-left: auto; }
+}
+/* The tally and what needs a look: CI or Fleet when not ok, a wrap-up in progress. */
 .lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; margin-right: auto; min-width: 0; }
-/* Split, Ledger, Queue and Wrap up… sit closer to each other than to the key, so the half-screen bar keeps them on one line. */
-.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+/* The bar's right: the panels, + New session and the view settings behind one gear (#248). */
+.bar-right { order: 2; display: flex; align-items: center; gap: var(--space-5); }
+/* Split, Ledger, Queue and Wrap up… sit close together, so the half-screen bar keeps them on one line. */
+.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } /* 8 px rows: each button's 24 px hit area (4 px past it) stays its own */
 .tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; color: var(--text-dim); }
-.ring-key { display: flex; gap: 16px; align-items: center; color: var(--text-dim); font-size: 12.5px; }
-.ring-key .key { display: inline-flex; align-items: center; gap: 6px; }
-.ring-key svg { width: 32px; height: 18px; overflow: visible; } /* 1:1, so the widths are the real ring's px */
-/* The real ring's comfortable widths (model.js RINGS), in the neutral text colour: a ring's colour is its character's. */
-.ring-key path { fill: none; stroke: var(--text-dim); stroke-linecap: butt; }
-.ring-key path.agent { stroke-width: 7px; }
-.ring-key path.shell { stroke-width: 3px; }
 .tally b { font: 600 28px/1 var(--display); font-variant-numeric: tabular-nums; margin-right: 2px; color: var(--text-faint); }
 .tally .t-needs b { color: var(--tone-needs); }
 .tally .t-working b { color: var(--tone-working); }
@@ -130,8 +200,72 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .tally .t-error b { color: var(--tone-error); }
 #new-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #new-note:empty { display: none; }
-#new-session { order: 3; }
-/* Split with terminal: a toggle on the ring key's line, sized as Ledger so a
+/* + New session (#440, Variant A): the split button names its engine; the caret opens the other engines. */
+.new-split { display: inline-flex; align-items: stretch; flex: none; }
+#new-session { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+#new-session .ico:empty { display: none; }
+/* Under 1200 px "session" goes: the logo, the engine and the account stay, so the half-screen bar keeps its height. */
+@media (width < 1200px) { #new-session .ns-word { display: none; } }
+#new-session .ico, #new-kind .ico { width: 15px; height: 15px; display: inline-flex; }
+#new-session .ico svg, #new-kind .ico svg { width: 100%; height: 100%; display: block; }
+.mono { font: 600 10px/1 var(--font); letter-spacing: 0.04em; padding: 2px 4px; border: 1px solid currentColor; border-radius: 4px; }
+#new-session:has(+ #new-kind:not([hidden])) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+#new-kind { anchor-name: --new-kind; padding: 0 9px; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid var(--wall-bg); display: inline-flex; align-items: center; }
+#new-kind[aria-expanded="true"] { box-shadow: inset 0 0 0 2px var(--wall-bg), 0 0 0 2px var(--text); }
+
+#new-menu {
+  /* Under the caret, its right edge on the caret's (anchor positioning, Chromium 125+). */
+  margin: 8px 0 0; inset: auto; position: fixed; position-anchor: --new-kind;
+  top: anchor(bottom); right: anchor(right); width: min(460px, calc(100vw - 32px));
+  max-height: calc(100dvh - 96px); overflow-y: auto; padding: 6px; display: none;
+  background: var(--card-bg); color: var(--text); border: 1px solid var(--card-line); border-radius: 12px;
+  box-shadow: 0 18px 40px rgb(0 0 0 / 0.35);
+}
+#new-menu:popover-open { display: grid; gap: 2px; }
+#new-menu .mhead { display: flex; justify-content: space-between; padding: 8px 10px 6px; font-size: 12.5px; color: var(--text-dim); }
+#new-menu .eng-list { display: grid; gap: 2px; }
+#new-menu .eng { border-radius: 9px; padding: 4px; display: grid; gap: 6px; }
+#new-menu .eng.open { background: var(--card-quiet); box-shadow: inset 0 0 0 1px var(--card-line); padding-bottom: 10px; }
+#new-menu .eng-h {
+  all: unset; box-sizing: border-box; width: 100%; padding: 6px; border-radius: 7px; cursor: pointer;
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; color: var(--text);
+}
+#new-menu .eng-h:hover:not([aria-disabled="true"]) { background: var(--button-bg); }
+#new-menu .eng-h:focus-visible, #new-menu .model input:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+#new-menu .eng-h[aria-disabled="true"] { cursor: default; }
+#new-menu .eng-h .ico { width: 20px; height: 20px; display: inline-flex; }
+#new-menu .eng-h .ico svg { width: 100%; height: 100%; display: block; }
+#new-menu .eng-title { font-weight: 650; font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+#new-menu .eng-acct { grid-column: 2; font-size: 12.5px; color: var(--text-dim); }
+#new-menu .room { grid-column: 3; grid-row: 1 / span 2; text-align: right; font-size: 12.5px; color: var(--text-dim); }
+#new-menu .room b { display: block; font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
+#new-menu .rec { white-space: nowrap; font-size: 11.5px; font-weight: 650; padding: 1px 7px; border-radius: 999px; box-shadow: inset 0 0 0 1px currentColor; }
+#new-menu .rec::before { content: "\2605 "; }
+#new-menu .off .eng-name, #new-menu .off .ico { color: var(--text-faint); }
+#new-menu .eng-fixrow { margin-left: 38px; display: grid; gap: 6px; justify-items: start; }
+#new-menu .eng-step { margin: 0; font-size: 12.5px; color: var(--text-dim); }
+#new-menu .eng-step code { color: var(--text); user-select: all; overflow-wrap: anywhere; }
+#new-menu .models { border: 0; margin: 0 0 0 38px; padding: 0; display: grid; gap: 1px; min-width: 0; }
+#new-menu .mgrp { font-size: 12px; color: var(--text-dim); padding: 6px 0 2px; }
+#new-menu .model { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+#new-menu .model:has(input:checked) { background: var(--button-bg); }
+#new-menu .model input { margin: 0; accent-color: var(--text); }
+#new-menu .model:has(input:disabled) { color: var(--text-faint); cursor: default; }
+#new-menu .model .why { font-size: 12px; color: var(--text-faint); }
+#new-menu .eng-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: 38px; padding-top: 4px; }
+#new-menu .mfoot { border-top: 1px solid var(--card-line); margin-top: 4px; padding: 10px 10px 6px; font-size: 12.5px; color: var(--text-dim); display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; }
+
+/* At the window's narrowest the panels take a line, the split button and the gear the next, never wrapped. */
+@media (max-width: 480px) {
+  .bar-right { flex-wrap: wrap; row-gap: var(--space-3); }
+  .bar-right:has(#new-session:not([hidden])) .tools { flex: 1 1 100%; max-width: none; }
+  .gear { align-self: center; }
+  #new-menu { left: 8px; right: 8px; width: auto; }
+  #new-menu .eng-fixrow, #new-menu .models, #new-menu .eng-actions { margin-left: 0; }
+  #new-menu .room { grid-column: 2 / -1; grid-row: auto; text-align: left; }
+  #new-menu .room b { display: inline; margin-right: 6px; }
+}
+/* Split with terminal: a toggle in the bar's tools, sized as Ledger so a
    half-screen bar grows no taller. Pressed fills its box as well as
    brightening, so the state is not colour alone. */
 #split { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--space-4); font-size: 12.5px; line-height: 16px; color: var(--text-dim); }
@@ -141,10 +275,9 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 #split[aria-pressed="true"]::before { background: currentColor; }
 #split-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
 #split-note:empty { display: none; }
-#theme-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
-#theme-note:empty { display: none; }
-/* The Ledger button sits with the tally and ring key: at half width the bar has no room for it beside the density choice. */
-/* As tall as the ring key beside it, so a wrapped bar grows no taller; the
+#theme-note, #opacity-note, #density-note { order: 1; color: var(--text-dim); font-size: 12.5px; }
+#theme-note:empty, #opacity-note:empty, #density-note:empty { display: none; }
+/* Ledger, Wrap up and the wrap-up bar's buttons share one short height, so a wrapped bar grows no taller; the
    hit area reaches 3 px past each border edge, 24 px in all (WCAG 2.2, 2.5.8). */
 #ledger-open, #wrapup-open, .wrapup-bar button { position: relative; padding: 0 var(--space-5); font-size: 12.5px; line-height: 16px; }
 #ledger-open::after, #wrapup-open::after, .wrapup-bar button::after { content: ""; position: absolute; inset: -4px 0; }
@@ -158,7 +291,39 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 /* The view: density, with the Characters picker set above it in the bar's
    top padding, so the picker takes no room in the bar's row: the bar never
    wraps or grows for it. */
-.view { order: 2; position: relative; display: flex; }
+.gear { position: relative; }
+.gear summary {
+  list-style: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  /* A 32 px target that lays out as 18, a bar button's height, so the gear never makes the bar taller (#248). */
+  margin-block: -7px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gear summary::-webkit-details-marker { display: none; }
+.gear summary:hover, .gear[open] summary { background: var(--button-bg); color: var(--text); }
+.gear summary:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.gear svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+/* The menu: density, then the Characters picker. */
+.view {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 13px); /* 6 px under the summary, which hangs 7 px past the gear's box */
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.7);
+}
 /* Density: a quiet segmented control. */
 .density { display: inline-flex; gap: 2px; padding: 1px; border: 1px solid var(--card-line); border-radius: 8px; }
 .density label {
@@ -175,26 +340,21 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 .density label:has(input:checked) { background: var(--button-bg); color: var(--text); }
 .density label:has(input:focus-visible) { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 .density input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-/* Characters: a quiet line over the density choice's right end, 16 px tall
-   and 12 px clear of every other control: the spacing exception to the
-   24 px target size (WCAG 2.2, 2.5.8). */
+/* Characters: a 28 px select, over the 24 px target size (WCAG 2.2, 2.5.8). */
 .theme-pick {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4.5px); /* inside the bar's 20 px top padding */
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   color: var(--text-dim);
-  font: 600 11.5px/1 var(--font);
+  font: 600 12.5px/1 var(--font);
   white-space: nowrap;
 }
 .theme-pick select {
-  height: 16px;
-  padding: 0 2px;
-  border: 0;
-  border-radius: 4px;
-  background: var(--wall-bg); /* the bar's own: never transparent, see below */
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--card-line);
+  border-radius: 6px;
+  background: var(--card-bg); /* the menu's own: never transparent, see below */
   color: var(--text);
   color-scheme: dark;
   font: inherit;
@@ -208,6 +368,19 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
    at once. */
 .theme-pick option { background: var(--card-bg); color: var(--text); }
 .theme-pick option:checked { background: var(--button-hover); color: var(--text); }
+/* The gauge's background opacity (#438): saved and applied on each step. */
+.opacity-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-dim);
+  font: 600 12.5px/1 var(--font);
+  white-space: nowrap;
+}
+.opacity-pick[hidden] { display: none; }
+.opacity-pick input { width: 120px; height: 28px; accent-color: var(--card-focus); } /* neutral: amber means needs you */
+.opacity-pick input:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
+.opacity-value { min-width: 4ch; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
 
 button {
   font: 600 13px/1 var(--font);
@@ -221,13 +394,13 @@ button {
 }
 button:hover:not([aria-disabled="true"]) { background: var(--button-hover); }
 button.primary { background: var(--text); color: var(--wall-bg); border-color: var(--text); }
-button.primary:hover:not([aria-disabled="true"]) { background: #ffffff; }
+button.primary:hover:not([aria-disabled="true"]) { background: var(--primary-hover); border-color: var(--primary-hover); }
 button.clear { background: transparent; border-color: transparent; color: var(--text-dim); }
 button.clear:hover:not([aria-disabled="true"]) { background: var(--button-bg); color: var(--text); }
 /* Off reads as off: no fill, a faint border, a dim label (still 4.5:1 on the card). */
 button[aria-disabled="true"] { color: var(--text-dim); background: transparent; border-color: var(--card-line); cursor: default; }
 /* Open terminal. A character's colour is a left marker on the neutral button (it matches the tmux window); the label names the action. */
-.jump[data-kind="accent"] { box-shadow: inset var(--mark-w) 0 0 var(--accent); }
+.jump[data-kind="accent"] { box-shadow: inset var(--mark-w) 0 0 var(--on-card, var(--accent)); }
 /* The one filled button: the card needs you. Amber means needs you only, so no marker there. */
 .jump[data-kind="needs"] { background: var(--tone-needs); color: var(--needs-ink); border-color: var(--tone-needs); }
 /* Hover keeps the fill (the base hover rule would otherwise grey it), so the 4.5:1 ink holds. */
@@ -235,12 +408,17 @@ button[aria-disabled="true"] { color: var(--text-dim); background: transparent; 
 /* The ring sits 2px off the button, on the card's own colour, so it never touches an accent. */
 button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px; }
 
+#main { position: relative; z-index: 1; }
+.wall, .empty, .limits { position: relative; z-index: 1; }
 .wall {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min), 100%), 1fr));
   gap: var(--card-gap);
   padding: var(--card-gap) var(--wall-pad) var(--wall-pad);
+  container: wall / inline-size; /* card-width rules below query the wall, not the window */
 }
+/* Comfortable rows leave room for the figures that break the frame (#247). */
+.wall:not([data-density="compact"]) { row-gap: var(--fig-over); padding-top: var(--fig-over); }
 
 /* Focused only when a portrait's card has gone (wall.js); the wall itself is no control. */
 .wall:focus { outline: none; }
@@ -269,6 +447,8 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card {
   --tone: var(--tone-quiet);
   --light: var(--accent, var(--band-gold));
+  --on-card: var(--accent); /* the character on the card's own surface; the light scheme deepens it (model.js accentLight) */
+  --edge: var(--on-card, var(--card-line)); /* the character's colour; an exception's takes over (#247) */
   --badge-ring: var(--card-bg);
   position: relative;
   isolation: isolate; /* the waves sit behind the card's text, above its fill */
@@ -279,29 +459,35 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
   padding: var(--card-pad);
   border-radius: 14px;
   background: var(--card-bg);
-  border: 1px solid var(--card-line);
+  border: 1px solid color-mix(in oklab, var(--edge) 55%, var(--card-line));
   outline: 2px solid transparent;
   outline-offset: 2px;
 }
 .card:focus { outline-color: var(--card-focus); }
-/* Live state rides on the card's edge; quiet states step back. */
+.card:hover { box-shadow: 0 0 0 1px color-mix(in oklab, var(--edge) 45%, transparent), 0 10px 30px -16px color-mix(in oklab, var(--edge) 70%, transparent); }
+/* The card's edge wears its character (#247); status is the pill's. Quiet states step back. */
 /* A card-shaped box below the band whose left border curves with the card's corner. */
 .card::before {
   content: "";
   position: absolute;
   inset: var(--band-h) -1px -1px -1px;
-  border-left: 3px solid var(--tone);
+  border-left: 3px solid var(--edge);
   border-radius: 0 0 13px 13px;
   pointer-events: none;
 }
 .card.tone-needs {
   --tone: var(--tone-needs);
   --light: var(--tone-needs);
-  border-color: color-mix(in oklab, var(--tone-needs) 45%, var(--card-line));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--tone-needs) 25%, transparent),
-    0 8px 28px -12px color-mix(in oklab, var(--tone-needs) 55%, transparent);
+  --edge: var(--tone-needs);
+  border: 2px solid var(--tone-needs); /* the one loud thing on the wall (#248) */
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--tone-needs) 22%, transparent),
+    0 14px 36px -12px color-mix(in oklab, var(--tone-needs) 60%, transparent);
 }
-.card.tone-error { --tone: var(--tone-error); }
+.card.tone-needs .pill { background: var(--tone-needs); color: var(--needs-ink); }
+.card.tone-needs .pill :is(.age, .when) { color: var(--needs-ink); }
+.card.tone-needs .pill .badge { --badge-ring: var(--tone-needs); }
+/* An error is the other exception: its frame turns the error tone. */
+.card.tone-error { --tone: var(--tone-error); --edge: var(--tone-error); border: 2px solid var(--tone-error); }
 .card.tone-working { --tone: var(--tone-working); }
 .card.tone-done { --tone: var(--tone-done); }
 .card.dim {
@@ -314,6 +500,32 @@ button:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2px
 .card.dim .figure { filter: grayscale(0.85) brightness(0.8); }
 .card.dim .name, .card.dim .where, .card.dim .reply { color: var(--text-dim); }
 .card.dim .prompt, .card.dim .repo .wt, .card.dim .branch, .card.dim .acct { color: var(--text-quiet); }
+
+/* At a glance (#248): one line says what the card is doing (its latest
+   reply). The relay prompt, the other repos, the receipt and "updated" wait
+   for Full text or the Ledger; the crew line stays for screen readers, as
+   the ring's own title explains the arcs on hover. What a guardrail turned
+   down, and telemetry that was missed, are exceptions: their marks stay. */
+.card:not(.open-text) .said p.prompt,
+.card:not(.open-text) .also,
+.card:not(.open-text) .also-more,
+.ledger-line .receipt,
+.updated { display: none !important; }
+.ledger-line:not(:has(.chip:not([hidden]), .partial:not([hidden]))) { display: none; }
+.card:not(.open-text) .crew-line { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* A done, not started, silent or ended card is a slim row: who, where, its
+   latest reply on one line (with its play button) and its actions. */
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) { align-self: start; } /* Compact is already the slim form: its cards keep one height */
+.card:is(.tone-done, .dim):not(.open-text) .ask { display: none; }
+.card:is(.tone-done, .dim):not(.open-text) .said p.reply { -webkit-line-clamp: 1; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) { --band-h: 72px; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) header { --fig: 84px; --fig-left: 4px; --fade-from: 60px; --fade-to: 96px; padding-left: 104px; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name pill" "task task"; column-gap: var(--space-3); }
+/* The slim band puts the name in the pill's row, so the pill joins the grid
+   there (a long name ellipsizes before it) at the corner it rides elsewhere. */
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .pill { position: static; grid-area: pill; align-self: center; margin-right: calc(var(--space-6) - var(--space-8)); }
+.wall:not([data-density="compact"]) .card.has-menu:is(.tone-done, .dim) .pill { margin-right: calc(var(--space-3) + 24px + var(--space-2) - var(--space-8)); }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) :is(.epithet, .marks) { display: none; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .stage { background: var(--grain); }
 
 /* The actions menu button: three dots in the band's top right corner, a 24 px
    target on the pill's row, so it adds no height. The pill steps left of it. */
@@ -345,10 +557,10 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
    the pill rides the corner. Past the figure only --under-text of the light
    reaches the text, so it reads at 4.5:1 in every light (fleet-style test). */
 .card header {
-  --fig: 130px; /* 10 px over the card's top edge, clear of the 16 px gap above it */
-  --fig-left: 4px;
-  --fade-from: 93px;
-  --fade-to: 133px;
+  --fig: 172px; /* breaks the frame: 52 px over the card's top edge, 8 px clear of the row above (#247) */
+  --fig-left: -6px;
+  --fade-from: 115px;
+  --fade-to: 155px;
   position: relative;
   isolation: isolate;
   display: grid;
@@ -358,23 +570,81 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   row-gap: var(--space-1);
   height: var(--band-h);
   margin: 0 calc(-1 * var(--space-8));
-  padding: 0 var(--space-8) var(--space-4) 154px; /* clear of the widest plinth */
+  padding: 0 var(--space-8) var(--space-4) 176px; /* clear of the figure and the widest plinth */
   border-radius: 13px 13px 0 0;
-  border-bottom: 1px solid var(--band-line);
-  background: var(--plate-bg);
+  border-bottom: 2px solid var(--accent, var(--band-line));
+  /* A wash of the character's colour, strong behind the figure and 6% from
+     150 px on, so the task keeps 4.5:1 (fleet-accent.test.js). */
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--accent, var(--band-gold)) 24%, transparent), color-mix(in oklab, var(--accent, var(--band-gold)) 6%, transparent) 150px, color-mix(in oklab, var(--accent, var(--band-gold)) 3%, transparent)),
+    var(--plate-bg);
 }
+/* The header takes its tone again from its own tokens: in the light scheme the band keeps the dark stage's. */
+.card header { --tone: var(--tone-quiet); }
+.card.tone-needs header { --tone: var(--tone-needs); }
+.card.tone-error header { --tone: var(--tone-error); }
+.card.tone-working header { --tone: var(--tone-working); }
+.card.tone-done header { --tone: var(--tone-done); }
 .stage {
   position: absolute;
   z-index: -1;
   inset: 0;
   border-radius: inherit;
   background:
-    radial-gradient(closest-side, color-mix(in oklab, var(--light) var(--glow-alpha), transparent), transparent) -34px 0 / 228px 194px no-repeat,
-    repeating-conic-gradient(from 180deg at 69px 120%, color-mix(in oklab, var(--light) var(--rays-alpha), transparent) 0deg 3deg, transparent 3deg 10deg),
+    radial-gradient(closest-side, color-mix(in oklab, var(--light) var(--glow-alpha), transparent), transparent) -30px 0 / 260px 200px no-repeat,
+    repeating-conic-gradient(from 180deg at 82px 120%, color-mix(in oklab, var(--light) var(--rays-alpha), transparent) 0deg 3deg, transparent 3deg 10deg),
     var(--grain);
   -webkit-mask-image: linear-gradient(90deg, #000 var(--fade-from), rgb(0 0 0 / var(--under-text)) var(--fade-to));
   mask-image: linear-gradient(90deg, #000 var(--fade-from), rgb(0 0 0 / var(--under-text)) var(--fade-to));
 }
+/* The arrival's parts (#373), shown only while a card is .arriving. */
+.flare, .burst, .herald { display: none; pointer-events: none; }
+.flare {
+  position: absolute;
+  z-index: -1;
+  inset: -1px;
+  border-radius: 15px;
+  box-shadow: 0 0 0 2px var(--on-card, var(--light)), 0 0 40px 10px color-mix(in oklab, var(--light) 50%, transparent);
+}
+.burst {
+  position: absolute;
+  z-index: 0;
+  left: calc(var(--fig-left) + var(--fig) / 2 - 190px);
+  bottom: calc(var(--fig) * 0.42 - 190px);
+  width: 380px;
+  height: 380px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, color-mix(in oklab, var(--light) 90%, white) 0deg 4deg, transparent 4deg 13deg);
+  -webkit-mask-image: radial-gradient(closest-side, #000 25%, transparent 78%);
+  mask-image: radial-gradient(closest-side, #000 25%, transparent 78%);
+}
+.burst::after {
+  content: "";
+  position: absolute;
+  inset: 25%;
+  border-radius: 50%;
+  border: 3px solid color-mix(in oklab, var(--light) 85%, white);
+}
+.herald {
+  position: absolute;
+  z-index: 2;
+  left: 176px; /* the nameplate's own start: header's padding-left */
+  right: var(--space-8);
+  bottom: var(--space-4);
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+  font-family: var(--title);
+  text-transform: uppercase;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+.herald-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 30px; font-weight: 800; letter-spacing: 0.05em; color: var(--accent-ink, var(--ivory)); text-shadow: 0 2px 12px rgb(0 0 0 / 0.6); }
+.herald-cry { font-size: 15px; font-weight: 700; letter-spacing: 0.22em; color: var(--ivory); }
+.herald-epithet { max-width: 100%; overflow: hidden; text-overflow: ellipsis; margin-top: 4px; font: 600 11.5px/1.2 var(--font); letter-spacing: 0.08em; color: var(--text-dim); }
+.herald-epithet:empty { display: none; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .herald { left: 104px; }
+.wall:not([data-density="compact"]) .card:is(.tone-done, .dim) .herald-name { font-size: 22px; }
 /* The figure is the button that opens the full portrait (#44). */
 .look {
   display: block;
@@ -394,10 +664,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   height: var(--fig);
 }
 .figure { display: block; width: 100%; height: 100%; object-fit: contain; }
-/* The art's own top edge fades rather than cutting off where it breaks the card's edge. */
+/* The figure breaks the card's edge whole: the art's own top edge is the cut-out's. */
 .has-figure .figure {
-  -webkit-mask-image: linear-gradient(transparent, #000 3px);
-  mask-image: linear-gradient(transparent, #000 3px);
   filter: drop-shadow(0 0 1px color-mix(in oklab, var(--light) 70%, transparent)) drop-shadow(0 6px 14px rgb(0 0 0 / 0.55));
 }
 .card:not(.has-figure) .figure { display: none; }
@@ -422,6 +690,10 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 .has-figure .portrait .face { display: none; }
 .card:not(.has-figure) .portrait { position: absolute; left: 29px; top: 20px; }
 .card:not(.has-figure) .look { position: absolute; z-index: 1; left: 29px; top: 20px; width: var(--wall-face); height: var(--wall-face); border-radius: 50%; }
+/* A slim band (72 px) has no room for the full portrait: a theme with no
+   figures shows it at three quarters, inside the band and clear of the repo line. */
+/* `scale`, not `transform`: an arrival animates transform, and the two compose. Drawn at 20, 6 (scaled about its centre). */
+.wall:not([data-density="compact"]) .card:not(.has-figure):is(.tone-done, .dim) :is(.portrait, .look) { left: 10px; top: -4px; scale: 0.75; }
 .marks { display: none; }
 /* A small gilded plaque at the figure's foot. */
 .has-figure .marks:not(:empty) {
@@ -511,13 +783,16 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
   font-size: 12.5px;
   line-height: 1.2;
   background: color-mix(in oklab, var(--tone) 16%, transparent);
-  color: color-mix(in oklab, var(--tone) 70%, white);
+  color: color-mix(in oklab, var(--tone) 70%, var(--pill-mix));
   white-space: nowrap;
 }
 .pill .age, .pill .when { color: var(--pill-age); font-weight: 500; font-variant-numeric: tabular-nums; }
 .pill .when { display: none; } /* the compact card's merged time */
 .mark { display: inline-flex; flex: none; }
 .pill .badge { width: 16px; height: 16px; }
+/* Working is healthy, so quiet: its badge wears the parchment tone, never the strip's blue (#248). */
+.card .badge.tone-working .shape, .card .tone-working .badge .shape { fill: var(--tone-working); }
+.card .badge.tone-working .ink, .card .tone-working .badge .ink { fill: var(--working-ink); }
 
 /* One line in either density; a long place cuts short and its title holds all of it. */
 .where { display: flex; align-items: center; gap: 6px 10px; min-width: 0; overflow: hidden; white-space: nowrap; }
@@ -528,6 +803,8 @@ button.menu svg { width: 16px; height: 16px; fill: currentColor; }
 /* #149: the folder name opens the folder (the phone: GitHub); the mark opens the repo. */
 .repo[role] { cursor: pointer; border-radius: 4px; }
 .repo[role]:hover, .repo[role]:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+.engine-badge { display: inline-flex; flex: none; color: var(--text-dim); }
+.engine-badge svg { width: 14px; height: 14px; }
 .gh { display: inline-flex; flex: none; color: var(--text-dim); border-radius: 4px; }
 .gh svg { width: 14px; height: 14px; }
 .gh:hover, .gh:focus-visible { color: var(--text); }
@@ -542,7 +819,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   color: var(--text-dim);
   font-size: 12.5px;
   padding: 2px 8px;
-  border: 1px solid var(--card-line);
+  border: 1px solid color-mix(in oklab, var(--on-card, var(--card-line)) 50%, var(--card-line));
   border-radius: 6px;
 }
 .branch svg, .acct svg { width: 12px; height: 12px; flex: none; }
@@ -567,6 +844,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 .also-rest { display: inline-block; }
 .also .past { display: none; } /* the repos the "+N" chip names, shown only by Full text */
 .crew-line { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: -4px; color: var(--text-dim); font-size: 12.5px; }
+.crew-line .delegate { display: inline-flex; align-items: center; padding: 1px 6px; font-size: 11.5px; border-radius: 4px; border: 1px solid var(--card-line); color: var(--text-dim); }
 .crew-line .free { color: var(--text-quiet); }
 .crew-line .free::before { content: "\00b7"; margin-right: 10px; }
 
@@ -578,7 +856,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
   border-radius: 8px;
   font-weight: 600;
   background: color-mix(in oklab, var(--tone-needs) 14%, transparent);
-  color: color-mix(in oklab, var(--tone-needs) 75%, white);
+  color: color-mix(in oklab, var(--tone-needs) 75%, var(--pill-mix));
 }
 /* One line in either density. Cut short, it loses its middle: the lead takes
    the ellipsis and the tool's own name (.ask-keep) stays whole, cut itself only
@@ -636,6 +914,8 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
    calls a guardrail turned down. Comfortable: a row above the footer. */
 .ledger-line { display: flex; align-items: center; gap: var(--space-4); min-width: 0; color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .receipt { min-width: 0; }
+/* Past the context budget (#515): louder text, not amber, which means needs you. */
+.receipt.warn { color: var(--text); font-weight: 600; }
 .r-short { display: none; }
 .partial {
   flex: none;
@@ -658,7 +938,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 }
 .chip::after { content: ""; position: absolute; inset: -4px 0; }
 
-.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--card-line); padding-top: var(--space-3); }
+.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid color-mix(in oklab, var(--on-card, var(--card-line)) 30%, var(--card-line)); padding-top: var(--space-3); }
 /* 28 px tall, over the 24x24 minimum (WCAG 2.2, 2.5.8); compact sets its own. */
 .actions .jump, .actions .clear, .actions .undo { min-height: 28px; padding: 0 var(--space-5); }
 .actions .note { color: var(--text-dim); font-size: 12.5px; margin-right: auto; overflow-wrap: anywhere; }
@@ -745,9 +1025,41 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 [data-density="compact"] .has-figure .portrait .face { display: block; }
 [data-density="compact"] .card .look { grid-area: face; position: relative; inset: auto; z-index: 1; width: var(--wall-face); height: var(--wall-face); border-radius: 50%; }
 [data-density="compact"] .task { margin: 0 0 0 var(--head-gap); font-size: 13px; }
+/* The compact banner takes the name and task rows; there is no band to light. */
+[data-density="compact"] .burst { display: none !important; }
+[data-density="compact"] .herald { position: relative; left: auto; right: auto; bottom: auto; grid-column: 2 / 3; grid-row: 1 / 3; align-self: center; margin-left: var(--head-gap); flex-flow: row wrap; align-items: baseline; column-gap: 0.4em; }
+[data-density="compact"] .herald-name { font-size: 19px; /* large text (WCAG: 14 pt bold), so the character's 3:1 tone reads */ color: var(--on-card, var(--text)); text-shadow: none; }
+[data-density="compact"] .herald-cry { font-size: 12px; color: var(--text); }
+[data-density="compact"] .herald-epithet { flex-basis: 100%; margin-top: 2px; }
 [data-density="compact"] .pill { position: static; grid-area: pill; align-self: center; margin-left: var(--space-3); gap: 6px; padding: 3px 8px 3px 6px; font-size: 12px; }
 [data-density="compact"] .pill .badge { width: 14px; height: 14px; }
 [data-density="compact"] .pill .age { display: none; }
+/* A compact card too narrow for name, pill and Open terminal on one line (#505)
+   gives the name its own: the pill and the buttons take a line under the task,
+   beside the portrait, so an arrival's herald still covers just name and task.
+   Measured on the demo wall (11-24): the widest one-line header takes 360 px of a
+   card's content without its name; with 90 px for a name, the card's 30 px of
+   padding and border, and 20 px for a longer age, a wall narrower than 500 px
+   stacks. That is always one column, where a card is as wide as the wall's
+   content, which a queue or ledger tab narrows. */
+@container wall (max-width: 499.98px) {
+  /* The phone wall keeps its own one-line header (.served), so these are the desktop's. */
+  :root:not(.served) .wall[data-density="compact"] .card {
+    grid-template-rows: auto auto auto auto auto 1fr auto;
+    grid-template-areas:
+      "face name name name name"
+      "face task task task task"
+      "face pill pill clear jump"
+      "meta meta meta meta meta"
+      "ask ask ask ask ask"
+      "said said said said said"
+      "menu note note note note";
+  }
+  /* The pill keeps to its share of the line: its time gives way first ("12m qu…"). */
+  :root:not(.served) [data-density="compact"] .pill { justify-self: start; min-width: 0; max-width: calc(100% - var(--head-gap)); margin-left: var(--head-gap); }
+  :root:not(.served) [data-density="compact"] .pill :is(.mark, .label) { flex-shrink: 0; }
+  :root:not(.served) [data-density="compact"] .pill .when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 [data-density="compact"] .pill .when { display: inline; }
 [data-density="compact"] .jump,
 [data-density="compact"] .clear {
@@ -918,15 +1230,134 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
 /* One pulse when a card starts needing AJ: an amber ring leaves the edge and fades.
    A new card arrives once: its figure steps in and its light rises (wall.js .arriving). */
 @media (prefers-reduced-motion: no-preference) {
+  /* The arrival (#373): transform and opacity only, so the compositor runs it.
+     The figure springs up over the frame and settles; rays and a ring burst
+     behind it once; the banner slides in, holds, and gives the header back. */
   @keyframes figure-arrive {
-    from { translate: -24px 0; clip-path: inset(0 100% 0 0); }
-    to { translate: 0 0; clip-path: inset(0 0 0 0); }
+    0% { opacity: 0; transform: translate(-18px, 46px) scale(0.55); }
+    55% { opacity: 1; transform: translate(0, -12px) scale(1.16); }
+    78% { transform: translate(0, 3px) scale(0.98); }
+    100% { opacity: 1; transform: none; }
+  }
+  @keyframes face-arrive {
+    0% { opacity: 0; transform: scale(0.4); }
+    60% { opacity: 1; transform: scale(1.18); }
+    100% { opacity: 1; transform: none; }
   }
   @keyframes light-rise {
-    from { filter: brightness(0.15); }
+    from { opacity: 0.1; }
   }
-  .card.arriving .figure { animation: figure-arrive 650ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .card.arriving .stage { animation: light-rise 700ms ease-out both; }
+  @keyframes burst {
+    0% { opacity: 0; transform: scale(0.3) rotate(0deg); }
+    25% { opacity: 1; transform: scale(1) rotate(12deg); }
+    100% { opacity: 0; transform: scale(1.3) rotate(48deg); }
+  }
+  @keyframes ring-out {
+    0% { opacity: 0.9; transform: scale(0.2); }
+    100% { opacity: 0; transform: scale(1.5); }
+  }
+  @keyframes slam {
+    0% { transform: scale(1.5); }
+    60% { transform: scale(0.97); }
+    100% { transform: none; }
+  }
+  @keyframes herald {
+    0% { opacity: 0; transform: translateX(-28px); }
+    14% { opacity: 1; transform: none; }
+    84% { opacity: 1; transform: none; }
+    100% { opacity: 0; transform: translateY(-8px) scale(0.96); }
+  }
+  @keyframes who-wait {
+    0%, 84% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes flare {
+    0% { opacity: 0; }
+    10% { opacity: 1; }
+    60% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  /* Arrival signature motifs (#385, #224) */
+  @keyframes sparks-scatter {
+    0% { opacity: 0; transform: scale(0.2) rotate(-15deg); }
+    20% { opacity: 1; transform: scale(1.05) rotate(8deg); }
+    65% { opacity: 0.85; transform: scale(1.22) rotate(28deg); }
+    100% { opacity: 0; transform: scale(1.45) rotate(45deg); }
+  }
+  @keyframes shimmer-burst {
+    0% { opacity: 0; transform: scale(0.35) rotate(-25deg); }
+    28% { opacity: 1; transform: scale(1.04) rotate(4deg); }
+    100% { opacity: 0; transform: scale(1.28) rotate(35deg); }
+  }
+  @keyframes aperture-dilate {
+    0% { opacity: 0; transform: scale(0.2); }
+    25% { opacity: 1; transform: scale(0.85); }
+    65% { opacity: 0.9; transform: scale(1.15); }
+    100% { opacity: 0; transform: scale(1.4); }
+  }
+  @keyframes sand-wave {
+    0% { opacity: 0; transform: scale(0.3) rotate(0deg); }
+    22% { opacity: 1; transform: scale(0.92) rotate(80deg); }
+    100% { opacity: 0; transform: scale(1.38) rotate(240deg); }
+  }
+  @keyframes mist-fade {
+    0% { opacity: 0; transform: scale(0.5); }
+    30% { opacity: 0.95; transform: scale(1.05); }
+    100% { opacity: 0; transform: scale(1.35); }
+  }
+  .card.arriving .figure { transform-origin: 50% 100%; animation: figure-arrive 720ms cubic-bezier(0.2, 0.8, 0.25, 1) var(--arrive-at, 0ms) both; }
+  .card.arriving .portrait { animation: face-arrive 600ms cubic-bezier(0.2, 0.8, 0.25, 1) var(--arrive-at, 0ms) both; }
+  .card.arriving .stage { animation: light-rise 700ms ease-out var(--arrive-at, 0ms) both; }
+  .card.arriving:is([data-motif="burst"], :not([data-motif])) .burst { display: block; animation: burst 1400ms ease-out var(--arrive-at, 0ms) both; }
+  .card.arriving:is([data-motif="burst"], :not([data-motif])) .burst::after { animation: ring-out 800ms ease-out calc(var(--arrive-at, 0ms) + 120ms) both; }
+  .card.arriving[data-motif="sparks"] .burst {
+    display: block;
+    background:
+      repeating-conic-gradient(from 0deg, color-mix(in oklab, var(--light) 95%, white) 0deg 2deg, transparent 2deg 14deg),
+      repeating-conic-gradient(from 7deg, color-mix(in oklab, var(--light) 80%, #ff8800) 0deg 1.5deg, transparent 1.5deg 22deg);
+    animation: sparks-scatter 1300ms cubic-bezier(0.15, 0.85, 0.25, 1) var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="sparks"] .burst::after {
+    animation: ring-out 750ms ease-out calc(var(--arrive-at, 0ms) + 100ms) both;
+  }
+  .card.arriving[data-motif="shimmer"] .burst {
+    display: block;
+    background:
+      linear-gradient(125deg, transparent 25%, color-mix(in oklab, var(--light) 90%, white) 48%, color-mix(in oklab, var(--light) 65%, cyan) 52%, transparent 75%),
+      repeating-conic-gradient(from 30deg, transparent 0deg 22deg, color-mix(in oklab, var(--light) 75%, white) 22deg 25deg, transparent 25deg 45deg);
+    animation: shimmer-burst 1400ms ease-out var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="shimmer"] .burst::after {
+    animation: ring-out 900ms ease-out calc(var(--arrive-at, 0ms) + 140ms) both;
+  }
+  .card.arriving[data-motif="eyes"] .burst {
+    display: block;
+    background: repeating-radial-gradient(circle at 50% 50%, transparent 0 13px, color-mix(in oklab, var(--light) 85%, white) 14px 18px, transparent 19px 28px);
+    animation: aperture-dilate 1300ms cubic-bezier(0.2, 0.8, 0.25, 1) var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="eyes"] .burst::after {
+    animation: ring-out 800ms ease-out calc(var(--arrive-at, 0ms) + 160ms) both;
+  }
+  .card.arriving[data-motif="sand"] .burst {
+    display: block;
+    background: conic-gradient(from 0deg at 50% 50%, transparent 0deg, color-mix(in oklab, var(--light) 85%, #f0e442) 40deg, transparent 80deg, color-mix(in oklab, var(--light) 85%, #f0e442) 220deg, transparent 260deg);
+    animation: sand-wave 1500ms ease-out var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="sand"] .burst::after {
+    animation: ring-out 850ms ease-out calc(var(--arrive-at, 0ms) + 120ms) both;
+  }
+  .card.arriving[data-motif="fade"] .burst {
+    display: block;
+    background: radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--light) 80%, white) 0%, color-mix(in oklab, var(--light) 35%, transparent) 45%, transparent 70%);
+    animation: mist-fade 1600ms ease-out var(--arrive-at, 0ms) both;
+  }
+  .card.arriving[data-motif="fade"] .burst::after {
+    display: none;
+  }
+  .card.arriving .herald { display: flex; animation: herald 3300ms cubic-bezier(0.2, 0.8, 0.25, 1) calc(var(--arrive-at, 0ms) + 250ms) both; }
+  .card.arriving .herald-name { transform-origin: 0 100%; animation: slam 420ms cubic-bezier(0.3, 0.7, 0.3, 1) calc(var(--arrive-at, 0ms) + 250ms) both; }
+  .card.arriving :is(.name, .epithet, .task) { animation: who-wait 3550ms linear var(--arrive-at, 0ms) both; }
+  .card.arriving .flare { display: block; animation: flare 3300ms ease-out var(--arrive-at, 0ms) both; }
   @keyframes card-pulse {
     from { box-shadow: 0 0 0 0 color-mix(in oklab, var(--tone-needs) 70%, transparent); }
     to { box-shadow: 0 0 0 14px transparent; }
@@ -937,6 +1368,22 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
     from { opacity: 0; }
   }
   .empty:not([hidden]) { animation: empty-fade 400ms ease-out; }
+  @keyframes orb-drift-1 {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(45px, 35px, 0) scale(1.08); }
+    100% { transform: translate3d(-30px, 50px, 0) scale(0.96); }
+  }
+  @keyframes orb-drift-2 {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(-50px, -40px, 0) scale(1.06); }
+    100% { transform: translate3d(35px, -30px, 0) scale(0.95); }
+  }
+  .wall-backdrop .orb-1 {
+    animation: orb-drift-1 48s ease-in-out 1 both;
+  }
+  .wall-backdrop .orb-2 {
+    animation: orb-drift-2 56s ease-in-out 1 both;
+  }
 }
 /* Reordered cards slide to their new places. */
 ::view-transition-group(*) { animation-duration: 300ms; animation-timing-function: ease-out; }
@@ -944,6 +1391,24 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
   ::view-transition-group(*) { animation-duration: 0s; }
+  /* The arrival without movement (#373): the banner shows in place and crossfades out. */
+  @keyframes herald-calm {
+    0% { opacity: 0; }
+    8%, 84% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes who-calm {
+    0%, 84% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes flare-calm {
+    0% { opacity: 0; }
+    8%, 60% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  .card.arriving .herald { display: flex; animation: herald-calm 3300ms linear var(--arrive-at, 0ms) both !important; }
+  .card.arriving :is(.name, .epithet, .task) { animation: who-calm 3300ms linear var(--arrive-at, 0ms) both !important; }
+  .card.arriving .flare { display: block; animation: flare-calm 3300ms linear var(--arrive-at, 0ms) both !important; }
 }
 
 /* The side panels, Queue and Ledger (sidepanel.js), one open at a time.
@@ -956,6 +1421,15 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
 /* Below the dock breakpoint (DOCK_MIN_PX) the half-screen bar fits "Queue · N" only; the name keeps "for you". */
 @media (width < 1200px) {
   #queue-open .for-you { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+/* At half a screen the gaps and the panel buttons narrow, and the panels give
+   way before the tally, so the gear fits beside a one-row tally (#248). */
+@media (width < 1200px) {
+  .bar { gap: var(--space-5); }
+  /* On the bar's bottom edge: once the tally wraps to two lines, the gear's menu still opens under the bar. */
+  .bar-right { gap: var(--space-2); flex-shrink: 8; align-self: flex-end; }
+  .tools { column-gap: var(--space-2); }
+  #ledger-open, #queue-open, #wrapup-open { padding-inline: var(--space-4); }
 }
 /* --panel-w is each panel's docked width (on its dialog), --dock-w the docked one's. */
 body:is(.queue-docked, .ledger-docked) { padding-right: var(--dock-w); }
@@ -1084,8 +1558,7 @@ body:is(.queue-tabbed, .ledger-tabbed) .wall { padding-right: max(var(--wall-pad
    or any added later) can be reached from a phone. A card with a Remote
    Control link opens it. */
 .served button:not([data-phone]),
-.served .density,
-.served .theme-pick,
+.served .gear,
 .served .tools { display: none !important; }
 a.remote {
   display: inline-flex;
@@ -1171,6 +1644,21 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
 .limits .pct { grid-area: pct; font: 600 17px/1.2 var(--display); font-variant-numeric: tabular-nums; color: var(--text); }
 .limits .sub { grid-area: sub; min-width: 0; color: var(--text-dim); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .limits .label { grid-area: label; min-width: 0; color: var(--text-dim); font-size: 12.5px; overflow-wrap: anywhere; }
+.limits .entry[data-capped="true"] .label,
+.limits .entry[data-capped="true"] .sub { color: var(--text-dim); }
+.limits .route-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--ramp-mid, #eab308);
+  color: #111;
+  line-height: 1;
+  vertical-align: middle;
+}
 .limit-wait { color: var(--text-dim); font-size: 12.5px; }
 /* The wall is dark in either scheme; Safari's own parts follow it. */
 .served { color-scheme: dark; }
@@ -1193,7 +1681,6 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
   .served .lead { gap: var(--space-2) var(--space-7); }
   .served .tally { gap: var(--space-1) var(--space-6); }
   .served .tally b { font-size: 22px; }
-  .served .ring-key { display: none; }
   .served .wall { padding-bottom: calc(var(--wall-pad) + env(safe-area-inset-bottom)); }
   .served a.remote { min-height: 44px; min-width: 44px; }
   .served .card .look { min-width: 44px; min-height: 44px; }
@@ -1247,23 +1734,58 @@ a.remote:focus-visible { outline: 2px solid var(--card-focus); outline-offset: 2
 #health .health-detail, #health .health-note { color: var(--text-dim); font-size: 12.5px; overflow-wrap: anywhere; }
 #health .health-detail:empty, #health .health-note:empty { display: none; }
 
-#agora-open { align-self: center; padding: 0 var(--space-5); font-size: 12.5px; line-height: 16px; color: var(--text-dim); }
-.served #agora-open { min-height: 44px; min-width: 44px; }
-#agora {
-  margin: 0; inset: auto; top: 56px; right: 16px; width: min(480px, calc(100vw - 32px));
-  max-height: 70vh; overflow: auto; padding: var(--space-5) var(--space-6);
-  background: var(--card-bg); color: var(--text); border: 1px solid var(--card-line); border-radius: 10px;
+/* Light: parchment surfaces, the same bronze family. The header band stays a
+   dark stage in both schemes, like a card's art box, so a figure keeps its
+   light and the band's text its contrast (fleet-accent.test.js reads both). */
+:root:not(.served) { color-scheme: dark light; } /* the phone wall stays dark (.served) */
+@media (prefers-color-scheme: light) {
+  :root:not(.served) {
+    --wall-bg: #efe6d6;
+    --card-bg: #fbf6ec;
+    --card-quiet: #f5eee1;
+    --card-line: #d9cbb3;
+    --card-focus: #2b2118;
+    --text: #2b2118;
+    --text-dim: #64533f;
+    --text-quiet: #6f5e49;
+    --text-faint: #74624c;
+    --text-error: #a83a08;
+    --pill-age: #5e4e3b;
+    --tone-needs: #ac6700;
+    --tone-done: #00805c;
+    --tone-working: #6a5640;
+    --tone-quiet: #7d6f5e;
+    --ring-track: #e8dcc8;
+    --crew-gold: #8a6a00;
+    --button-bg: #f1e6d3;
+    --button-line: #ccb998;
+    --button-hover: #e8dac2;
+    --primary-hover: #0d0a07;
+    --pill-mix: black;
+    --working-ink: #ffffff;
+    --bg-orb1-alpha: 8%;
+    --bg-orb2-alpha: 7%;
+  }
+  :root:not(.served) .card { --on-card: var(--accent-light, var(--accent)); }
+  /* The band and the portrait stay the dark stage: their text and pills keep the dark scheme's tones. */
+  :root:not(.served) .wall:not([data-density="compact"]) .card header, :root:not(.served) #portrait {
+    --text: #f2eadf;
+    --text-dim: #b9a993;
+    --text-quiet: #a09079;
+    --pill-age: #c4b6a0;
+    --tone-needs: var(--badge-needs);
+    --tone-done: var(--badge-done);
+    --tone-working: #d9c6a5;
+    --tone-quiet: #9a8d7b;
+    --button-bg: #2c241a;
+    --button-line: #4a3d2d;
+    --button-hover: #372d21;
+    --card-focus: #f2eadf;
+    --pill-mix: white;
+    --working-ink: #000000;
+  }
+  /* The band's "+N" badge keeps the dark card under the band's light text. */
+  :root:not(.served) .wall:not([data-density="compact"]) .card header .portrait .more { background: #1f1912; border-color: #3b3125; }
+  :root:not(.served) :is(.empty h2, [data-density="compact"] :is(.name, button.menu)) { color: var(--text); }
+  :root:not(.served) .ledger .fill { background: var(--accent-light, var(--accent, var(--text-quiet))); }
 }
-#agora .agora-title { margin: 0 0 var(--space-4); font: 600 14px/1.3 var(--font); }
-#agora .agora-posts { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-5); }
-#agora .agora-post { display: grid; grid-template-columns: 32px 1fr; column-gap: var(--space-4); row-gap: 2px; align-items: start; }
-#agora .agora-face { grid-row: span 4; width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
-#agora .agora-head { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: baseline; }
-#agora .agora-name { font-weight: 600; }
-#agora .agora-kind { font-size: 11.5px; padding: 0 var(--space-3); border: 1px solid var(--card-line); border-radius: 999px; color: var(--text-dim); }
-#agora .agora-meta, #agora .agora-link { color: var(--text-dim); font-size: 12.5px; }
-#agora .agora-text { margin: 0; overflow-wrap: anywhere; }
-#agora .agora-reacts { display: flex; gap: var(--space-2); }
-#agora .agora-react { min-width: 32px; min-height: 28px; padding: 0 var(--space-3); border-radius: 999px; }
-#agora .agora-react[aria-pressed="true"] { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); }
-#agora .agora-note:empty { display: none; }

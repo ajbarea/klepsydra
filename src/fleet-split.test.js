@@ -219,7 +219,7 @@ test("the app watches from each split, stops at each unsplit and at exit, and wi
   assert.match(fn("unsplit"), /^pub fn unsplit\(wall: isize\) -> String \{\s*watch::disarm\(\);\s*if restore\(take\(\), wall\)/, "an unsplit stops watching before it puts anything back");
   assert.match(rs, /win::when_left\(move \|note\| turned_off\(&to, note\)\);/, "a leave reaches the wall and prefs.json");
   const main = code(read("../src-tauri/src/main.rs"));
-  assert.match(main, /if let tauri::RunEvent::Exit = event \{\s*split::quitting\(\);\s*\}/, "quitting stops the watch before Tauri hides the windows");
+  assert.match(main, /if let tauri::RunEvent::Exit = event \{[^}]*\bsplit::quitting\(\);\s*\}/, "quitting stops the watch before Tauri hides the windows");
   assert.match(rs, /pub fn quitting\(\) \{\s*#\[cfg\(windows\)\]\s*win::stop_watching\(\);\s*\}/);
 });
 

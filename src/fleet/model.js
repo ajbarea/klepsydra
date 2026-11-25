@@ -8,7 +8,7 @@ import { ledgerLine } from "./ledger.js";
 
 export { voiceName };
 import { speakingNow } from "./speaking.js";
-import { listWords, sessionActions } from "./end.js";
+import { listWords, paneKnown, sessionActions } from "./end.js";
 import { wrapupLine, sessionRoute } from "./wrapup.js";
 
 // Each status's badge: shape, symbol and tone carry it together with the
@@ -124,18 +124,44 @@ export function identity(s, cast) {
     const placed = Array.isArray(head) && head.length === 3 && head.every((v) => typeof v === "number" && v > 0 && v < 1);
     return {
       name: character.name,
-      voice: picked ? null : voiceName(voice),
+      voice: voiceName(voice),
+      voiceKey: voice,
       face: `${base}-96.webp`,
       face2x: `${base}-192.webp`,
       full: `${base}-full.webp`,
       accent,
       epithet: typeof character.epithet === "string" ? character.epithet : null,
       figure: placed ? { src: `${base}-figure.webp`, head } : null,
+      motif: typeof character.motif === "string" ? character.motif : (ORCHESTRATOR_VOICES.includes(voice) ? "burst" : "fade"),
     };
   }
   const name = own ? voiceName(own) : s.name || basename(s.launch_dir) || s.session_id.slice(0, 8);
   const face = medallion(name, own ?? s.session_id);
-  return { name, voice: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null };
+  return { name, voice: null, voiceKey: null, face, face2x: face, full: null, accent: null, epithet: null, figure: null, motif: "burst" };
+}
+
+/**
+ * The drawer's character per session: each card on the wall by `identity`, then
+ * each session gone from it that today's file records a crate pick for (`day.picks`),
+ * when that pick has a face in this cast (a theme changed since keeps it out).
+ * A card wearing the character the wall cast (its crate pick), not its own voice's,
+ * has cast: true so tokensByCharacter attributes its tokens to the character row (#148, #536).
+ */
+export function drawerCharacters(sessions, cast, day) {
+  const map = new Map();
+  for (const s of sessions) {
+    const id = identity(s, cast);
+    // What tells two cards of one character apart: the session's name, else its repo.
+    // A card wearing the character the wall cast (crate picks), not its own voice's: the Ledger names the card's.
+    map.set(s.session_id, { name: id.name, accent: id.accent, label: s.name || s.where?.repo || null, cast: Boolean(s.pick) && id.voiceKey === s.pick });
+  }
+  // A session gone from the wall keeps the character the crate recorded in today's file.
+  for (const [sid, pick] of Object.entries(day?.picks ?? {})) {
+    if (map.has(sid)) continue;
+    const id = identity({ session_id: sid, pick }, cast);
+    if (id.full) map.set(sid, { name: id.name, accent: id.accent, label: null, cast: true });
+  }
+  return map;
 }
 
 /** The voice keys of the orchestrator's faces, Hephaestus and Athena (src-tauri/fleet/src/picks.rs ORCHESTRATORS). */
@@ -214,18 +240,54 @@ export const shouldSlide = (was, next, snapshot) => Boolean(snapshot) && was.len
 /** The card's view-transition name, or "" unless the id is uuid-shaped. */
 export const transitionName = (id) => (/^[0-9a-f-]{36}$/i.test(id) ? `card-${id}` : "");
 
+/** A status as the live region says it: its label and, unless silent, its reason. */
+const statusWords = (s) => [statusOf(s.status).label, s.status === "silent" ? null : reasonText(s)];
+
 /** What the wall's live region says about changes since `before`; nothing on the first look. */
 export function announcements(before, sessions, cast, nowMs = Date.now()) {
   if (!before) return [];
   const key = statuses(sessions);
   return sessions
     .filter((s) => before.get(s.session_id) !== key.get(s.session_id))
-    .map((s) => {
-      if (isQuiet(s)) return accessibleName(s, cast, nowMs);
-      return [identity(s, cast).name, statusOf(s.status).label, s.status === "silent" ? null : reasonText(s)]
-        .filter(Boolean)
-        .join(", ");
-    });
+    .map((s) => (isQuiet(s) ? accessibleName(s, cast, nowMs) : [identity(s, cast).name, ...statusWords(s)].filter(Boolean).join(", ")));
+}
+
+/** How many session ids a page remembers as already arrived; past it, the longest unseen go first. */
+export const ARRIVALS_KEPT = 500;
+/**
+ * A session's first appearance is an event (#373), once per session and never
+ * on a reload: the first snapshot a page takes only seeds `seen` (null until
+ * then). Returns the ids new since, in snapshot order, and the set to keep.
+ * An ended or quiet session is remembered but never arrives: a focus request
+ * that brings sixteen ended cards back is not sixteen arrivals.
+ */
+export function arrivals(seen, sessions, keep = ARRIVALS_KEPT) {
+  const ids = sessions.map((s) => s.session_id);
+  if (!seen) return { seen: new Set(ids.slice(-keep)), arrived: [] };
+  const arrived = [];
+  for (const s of sessions) {
+    // Re-added, so an id still on the wall stays the newest and is never the one let go.
+    const known = seen.delete(s.session_id);
+    seen.add(s.session_id);
+    if (!known && s.status !== "ended" && !isQuiet(s)) arrived.push(s.session_id);
+  }
+  for (const id of seen) {
+    if (seen.size <= keep) break;
+    seen.delete(id);
+  }
+  return { seen, arrived };
+}
+
+/**
+ * What the live region says when a session arrives: "Hephaestus has arrived,
+ * Master of the Forge". One that arrives in any state but working or not
+ * started says that state too, as a status change would: "…, needs you,
+ * approve Bash(rm -rf build)".
+ */
+export function arrivalLine(s, cast) {
+  const who = identity(s, cast);
+  const usual = !s.status || s.status === "working" || s.status === "new";
+  return [`${who.name} has arrived`, who.epithet, ...(usual ? [] : statusWords(s))].filter(Boolean).join(", ");
 }
 
 /** The compact card's "+2" for the repos a session touched besides its own, named in full for hover and its accessible name; null with none. */
@@ -292,19 +354,24 @@ export function stripItems(sessions, cast, nowMs, before, speaking = null) {
       face2x: who.face2x,
       pulse: pulse.has(s.session_id),
       speaking: talking,
+      // Where the portrait docks on the gauge strip (#421, chips.js dockKey).
+      account: s.account ?? null,
+      engine: s.engine ?? null,
     };
   });
 }
 
 /** Whether the card can jump to the session's terminal, and why not: by its name, or by its tmux pane and Claude process. */
-function jumpable(s) {
+function jumpable(s, native) {
   if (s.status === "ended") return { enabled: false, why: "session ended" };
-  if (!s.name && !(s.tmux && s.claude && s.distro)) return { enabled: false, why: "no session name yet" };
+  if (!s.name && !paneKnown(s, native)) return { enabled: false, why: "no session name yet" };
   return { enabled: true, why: null };
 }
 
 /** The Open terminal button's resting and hover backgrounds (wall.css --button-bg, --button-hover); a style test keeps them equal. */
-export const BUTTON_BGS = ["#252d39", "#2e3846"];
+export const BUTTON_BGS = ["#2c241a", "#372d21"];
+/** The light scheme's card, wall and button surfaces (wall.css, prefers-color-scheme: light); a style test keeps them equal. */
+export const LIGHT_SURFACES = ["#fbf6ec", "#f5eee1", "#efe6d6", "#f1e6d3", "#e8dac2"];
 /**
  * The comfortable card's header band (wall.css): its plate, its light (a glow
  * and rays, each at most this strong), the mask that lets only `underText` of
@@ -312,7 +379,7 @@ export const BUTTON_BGS = ["#252d39", "#2e3846"];
  * character's light, and a quiet card's dim light. A style test keeps these
  * equal to the stylesheet's.
  */
-export const BAND = { plate: "#141820", glow: 0.62, rays: 0.16, underText: 0.15, needs: "#e69f00", dimWith: "#3a414c", dimShare: 0.3 };
+export const BAND = { plate: "#1a140d", glow: 0.62, rays: 0.16, underText: 0.15, needs: "#e69f00", dimWith: "#4a4034", dimShare: 0.3 };
 const LIGHT_AT_TEXT = (1 - (1 - BAND.glow) * (1 - BAND.rays)) * BAND.underText;
 
 /** The brightest the band gets under its text, in each light a character's card can wear: its own, needs-you, quiet. */
@@ -325,14 +392,20 @@ const accentInk = (accent) => {
   if (!inks.has(accent)) inks.set(accent, readableOn(accent, bandGrounds(accent)));
   return inks.get(accent);
 };
+// On parchment the same character keeps its hue, deepened just until its edge, chips and marker hold 3:1.
+const lightEdges = new Map();
+export const accentLight = (accent) => {
+  if (!lightEdges.has(accent)) lightEdges.set(accent, readableOn(accent, LIGHT_SURFACES, 3));
+  return lightEdges.get(accent);
+};
 
 /**
  * How the Open terminal button is styled. "off" (disabled): quiet, nothing else.
  * "needs": the only filled button, on a needs_you card (quiet or not), no marker.
  * "accent": neutral with a left marker in the character's colour. "plain": neutral, no marker.
  */
-function jumpStyle(s, accent) {
-  const kind = !jumpable(s).enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
+function jumpStyle(jump, s, accent) {
+  const kind = !jump.enabled ? "off" : s.status === "needs_you" ? "needs" : accent ? "accent" : "plain";
   return { jumpKind: kind, jumpMark: kind === "accent" ? { color: accent, width: markerWidth(accent, BUTTON_BGS) } : null };
 }
 
@@ -414,8 +487,6 @@ export function crewRing(crew, g = RINGS.comfortable, marks = crewMarks(crew)) {
 export const crewRings = (crew, marks = crewMarks(crew)) =>
   Object.fromEntries(Object.entries(RINGS).map(([density, g]) => [density, crewRing(crew, g, marks)]));
 
-/** Whether the wall's ring key shows: while any card has background work out. */
-export const showsRingKey = (cards) => cards.some((c) => c.rings.comfortable.segments.length > 0);
 
 /**
  * The needs-you line as [lead, keep]: `keep` is the end a card holds in view
@@ -507,15 +578,77 @@ export function accountsDiffer(cards) {
   return new Set(cards.filter((c) => c.accountId && c.status !== "ended").map((c) => c.accountId)).size > 1;
 }
 
-/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown. */
-export function card(s, cast, nowMs, request = null) {
+/**
+ * Deduce the model maker, harness display label, and badge tooltip.
+ * Returns { engine, harness, model, maker, makerLabel, tooltip, ariaLabel } or null if neither engine nor model is known.
+ */
+export function engineInfo(engine, model) {
+  if (!engine && !model) return null;
+  const eng = (engine || "claude").trim().toLowerCase();
+  const m = typeof model === "object" && model !== null
+    ? (model.display_name || model.id || "")
+    : (typeof model === "string" ? model : "");
+
+  const lowerM = m.toLowerCase();
+  let maker = null;
+  let makerLabel = null;
+  if (lowerM.includes("gemini") || lowerM.includes("google")) {
+    maker = "gemini";
+    makerLabel = "Google Gemini";
+  } else if (lowerM.includes("claude") || lowerM.includes("opus") || lowerM.includes("sonnet") || lowerM.includes("haiku") || lowerM.includes("anthropic")) {
+    maker = "anthropic";
+    makerLabel = "Anthropic";
+  } else if (lowerM.includes("gpt") || lowerM.includes("openai") || lowerM.includes("o1") || lowerM.includes("o3") || lowerM.includes("o4")) {
+    maker = "openai";
+    makerLabel = "OpenAI";
+  } else if (lowerM.includes("llama") || lowerM.includes("meta")) {
+    maker = "meta";
+    makerLabel = "Meta";
+  } else if (lowerM.includes("copilot")) {
+    maker = "copilot";
+    makerLabel = "GitHub Copilot";
+  } else if (eng === "claude") {
+    maker = "anthropic";
+    makerLabel = "Anthropic";
+  } else if (eng === "agy") {
+    maker = "gemini";
+    makerLabel = "Google Gemini";
+  } else if (eng === "copilot") {
+    maker = "copilot";
+    makerLabel = "GitHub Copilot";
+  }
+
+  const harness = eng === "agy" ? "agy" : (eng === "copilot" ? "Copilot" : (eng === "claude" ? "Claude" : eng));
+  const tooltip = m ? `${harness} \u00b7 ${m}` : harness;
+  const ariaLabel = m ? `${harness} running ${m}` : harness;
+
+  return {
+    engine: eng,
+    harness,
+    model: m || null,
+    maker,
+    makerLabel,
+    tooltip,
+    ariaLabel,
+  };
+}
+
+/** One card on the wall; `request` is the snapshot's wrap-up, when one is shown, and `native` its flag for a native Linux app, which reaches tmux itself. */
+export function card(s, cast, nowMs, request = null, native = false) {
   const who = identity(s, cast);
-  const wrapup = wrapupLine(s, request, nowMs);
+  const wrapup = wrapupLine(s, request, nowMs, native);
   const st = statusOf(s.status, isQuiet(s));
   const crew = crewOf(s);
   const also = [...new Set((s.touched ?? []).map((t) => t.repo))].filter((r) => r && r !== s.where?.repo);
-  const jump = jumpable(s);
+  const jump = jumpable(s, native);
   const marks = crewMarks(crew);
+  const eng = s.engine ? s.engine.trim().toLowerCase() : (s.session_id ? "claude" : null);
+  const rawModel = s.model?.display_name || s.model?.id || (typeof s.model === "string" ? s.model : null) || s.statusline?.model?.display_name || s.statusline?.model?.id || null;
+  const engInfo = engineInfo(eng, rawModel);
+  const delegate = s.delegate?.engine || s.delegate || s.background?.delegate?.engine || s.background?.delegate || null;
+  const saidAt = typeof s.said?.at === "number" ? s.said.at : -Infinity;
+  const replyAt = typeof s.reply?.at === "number" ? s.reply.at : -Infinity;
+  const nowReply = s.said?.text && saidAt > replyAt ? s.said.text : (s.reply?.text ?? s.said?.text ?? null);
   return {
     id: s.session_id,
     task: s.name || "No session name yet",
@@ -549,6 +682,7 @@ export function card(s, cast, nowMs, request = null) {
     alsoPast: also.slice(ALSO_NAMED).map((r) => `also in ${r}`), // named only while a phone card shows its full text
     alsoChip: alsoChip(also),
     voiceTitle: who.voice ? `Voice: ${who.voice}` : null,
+    voiceKey: who.voiceKey,
     name: who.name,
     session: s.name ?? null,
     face: who.face,
@@ -556,21 +690,24 @@ export function card(s, cast, nowMs, request = null) {
     full: who.full,
     accent: who.accent,
     accentInk: who.accent ? accentInk(who.accent) : null,
+    accentLight: who.accent ? accentLight(who.accent) : null,
     epithet: who.epithet,
     figure: who.figure,
-    ...jumpStyle(s, who.accent),
+    motif: who.motif || "burst",
+    ...jumpStyle(jump, s, who.accent),
     status: s.status,
     quiet: isQuiet(s),
     badge: badgeSvg(s.status, isQuiet(s)),
     prompt: plainText(s.prompt?.text ?? null),
-    reply: plainText(s.reply?.text ?? null),
+    reply: plainText(nowReply),
+    said: plainText(s.said?.text ?? null),
     error: s.status === "error" ? s.error ?? null : null,
-    ledger: ledgerLine(s.ledger, s.ledger_partial === true),
+    ledger: ledgerLine(s.ledger, s.ledger_partial === true, s.call_tokens),
     updated: s.status === "ended" ? null : updatedText(s, nowMs), // the pill's age says it
     jump,
     clear: s.status === "ended" || s.status === "silent",
-    actions: sessionActions(s),
-    wrapupRoute: sessionRoute(s),
+    actions: sessionActions(s, native),
+    wrapupRoute: sessionRoute(s, native),
     wrapup,
     remote: remoteLink(s.remote_url),
     // The account it runs on; the wall shows it only while cards differ in it (accountsDiffer).
@@ -584,6 +721,11 @@ export function card(s, cast, nowMs, request = null) {
     menuLabel: `Session actions for ${who.name}`,
     // An off button says why in its name too, not only in its tooltip.
     jumpLabel: `Open terminal, ${who.name}${jump.why ? `, unavailable: ${jump.why}` : ""}`,
+    engine: engInfo ? engInfo.engine : null,
+    model: engInfo ? engInfo.model : null,
+    maker: engInfo ? engInfo.maker : null,
+    engineInfo: engInfo,
+    delegate: typeof delegate === "string" ? delegate : null,
     label: [accessibleName(s, cast, nowMs), wrapup?.text].filter(Boolean).join(", "),
   };
 }

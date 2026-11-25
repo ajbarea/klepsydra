@@ -235,6 +235,8 @@ pub struct SessionFile {
     #[serde(default)]
     pub prompt: Option<Said>,
     #[serde(default)]
+    pub said: Option<Said>,
+    #[serde(default)]
     pub reply: Option<Said>,
     #[serde(default)]
     pub error: Option<String>,
@@ -258,6 +260,9 @@ pub struct SessionFile {
     /// How many turns have ended (Stops); None from a hook that never counted.
     #[serde(default, deserialize_with = "lenient_turns")]
     pub turns: Option<u64>,
+    /// The context tokens (input + cache_read + cache_creation) of its last request.
+    #[serde(default)]
+    pub call_tokens: Option<u64>,
     /// The `written_at` of the write that kept `turns`. An older hook carries
     /// both along unchanged while it moves `written_at`.
     #[serde(default)]
@@ -289,6 +294,12 @@ pub struct SessionFile {
     /// crate::picks keeps it only when it is one of `picks::ORCHESTRATORS`.
     #[serde(default, deserialize_with = "lenient_face")]
     pub orchestrator_face: Option<String>,
+    /// The engine running this session (e.g. "agy", "copilot", "claude"); none from older hooks.
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// The model running this session if recorded.
+    #[serde(default)]
+    pub model: Option<serde_json::Value>,
 }
 
 /// `orchestrator_face` when it is a short plain voice key; anything else is
@@ -666,6 +677,17 @@ mod tests {
     }
 
     #[test]
+    fn engine_and_model_round_trip_from_session_file() {
+        let f = parse(
+            &file(r#","engine":"agy","model":{"id":"gemini-3.8-flash"}"#),
+            ID,
+        )
+        .unwrap();
+        assert_eq!(f.engine.as_deref(), Some("agy"));
+        assert_eq!(f.model.as_ref().unwrap()["id"], "gemini-3.8-flash");
+    }
+
+    #[test]
     fn the_account_is_kept_only_when_it_is_a_plain_id_and_short_name() {
         let account = |extra: &str| parse(&file(extra), ID).unwrap().account;
         assert_eq!(
@@ -801,5 +823,13 @@ mod tests {
         ] {
             assert_eq!(face(bad).unwrap(), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn session_file_reads_said() {
+        let json = r#"{"session_id":"s1","state":"working","state_at":100,"said":{"text":"narrating mid-turn","at":105}}"#;
+        let s: SessionFile = serde_json::from_str(json).unwrap();
+        assert_eq!(s.said.as_ref().unwrap().text, "narrating mid-turn");
+        assert_eq!(s.said.as_ref().unwrap().at, 105);
     }
 }

@@ -23,6 +23,12 @@ test("all green says so, with the Dependabot runs kept for the morning", () => {
   assert.equal(v.note, "2 Dependabot runs for the morning");
 });
 
+test("all green with nothing to note keeps the bar quiet (#248)", () => {
+  const v = ciView({ repos: 14, red: [], dependabot: 0, unread: 0, stale: false });
+  assert.deepEqual([v.hidden, v.label, v.tone], [true, "CI ok", "ok"]);
+  assert.equal(ciView({ repos: 14, red: [], dependabot: 0, unread: 0, stale: true }).hidden, false, "a stale watch still shows");
+});
+
 test("a red run names its repo, workflow, branch or PR, failing step and triaged cause", () => {
   const v = ciView({ repos: 14, red: [red(), red({ repo: "klepsydra", pr: 160, triage: { state: "unavailable" } })], dependabot: 0, unread: 1 });
   assert.deepEqual([v.label, v.tone], ["CI 2 red", "red"]);

@@ -44,7 +44,7 @@ test("kourai's named Kokoro seeds are kept", () => {
 });
 
 test("every character has both portrait files, and the cast holds nothing else", () => {
-  assert.deepEqual(Object.keys(cast).sort(), ["characters", "faces", "keeper", "label", "v"]);
+  assert.deepEqual(Object.keys(cast).sort(), ["backdrop", "characters", "faces", "keeper", "label", "v"]);
   assert.deepEqual([cast.label, cast.faces, cast.keeper], ["Kourai", "kourai", "af_nicole"], "Hesychia keeps the quiet wall");
   for (const c of Object.values(cast.characters)) {
     for (const size of [96, 192]) assert.ok(exists(`kourai/${c.face}-${size}.webp`), `${c.face} ${size}`);
@@ -66,7 +66,7 @@ test("every character has its accent, and nothing else is in an entry", () => {
   for (const c of Object.values(cast.characters)) {
     assert.match(c.accent, /^#[0-9A-Fa-f]{6}$/, `${c.name} accent`);
     assert.equal(c.accent, CANON[c.face] ?? ADDED[c.face], `${c.name} accent`);
-    assert.deepEqual(Object.keys(c).sort(), ["accent", "epithet", "face", "gender", "head", "name"]);
+    assert.deepEqual(Object.keys(c).sort(), ["accent", "epithet", "face", "gender", "head", "motif", "name"]);
   }
 });
 
@@ -74,7 +74,7 @@ test("no new character's accent is a status tone, and Hermes's is clear of the n
   const badge = readFileSync(new URL("./fleet/badge.css", import.meta.url), "utf8");
   const wall = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
   const tones = [...(badge + wall).matchAll(/--(?:badge|tone)-(?:needs|error|working|done):\s*(#[0-9a-f]{6})/gi)].map((m) => m[1].toLowerCase());
-  assert.deepEqual([...new Set(tones)].sort(), ["#0072b2", "#009e73", "#56b4e9", "#d55e00", "#e69f00"]);
+  assert.deepEqual([...new Set(tones)].sort(), ["#0072b2", "#00805c", "#009e73", "#6a5640", "#ac6700", "#d55e00", "#d9c6a5", "#e69f00"]);
   for (const face of NEW) {
     const c = Object.values(cast.characters).find((x) => x.face === face);
     assert.ok(!tones.includes(c.accent.toLowerCase()), `${c.name} accent is a status tone`);
@@ -103,7 +103,7 @@ test("each accent's left marker is 3:1 on the button, or widened to 6 px where i
     assert.equal(w, low >= 3 ? MARKER_PX : MARKER_WIDE_PX, `${c.name} ${low.toFixed(2)}:1`);
     if (low < 3) widened.push(c.name);
   }
-  assert.deepEqual(widened.sort(), ["Aletheia", "Dokimasia"], "accents under 3:1 on rest or hover");
+  assert.deepEqual(widened.sort(), ["Aletheia"], "accents under 3:1 on rest or hover");
   for (const c of Object.values(cast.characters)) {
     assert.ok(contrast(c.accent, bgs[0]) >= 2.5, `${c.name} stays visible at rest`);
   }
@@ -129,7 +129,7 @@ test("only an enabled needs button is filled; the marker rule sets a shadow and 
   const fills = [...css.matchAll(/(\.jump[^{]*)\{([^}]*background:[^}]*)\}/g)].map((m) => m[1].trim());
   assert.deepEqual(fills, ['.jump[data-kind="needs"]', '.jump[data-kind="needs"]:hover:not([aria-disabled="true"])']);
   const mark = css.match(/\.jump\[data-kind="accent"\] \{([^}]*)\}/)[1];
-  assert.match(mark, /box-shadow: inset var\(--mark-w\) 0 0 var\(--accent\)/);
+  assert.match(mark, /box-shadow: inset var\(--mark-w\) 0 0 var\(--on-card, var\(--accent\)\)/);
   assert.doesNotMatch(mark, /background|border/);
 });
 
