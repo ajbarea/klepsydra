@@ -440,6 +440,25 @@ test("#276: the Needs you file counts its section's asks, else every top-level l
   assert.equal(asks(readFileSync(new URL("../scripts/fixtures/needs-demo.md", import.meta.url), "utf8")), 3, "the sample");
 });
 
+test("#568: a Needs you file titled by its H1 counts the open items of every H2 section", () => {
+  // needs-you.md as the orchestrator writes it (11-25), wording swapped: H1 title, H2 Today / Coming up / When convenient.
+  const real = readFileSync(new URL("../scripts/fixtures/needs-you-shape.md", import.meta.url), "utf8");
+  assert.deepEqual(
+    real.split("\n").filter((l) => l.startsWith("#")),
+    ["# Needs you", "## Today (Wed 11-25)", "## Coming up", "## When convenient"],
+    "the fixture keeps the real file's shape",
+  );
+  const open = real.split("\n").filter((l) => l.startsWith("- 📋")).length;
+  assert.equal(open, 18);
+  assert.equal(renderAsks(real).count, open, "every open step, at any section");
+  assert.equal(headerCount(renderAsks(real).count, null), open, "the header shows it");
+  const asks = (text) => renderAsks(text).count;
+  assert.equal(asks("# Needs you\n\n## Today\n- a\n- ✅ b\n  - nested\n\n## Later\n1. c\n"), 2, "done and nested items are not asks");
+  assert.equal(asks("# Needs you\n- top\n\n## Today\n- a\n"), 2, "a list above the first section counts too");
+  assert.equal(asks("# Needs you\n\n## Today\nNothing today.\n"), 0, "sections with no list ask nothing");
+  assert.equal(asksCount(sections(toTree(parse("# Needs you\n\n## Today\nNothing today.\n")))), null, "no list anywhere: no count");
+});
+
 test("#276: the header counts the Needs you file's asks, else the queue file's own section", () => {
   assert.equal(headerCount(2, 5), 2);
   assert.equal(headerCount(0, 5), 0, "none for you is a count, not a fallback");
