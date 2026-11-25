@@ -25,7 +25,7 @@ fi
 do_() { if (( dry )); then printf 'would: %s\n' "$*"; else "$@"; fi; }
 # A dry run writes nothing, its log included: its events go to stderr only.
 ilog() { if (( dry )); then printf '%s %s %s\n' "$(date '+%F %T')" "$1" "${*:2}" >&2; else flog "$@"; fi; }
-SCRIPTS=(launch.sh delegate.sh headless.sh engines.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh close.sh send.sh voices.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py prune_shots.py worker-settings.json)
+SCRIPTS=(launch.sh delegate.sh headless.sh engines.sh fresh-now.sh resume-at-reset.sh watch-panes.sh tmux-watch.sh memfrag-log.sh relaunch-fresh.sh done.sh close.sh send.sh voices.sh orch-guard.sh brief.sh doctor.sh cutover.sh accounts-sync.sh recover.sh pause.sh registry-event.sh sync-briefing.sh ci_watch.py prune_shots.py worker-settings.json)
 # Scripts the checkout no longer has: their links in the state folder go (#326).
 RETIRED=(agora.py digest.py)
 UNITS=$FLEET_UNIT_DIR
@@ -116,6 +116,9 @@ for f in "${RETIRED[@]}"; do
   ilog INFO "a retired script's link removed" link="$FLEET_STATE/$f"
 done
 do_ ln -sfn -- "$here/fleet" "$BIN/fleet"
+# The orchestrator's tmux (#264): launch.sh puts this folder first on its PATH.
+do_ mkdir -p -- "$FLEET_STATE/orch-bin"
+do_ ln -sfn -- "$here/orch-tmux.sh" "$FLEET_STATE/orch-bin/tmux"
 
 
 # The PATH the services run with: this shell's, as `systemd-run -E PATH` gave them.

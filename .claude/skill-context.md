@@ -29,7 +29,7 @@ belong here.
   has no WebKitGTK headers, so the app crate is checked with
   `bash scripts/build-windows.sh --check`; the fleet crate tests anywhere.
 - runner: a small Makefile: `make test-fleet`, `make test-launch`,
-  `make test-delegate`, `make test-heavy-lock`, `make test-slice` and `make shellcheck` take the fleet's heavy lock
+  `make test-delegate`, `make test-heavy-lock`, `make test-orch-guard`, `make test-slice` and `make shellcheck` take the fleet's heavy lock
   themselves (run them bare),
   `make install-fleet`. No
   `logs/dev-<ts>-*.log` archive convention, so the audit's log-reconciliation phase is N/A.
@@ -96,6 +96,7 @@ files belong to: the JS guards scan hooks and scripts too.
   and a stub `wt.exe` (one tab per fleet, a failed launch starts nothing).
 - `make test-headless` (no tmux server, no lock): `fleet headless` against stub claude, ant and systemd-run (budget and login refusals, the record, the scope, the resume loop and stall, the reaper, doctor's heavy-lock holder) and the subscription-only rule for interactive launches (#260)
 - `make test-heavy-lock` (takes the heavy lock itself): a stopped suite keeps no lock, and fleet/heavy.sh's waits, refusals and limits.
+- `make test-orch-guard` (takes the heavy lock itself): the orchestrator guard's refusals, look-alikes, a mutant of each, and a differential against real tmux and bash.
 - `make test-slice` (takes the heavy lock itself): the memory slices' sizes and OOM ranks, then a live OOM in a private capped slice (skips with no systemd user manager).
 - `bash scripts/test_build_windows.sh`: the Windows build's stage-name check.
 - `cd src-tauri && cargo test -p klepsydra-fleet`: the fleet reader, the OTLP

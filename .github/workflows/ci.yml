@@ -90,6 +90,8 @@ jobs:
         run: make test-headless
       - name: Heavy lock release tests
         run: make test-heavy-lock FLEET_HEAVY_HELD=1
+      - name: Orchestrator guard tests
+        run: make test-orch-guard FLEET_HEAVY_HELD=1
       - name: Memory slice tests
         env:
           INPUT_REPEAT: ${{ github.event.inputs.slice_live_repeat }}

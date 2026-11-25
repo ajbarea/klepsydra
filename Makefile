@@ -1,4 +1,4 @@
-.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-slice test-forks shellcheck test-shellcheck
+.PHONY: install-hooks install-fleet test-fleet test-launch test-delegate test-engine test-headless test-heavy-lock test-orch-guard test-slice test-forks shellcheck test-shellcheck
 
 # Copy the hooks, status line, launcher and cast into ~/.claude (fleet/install.sh --hooks).
 install-hooks:
@@ -39,6 +39,9 @@ test-headless:
 
 test-heavy-lock:
 	$(HEAVY) bash fleet/test_heavy_lock.sh
+
+test-orch-guard:
+	$(HEAVY) bash fleet/test_orch_guard.sh
 
 # Fork budgets (#492): each fleet/test_forks_*.sh counts the processes a hot
 # path starts (strace) and checks a rewrite against the code it replaced.

@@ -40,7 +40,6 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 LAUNCH=${LAUNCH:-$here/launch.sh}
-FRESH_AFTER_S=${FRESH_AFTER_S:-3300} # Claude Code's prompt cache lives an hour
 POLL_S=${POLL_S:-60}
 MOVE_MIN_S=${MOVE_MIN_S:-900} # a nearer reset is waited for: a fresh start costs more than the wait
 FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a worker at its next finished turn
@@ -88,8 +87,6 @@ save_state() {
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
 }
-
-clock() { printf '%s' "${FLEET_NOW:-$(date +%s)}"; }
 
 # The account of klepsydra's newest usage reading: a /login moves every session.
 active_account() {
