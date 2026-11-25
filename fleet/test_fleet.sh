@@ -176,7 +176,7 @@ resume() { FLEET_NOW=$1 bash "$here/resume-at-reset.sh" --once 2>/dev/null; } # 
 # A registered session, live in pane $1 by klepsydra's fleet file.
 SID=11111111-2222-4333-8444-555555555555
 mkdir -p "$KLEPSYDRA_DIR/fleet"
-live() { jq -n --arg p "$1" '{session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/${2:-$SID}.json"; }
+live() { jq -c -n --arg p "$1" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/${2:-$SID}.json"; }
 logged() { jq -r --arg m "$1" 'select(.message | contains($m)) | .pane' "$FLEET_LOG" 2>/dev/null | tr '\n' ' '; }
 
 echo "reset times"
@@ -257,8 +257,8 @@ t kill-window -t "$p"
 echo "limits from events (#311)"
 # A session the fleet hook recorded at STATE (default: a StopFailure rate_limit), in pane PANE.
 stop_file() { # SID PANE STATE_AT ACCOUNT MESSAGE [STATE REASON]
-  jq -n --arg p "$2" --argjson at "$3" --arg a "$4" --arg m "$5" --arg st "${6:-error}" --arg r "${7:-rate limit}" \
-    '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: $r, state_at: $at, error: $m}
+  jq -c -n --arg p "$2" --argjson at "$3" --arg a "$4" --arg m "$5" --arg st "${6:-error}" --arg r "${7:-rate limit}" \
+    '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: $r, state_at: $at, error: $m}
      + (if $a == "" then {} else {account: {id: $a, label: "Ev"}} end)' >"$KLEPSYDRA_DIR/fleet/$1.json"
 }
 # A usage reading for account ID: each window's percentage used and reset.
@@ -325,12 +325,14 @@ stop_file "$E1" %9001 "$evn" ev-none "$L5"
 check "no reading: the message's reset" "$(ev | cut -f1)" "$((evn + 4200))"
 stop_file "$E1" %90010 "$evn" ev1 "$L5"
 check "a file naming pane %90010 is no session of pane %9001" "$(ev)" "none"
+E2=aaaaaaaa-0000-4000-8000-000000000312
+EL=aaaaaaaa-0000-4000-8000-000000000310
 stop_file "$E1" %9001 "$evn" ev1 "$L5"
-ln -s "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/link.json"
+ln -s "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/$EL.json"
 check "a link to a session file is no second session" "$(ev | cut -f1)" "$((evn + 4000))"
-cp "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/copy.json"
+cp "$KLEPSYDRA_DIR/fleet/$E1.json" "$KLEPSYDRA_DIR/fleet/$E2.json"
 check "two live files naming the pane are no answer" "$(ev)" "none"
-rm -f -- "$KLEPSYDRA_DIR/fleet/link.json" "$KLEPSYDRA_DIR/fleet/copy.json" "$KLEPSYDRA_DIR/fleet/${E1:?}.json"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$EL.json" "$KLEPSYDRA_DIR/fleet/$E2.json" "$KLEPSYDRA_DIR/fleet/${E1:?}.json"
 
 : >"$FLEET_LOG"
 p=$(pane evlim '{"above":["work"],"on_submit":"busy"}'); settle
@@ -637,7 +639,7 @@ t kill-window -t "$p"; : >"$REGISTRY"
 echo "live_session"
 p=$(pane two '{"above":["idle"]}'); settle
 live "$p"
-jq -n --arg p "$p" '{ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/88888888-2222-4333-8444-555555555555.json"
+jq -c -n --arg p "$p" '{v: 1, ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/88888888-2222-4333-8444-555555555555.json"
 check "two live files naming one pane are no answer" "$(live_session "$p" || echo none)" "none"
 rm -f -- "${KLEPSYDRA_DIR:?}/fleet/88888888-2222-4333-8444-555555555555.json"
 check "one is the answer" "$(live_session "$p")" "$SID"
@@ -649,8 +651,8 @@ live "$p"
 printf '%s\tclr\t%s\t%s\t/w\n' "$p" "$work/brief.src" "$SID" >"$REGISTRY"
 NEW_SID=99999999-2222-4333-8444-555555555555
 ( for _ in $(seq 50); do grep -q '^SUBMIT /clear' "$work/clr.log" 2>/dev/null && break; sleep 0.2; done
-  jq '.ended = {reason: "clear"}' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/e.json" && mv "$work/e.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
-  jq -n --arg p "$p" '{ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$NEW_SID.json" ) &
+  jq -c '.ended = {reason: "clear"}' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/e.json" && mv "$work/e.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+  jq -c -n --arg p "$p" '{v: 1, ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$NEW_SID.json" ) &
 FLEET_START_WAIT=2 FLEET_TURN_WAIT=2 bash "$here/fresh-now.sh" "$p" >/dev/null 2>&1
 wait
 check "S-1: after /clear the registry follows the new session id" "$(cut -f4 "$REGISTRY")" "$NEW_SID"
@@ -1238,7 +1240,7 @@ w=$(pane wpane '{"above":["idle"]}'); o=$(pane opane '{"above":["idle"]}'); sett
 printf '%s\tworker\t%s\t%s\n' "$w" "$FLEET_STATE/task-demo.src" "$(sid_of w1)" >"$REGISTRY"
 printf '%s\n' "$o" >"$FLEET_STATE/orchestrator.pane"
 session_file() { # ID PANE [URL]
-  jq -n --arg p "$2" --arg u "${3:-}" '{session_id: "x", started_at: 5, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "44444444-4444-4444-8444-444444444444"}, tmux: {pane: $p}} + (if $u == "" then {} else {remote_url: $u} end)' \
+  jq -c -n --arg p "$2" --arg u "${3:-}" '{v: 1, session_id: "x", started_at: 5, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "44444444-4444-4444-8444-444444444444"}, tmux: {pane: $p}} + (if $u == "" then {} else {remote_url: $u} end)' \
     >"$KLEPSYDRA_DIR/fleet/$(sid_of "$1").json"
 }
 session_file w1 "$w" https://claude.ai/code/session_01W; session_file o1 "$o"
@@ -1471,7 +1473,7 @@ check "#246: logged with the limited panes and the reset" \
 w2=$(pane wpane2 '{"above":["idle"]}'); settle
 printf '%s\tworker2\t%s\t%s\n' "$w2" "$FLEET_STATE/task-demo.src" "$(sid_of w2)" >>"$REGISTRY"; session_file w2 "$w2" https://claude.ai/code/session_01X
 check "#246: with one agent free, no watcher still fails" "$(doctor | grep -c '^FAIL pane watcher: none running')" "1"
-t kill-window -t "$w2"; rm -f "$KLEPSYDRA_DIR/fleet/w2.json"
+t kill-window -t "$w2"; rm -f "$KLEPSYDRA_DIR/fleet/$(sid_of w2).json" "$KLEPSYDRA_DIR/fleet/w2.json"
 # A registry whose panes are all gone leaves nothing to watch (#348).
 printf '%%998\tworker\t%s\tgone\n' "$FLEET_STATE/task-demo.src" >"$REGISTRY"
 check "#348: no watcher and no live agent pane is ok, not a FAIL" \
@@ -1483,6 +1485,12 @@ state wpane '{"above":["idle"]}'
 printf 'parked\tPAUSED 11-01 07:16: no room\n' >"$FLEET_STATE/paused.tsv"
 check "#246: paused agents are listed, never a failure" "$(doctor | grep '^ok   paused agents')" "ok   paused agents: parked: fleet unpause NAME brings one back"
 rm -f "$FLEET_STATE/paused.tsv"
+trunc_id="00000000-0000-4000-8000-000000000099"
+printf '{"v":1,"tmux":' >"$KLEPSYDRA_DIR/fleet/$trunc_id.json"
+check "#492 review 2: a truncated session file warns in doctor, named" \
+  "$(doctor | grep '^warn session files')" "warn session files: corrupt or truncated: $trunc_id.json"
+rm -f "$KLEPSYDRA_DIR/fleet/$trunc_id.json"
+check "#492 review 2: clean session files pass" "$(doctor | grep -c '^ok   session files')" "1"
 jq -n '{usage: [{observed_at: 1000}]}' >"$work/fleet.json"
 touch -d '@1000' "$FLEET_STATE/resume.beat"
 check "a resume loop that stopped passing fails" "$(doctor | grep -c '^FAIL resume loop: last pass')" "1"
@@ -1968,7 +1976,7 @@ t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/l
 cat >"$work/launch-limturn.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$FLEET_ACCOUNT" "\$@" >"$work/moved"
-jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
 chmod +x "$work/launch-limturn.sh"
@@ -2086,7 +2094,7 @@ cat >"$work/launch-hturn.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$FLEET_ACCOUNT" "\$1" >"$work/moved"
 printf '%s\n' "\${FLEET_SUCCEEDS-unset}" >"$work/succeeds"
-jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%993 session=aaaaaaaa-0000-4000-8000-0000000000cd account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
 chmod +x "$work/launch-hturn.sh"
@@ -2143,8 +2151,8 @@ logout a; logout b; reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b
 
 echo "two accounts: back to the preferred account (#175)"
 # The live session in pane $1, at turn state $2 with background work $3.
-done_live() { jq -n --arg p "$1" --arg st "${2:-done}" --argjson bg "${3:-[]}" \
-  '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: $bg}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
+done_live() { jq -c -n --arg p "$1" --arg st "${2:-done}" --argjson bg "${3:-[]}" \
+  '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: $bg}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
 login a; login b; reading a Personal 10 5000; reading b RIT 10 4000
 backpane() { # NAME: a registered pane on the second folder, idle at a finished turn
   local q
@@ -2171,7 +2179,7 @@ check "#269: an unknown name is refused and changes nothing" "$(bash "$here/flee
 check "#269 review: a pane id from another tmux server (AJ's terminal) is refused, and nothing moves" \
   "$(TMUX=/tmp/tmux-1/default,1,0 TMUX_PANE="$p" bash "$here/fleet" "done" "r" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "2 2"
 fsock="TMUX=/tmp/tmux-1/$FLEET_SOCK,1,0"
-jq --arg p "%9998" '.tmux.pane = $p' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c --arg p "%9998" '.tmux.pane = $p' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#269 review: a stale row whose session runs in another pane is refused" \
   "$(env "$fsock" TMUX_PANE="$p" bash "$here/fleet" "done" "r" >/dev/null 2>&1; echo $?) $(wc -l <"$REGISTRY")" "1 2"
 done_live "$p"
@@ -2317,12 +2325,12 @@ check "#445 review: an idle-looking pane whose session file says working is refu
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c 'working again (its session file says so)') $(bash "$here/fleet" close wrk7 >/dev/null 2>&1; echo $?) $(grep -c '^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 1 0 1"
 done_live "$b" "done" '[]'
 # Another live file for the same %N on AJ's own tmux is no session of ours; one on the fleet's server is.
-jq -n --arg p "$b" '{session_id: "y", ended: null, tmux: {pane: $p, socket: "/tmp/tmux-1/default"}, state: "working", background: []}' >"$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a1.json"
+jq -c -n --arg p "$b" '{v: 1, session_id: "y", ended: null, tmux: {pane: $p, socket: "/tmp/tmux-1/default"}, state: "working", background: []}' >"$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a1.json"
 done_live "$b" "done" '[{"id": "t1", "kind": "shell"}]'
 check "#445 review: with a file for the same pane on AJ's tmux beside it, a running shell still refuses the close (1, nothing typed)" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c 'background work running') $(grep -c '^SUBMIT' "$work/wrk7.log") $(fleet_panes | grep -cx -- "$b")" "1 0 1"
 done_live "$b" "done" '[]'
-jq -n --arg p "$b" '{session_id: "z", ended: null, tmux: {pane: $p}, state: "done", background: []}' >"$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a2.json"
+jq -c -n --arg p "$b" '{v: 1, session_id: "z", ended: null, tmux: {pane: $p}, state: "done", background: []}' >"$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a2.json"
 check "#445 review: a second live session on the fleet's server naming the pane is not confirmed idle: refused (1), nothing typed" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c 'cannot confirm wrk7 is idle') $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
 rm -f "$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a2.json"
@@ -2366,7 +2374,7 @@ check "#454 B1: a turn printing text with no spinner busy can read is refused (1
 kill "$wrp" 2>/dev/null; wait "$wrp" 2>/dev/null
 state wrk7 '{"above":["done"],"busy":false,"exit_on_exit":true,"on_submit":"none","log_typed":true}'; settle; : >"$work/wrk7.log"
 # The hook writes the file async, up to a second after the prompt the screen showed: a write in the window refuses.
-( for i in $(seq 40); do jq -n --arg p "$b" --argjson i "$i" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], turn_at: $i}' >"$work/sf.t"
+( for i in $(seq 40); do jq -c -n --arg p "$b" --argjson i "$i" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], turn_at: $i}' >"$work/sf.t"
     mv -f "$work/sf.t" "$KLEPSYDRA_DIR/fleet/$SID.json"; sleep 0.2; done ) & wrp=$!
 check "#454 S1: a session file written within the quiet window is refused (1) before /exit is typed at all" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*its session file was written within') $(grep -c '^TYPED' "$work/wrk7.log") $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0 0"
@@ -2395,7 +2403,7 @@ state wrk7 "{\"above\":$long,\"busy\":false,\"slash_menu\":true,\"slash_adds\":\
 check "#454 S1: a transcript line that shows as /exit goes in refuses the close (1); our /exit is backed out, nothing submitted" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c '^error: .*changed as /exit went in') $(grep -c '^SUBMIT' "$work/wrk7.log") $(sleep 0.5; input_text "$(screen "$b")" | grep -c .)" "1 0 0"
 # A reused pane whose new occupant writes no file: the only file predates the pane's process.
-jq -n --arg p "$b" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], started_at: 900, written_at: 1000}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$b" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null, background: [], started_at: 900, written_at: 1000}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 touch -d @1000 "$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#454 nit: a session file last written before the pane's process started (a reused pane) is refused (1), nothing typed" \
   "$(bash "$here/fleet" close wrk7 2>&1 | grep -c "^error: .*last written before $b's process started") $(grep -c '^SUBMIT' "$work/wrk7.log")" "1 0"
@@ -2413,7 +2421,7 @@ t kill-window -t "$x" 2>/dev/null
 # A file for the pane on AJ's tmux only is no other session of ours: the record stays, exit 1 (not cleared).
 rm -f "$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a1.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 y=$(pane wrk11 '{"above":["idle"],"on_submit":"none"}'); settle
-jq -n --arg p "$y" '{session_id: "y", ended: null, tmux: {pane: $p, socket: "/tmp/tmux-1/default"}, state: "done", background: []}' >"$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a3.json"
+jq -c -n --arg p "$y" '{v: 1, session_id: "y", ended: null, tmux: {pane: $p, socket: "/tmp/tmux-1/default"}, state: "done", background: []}' >"$KLEPSYDRA_DIR/fleet/aaaaaaaa-0000-4000-8000-0000000000a3.json"
 printf '%s\twrk11\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$y" "$work/brief.src" "$SID" "$work/cfg-a" >>"$FLEET_STATE/finished.tsv"
 printf '1\twrk11\t%s\tsent\n' "$y" >>"$DONE_REPORTS"
 check "#445 review: a file for the pane on AJ's tmux is not another session of ours: exit 1, the record stays" \
@@ -2463,8 +2471,8 @@ echo "two accounts: a worker that keeps background work is asked to move back (#
 # The live session in pane $1, as the hook writes it: its turn $2 (settled:
 # over, with background work left; running), background $3, last reply $4 at
 # $5 (the turn started a little before it).
-reply_live() { jq -n --arg p "$1" --arg turn "$2" --argjson bg "$3" --arg r "$4" --argjson at "$5" \
-  '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: (if $turn == "settled" then "background" else null end),
+reply_live() { jq -c -n --arg p "$1" --arg turn "$2" --argjson bg "$3" --arg r "$4" --argjson at "$5" \
+  '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: (if $turn == "settled" then "background" else null end),
     background: $bg, reply: {text: $r, at: $at}, prompt: {at: 1}, turn_at: ($at - 5)}' >"$KLEPSYDRA_DIR/fleet/$SID.json"; }
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state" "$FLEET_STATE/back-room-since"
 p=$(backpane keeper); state keeper '{"above":["⏺ Done. done 11:50 AM"],"on_submit":"none"}'
@@ -2484,7 +2492,7 @@ reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noo
 mover "$((noon + 420))"
 check "#198: a READY-TO-MOVE from before the request does not move it" "$(wc -c <"$work/moved")" "0"
 reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 410))"
-jq ".turn_at = $((noon + 415))" "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c ".turn_at = $((noon + 415))" "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 mover "$((noon + 425))"
 check "#198 review 2: nor one a later turn, ended with no reply, left standing" "$(wc -c <"$work/moved")" "0"
 reply_live "$p" running '[{"id": "w1", "kind": "bash"}]' "READY-TO-MOVE" "$((noon + 430))"
@@ -2558,7 +2566,7 @@ reply_live "$p" settled '[{"id": "w1", "kind": "bash"}]' "Watching." "$noon"
 mover "$noon"; mover "$((noon + 300))"
 # It answers half an hour after the ask (it saved and pushed first), so the
 # note's hour and the ask's differ.
-jq -n --arg p "$p" --argjson at "$((noon + 2100))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null,
+jq -c -n --arg p "$p" --argjson at "$((noon + 2100))" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null,
   background: [], reply: {text: "READY-TO-MOVE", at: $at}, prompt: {at: 1}, turn_at: ($at - 5)}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 LAUNCH="$work/launch-nd.sh" FLEET_NOW=$((noon + 2130)) bash "$here/resume-at-reset.sh" --once 2>/dev/null
 check "#322 review 2: a worker that stopped its shells and answered READY-TO-MOVE is told to carry on when the new session never starts" \
@@ -2569,7 +2577,7 @@ mover "$((noon + 300 + 3600 + 60))"
 check "#322 review 3: and it is not asked again within the hour of the note, though the ask's hour has passed" "$(grep -c '^SUBMIT Your preferred account' "$work/rtm.log")" "1"
 mover "$((noon + 2130 + 3600 + 10))"
 check "#322 review 3: an hour after the note it is asked again" "$(grep -c '^SUBMIT Your preferred account' "$work/rtm.log")" "2"
-jq -n --arg p "$p" --argjson at "$((noon + 5800))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null,
+jq -c -n --arg p "$p" --argjson at "$((noon + 5800))" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null,
   background: [], reply: {text: "READY-TO-MOVE", at: $at}, prompt: {at: 1}, turn_at: ($at - 5)}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 # The launch leaves the old pane busy (a turn started meanwhile), so the note cannot go in.
 cat >"$work/launch-busy.sh" <<EOF
@@ -2661,7 +2669,7 @@ t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"; rm -rf -- "${FLEET_STATE:?}/l
 cat >"$work/launch-turn.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$FLEET_ACCOUNT" "\$@" >"$work/moved"
-jq '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c '.turn_at = 999999999999' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%996 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
 chmod +x "$work/launch-turn.sh"
@@ -2794,7 +2802,7 @@ t kill-window -t "$p"; : >"$REGISTRY"
 p=$(backpane phoned)
 cat >"$work/launch-phoned.sh" <<EOF
 #!/usr/bin/env bash
-jq '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 echo "pane=%995 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
 LAUNCH="$work/launch-phoned.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
@@ -2827,7 +2835,7 @@ heph_away() { # BACKGROUND-JSON: Heph on the workers' account, his turn over wit
   printf '%s\n' "$work/cfg-a" >"$FLEET_STATE/orchestrator.config"
   h=$(pane hephwatch '{"above":["⏺ Done. done 11:50 AM"]}'); settle
   printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; done_live "$h" working "$1"
-  jq '.reason = "background"' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
+  jq -c '.reason = "background"' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$SID.json"
 }
 w=$(pane watched '{"above":["⏺ ok"]}'); settle
 w2=$(pane watched2 '{"above":["⏺ ok"]}'); settle
@@ -2969,7 +2977,7 @@ login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
 : >"$FLEET_LOG"; : >"$work/par-starts"; rm -f "$FLEET_STATE/resume-state"
 SID2=22222222-2222-4333-8444-555555555555
 p1=$(pane par1 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); p2=$(pane par2 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"]}"); settle
-live "$p1"; jq -n --arg p "$p2" '{session_id: "y", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID2.json"
+live "$p1"; jq -c -n --arg p "$p2" '{v: 1, session_id: "y", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID2.json"
 printf '%s\tpar1\t%s\t%s\t/w\t%s\n%s\tpar2\t%s\t%s\t/w\t%s\n' "$p1" "$work/brief.src" "$SID" "$work/cfg-a" "$p2" "$work/brief.src" "$SID2" "$work/cfg-a" >"$REGISTRY"
 cat >"$work/launch-par.sh" <<EOF
 #!/usr/bin/env bash
@@ -3080,8 +3088,8 @@ t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
 SID3=33333333-2222-4333-8444-555555555555
 q1=$(pane cap1 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"],\"exit_on_exit\":true}"); q2=$(pane cap2 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"],\"exit_on_exit\":true}"); q3=$(pane cap3 "{\"above\":[\"⏺ Done. done 11:50 AM\",\"$LIMIT\"],\"exit_on_exit\":true}"); settle
 live "$q1"
-jq -n --arg p "$q2" '{session_id: "y", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID2.json"
-jq -n --arg p "$q3" '{session_id: "z", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID3.json"
+jq -c -n --arg p "$q2" '{v: 1, session_id: "y", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID2.json"
+jq -c -n --arg p "$q3" '{v: 1, session_id: "z", ended: null, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID3.json"
 printf '%s\tcap1\t%s\t%s\t/w\t%s\n%s\tcap2\t%s\t%s\t/w\t%s\n%s\tcap3\t%s\t%s\t/w\t%s\n' \
   "$q1" "$work/brief.src" "$SID" "$work/cfg-a" "$q2" "$work/brief.src" "$SID2" "$work/cfg-a" "$q3" "$work/brief.src" "$SID3" "$work/cfg-a" >"$REGISTRY"
 LAUNCH="$work/launch-slow3.sh" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
@@ -3313,15 +3321,16 @@ check "review 4: pasted as AJ began a line, nothing is sent and none of his line
 t kill-window -t "$p"
 echo "#515: the context budget: checkpoint, then a fresh session"
 login a; login b; reading a Personal 10 5000; reading b RIT 10 4000
-ctx_file() { # PANE TOKENS STAMP [STATE]: the hook's file for the session live in PANE
-  jq -n --arg p "$1" --argjson t "$2" --arg at "$3" --arg st "${4:-done}" \
-    '{session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: [], call_tokens: $t, prompt: {at: $at}, turn_at: $at}' \
+ctx_file() { # PANE TOKENS STAMP [STATE]: the hook's file for the session live in PANE, one line as the hook writes it
+  jq -cn --arg p "$1" --argjson t "$2" --arg at "$3" --arg st "${4:-done}" \
+    '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: $st, reason: null, background: [], call_tokens: $t, prompt: {at: $at}, turn_at: $at}' \
     >"$KLEPSYDRA_DIR/fleet/$SID.json"
 }
 ctx_idle='{"above":["⏺ Done. done 11:50 AM"],"rc":"on"}'
 : >"$FLEET_LOG"; : >"$work/moved"; rm -f "$FLEET_STATE/resume-state"
 p=$(pane ctx "$ctx_idle"); settle
 ctx_file "$p" 300000 t1
+check "#515: the fixture reads as the pane's live session" "$(live_session "$p")" "$SID"
 printf '%s\tctx\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a" >"$REGISTRY"
 mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
 mover "$noon"
@@ -3374,7 +3383,7 @@ printf '%s\tctxlow\t%s\t%s\t/w\t%s\n' "$p" "$work/brief.src" "$SID" "$work/cfg-a
 mover "$((noon - 60))" # an idle pane's first pass turns Remote Control on
 mover "$noon"; mover "$((noon + 60))"
 check "#515: one token under the budget, nothing is asked or moved" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
-jq 'del(.call_tokens)' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp" && mv -- "$work/ctx.tmp" "$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c 'del(.call_tokens)' "$KLEPSYDRA_DIR/fleet/$SID.json" >"$work/ctx.tmp" && mv -- "$work/ctx.tmp" "$KLEPSYDRA_DIR/fleet/$SID.json"
 mover "$((noon + 120))"
 check "#515: nor for a session an older hook never measured" "$(grep -c '^SUBMIT' "$work/ctxlow.log") $(wc -c <"$work/moved")" "0 0"
 t kill-window -t "$p" 2>/dev/null; : >"$REGISTRY"
@@ -3467,7 +3476,7 @@ printf '%s\tlive1\t%s\t%s\t/w\n' "$lv" "$work/brief.src" "$SID" >"$REGISTRY"
 # A session alive by the same test as recover's: this boot, the same process.
 mkdir -p "$work/pproc/4242"; printf '4242 (claude) S %s 777 1 2 3\n' "$(seq -s ' ' 1 18)" >"$work/pproc/4242/stat"
 echo 33333333-3333-4333-8333-333333333333 >"$work/pboot"
-jq -n --arg p "$lv" '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "33333333-3333-4333-8333-333333333333"}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$lv" '{v: 1, session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "33333333-3333-4333-8333-333333333333"}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#246: an agent whose session still runs is never paused" \
   "$(FLEET_PROC=$work/pproc FLEET_BOOT_ID=$work/pboot fp pause live1 because | grep -c "live1 still runs in $lv"; grep -c . "$REGISTRY")" $'1\n1'
 rm -f -- "$KLEPSYDRA_DIR/fleet/$SID.json"
@@ -3501,7 +3510,7 @@ kill_watch() { # JOB [TIMEOUT_S]
 echo "the watcher does not wake a pane whose background shell still runs (#453)"
 : >"$FLEET_LOG"
 wp=$(pane w453 '{"above":["⏺ Done. done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-jq -n --arg p "$wp" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p},
+jq -c -n --arg p "$wp" --argjson at "$(date +%s)" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p},
   state: "working", reason: "background",
   background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 IDLE_S=0 WATCH_TICK=0.1 timeout 60 bash "$here/watch-panes.sh" "$wp" >"$work/w453.out" 2>/dev/null &
@@ -3510,7 +3519,7 @@ sleep 1.5
 check "#453: a pane idle at done with a background shell does not wake" \
   "$(kill -0 "$w453job" 2>/dev/null && echo watching || echo "woke: $(cat "$work/w453.out")")" "watching"
 # Remove the background shell: now it should wake.
-jq -n --arg p "$wp" '{session_id: "x", ended: null, tmux: {pane: $p},
+jq -c -n --arg p "$wp" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p},
   state: "done", reason: null, background: []}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 local_i=0
 while kill -0 "$w453job" 2>/dev/null && (( local_i < 50 )); do
@@ -3558,7 +3567,7 @@ watch_wake() { # PANE [WAIT_S]
 
 echo "cell A1: fresh shell entry with shells_live 0, screen says done with no shell"
 wa1=$(pane cA1 '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on"]}'); settle
-jq -n --arg p "$wa1" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}], shells_live: 0}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wa1" --argjson at "$(date +%s)" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}], shells_live: 0}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell A1: fresh entry with shells_live 0 wakes" "$(watch_wake "$wa1")" "IDLE"
 check "#453: working file logs valid summary, not corrupt" \
   "$(jq -r 'select(.message == "watched pane idle") | .session' "$FLEET_LOG" | tail -1)" "state=working:crew=0:bg=1:live=0"
@@ -3566,13 +3575,13 @@ t kill-window -t "$wa1"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell A2: stale entry (3602s old), screen says done with no shell"
 wa2=$(pane cA2 '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on"]}'); settle
-jq -n --arg p "$wa2" --argjson at "$(( $(date +%s) - 3602 ))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wa2" --argjson at "$(( $(date +%s) - 3602 ))" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell A2: stale 3602s entry wakes" "$(watch_wake "$wa2")" "IDLE"
 t kill-window -t "$wa2"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell B: two live files name the pane (reused id), screen says shell still running"
 wb=$(pane cB '{"above":["✻ Baked for 2s · done 11:50 AM · 1 shell still running"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-for s in $SID 22222222-2222-4333-8444-555555555555; do jq -n --arg p "$wb" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$s.json"; done
+for s in $SID 22222222-2222-4333-8444-555555555555; do jq -c -n --arg p "$wb" --argjson at "$(date +%s)" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$s.json"; done
 check "#453 cell B: two live files falls back to the grep" "$(watch_held "$wb")" "held"
 t kill-window -t "$wb"; rm -f "$KLEPSYDRA_DIR"/fleet/*.json
 
@@ -3583,32 +3592,32 @@ t kill-window -t "$wc_"
 
 echo "cell D: JSON with no background key, screen says shell still running"
 wd=$(pane cD '{"above":["✻ Baked for 2s · done 11:50 AM · 1 shell still running"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-jq -n --arg p "$wd" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wd" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "done", reason: null}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell D: no .background falls back to the grep" "$(watch_held "$wd")" "held"
 t kill-window -t "$wd"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell G: entry without at, screen says done with no shell (view.rs drops it)"
 wg=$(pane cG '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-jq -n --arg p "$wg" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell"}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wg" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell"}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell G: no-at entry wakes" "$(watch_wake "$wg")" "IDLE"
 t kill-window -t "$wg"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell X: state error with fresh entry, screen says done with no shell (view.rs counts no crew)"
 wx=$(pane cX '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-jq -n --arg p "$wx" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "error", reason: null, background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wx" --argjson at "$(date +%s)" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "error", reason: null, background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell X: state error wakes" "$(watch_wake "$wx")" "IDLE"
 t kill-window -t "$wx"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell M: one malformed entry beside a good one"
 wm=$(pane cM '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-jq -n --arg p "$wm" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "bad", kind: "shell", at: "x"}, {id: "a1", kind: "agent", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wm" --argjson at "$(date +%s)" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "bad", kind: "shell", at: "x"}, {id: "a1", kind: "agent", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell M: good entry still holds" "$(watch_held "$wm")" "held"
 t kill-window -t "$wm"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell F61: at 61s in future (view.rs drops future beyond ahead)"
 wf=$(pane cF '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
 now=1000000000
-jq -n --arg p "$wf" --argjson at "$(( now + 61 ))" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wf" --argjson at "$(( now + 61 ))" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 f61_passes=0
 for _ in $(seq 1 25); do
   if ! pane_background "$wf" "$now"; then
@@ -3620,13 +3629,13 @@ t kill-window -t "$wf"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell K_unk: unknown background kind, screen says done with no shell (view.rs counts only agent/shell/task)"
 wk=$(pane cK '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-jq -n --arg p "$wk" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "alien", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wk" --argjson at "$(date +%s)" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "s1", kind: "alien", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell K_unk: unknown background kind wakes" "$(watch_wake "$wk")" "IDLE"
 t kill-window -t "$wk"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "cell ID_empty: empty id, screen says done with no shell (view.rs requires non-empty string id)"
 wi=$(pane cI '{"above":["✻ Baked for 2s · done 11:50 AM"],"below":["  ⏵⏵ bypass permissions on · 1 shell"]}'); settle
-jq -n --arg p "$wi" --argjson at "$(date +%s)" '{session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
+jq -c -n --arg p "$wi" --argjson at "$(date +%s)" '{v: 1, session_id: "x", ended: null, tmux: {pane: $p}, state: "working", reason: "background", background: [{id: "", kind: "shell", at: $at}]}' >"$KLEPSYDRA_DIR/fleet/$SID.json"
 check "#453 cell ID_empty: empty id wakes" "$(watch_wake "$wi")" "IDLE"
 t kill-window -t "$wi"; rm -f "$KLEPSYDRA_DIR/fleet/$SID.json"
 
@@ -3706,8 +3715,8 @@ spid=$(t display -p '#{pid}')
 mkdir -p "$FLEET_PROC/$spid"
 printf '%s (tmux: server) S %s 500 1 2 3\n' "$spid" "$(seq -s ' ' 1 18)" >"$FLEET_PROC/$spid/stat"
 sfile() { # SID PID START BOOT PANE [STARTED_AT]
-  jq -n --argjson pid "$2" --argjson st "$3" --arg b "$4" --arg p "$5" --argjson at "${6:-1}" \
-    '{session_id: "x", started_at: $at, ended: null, claude: {pid: $pid, start: $st}, host: {boot: $b}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$1.json"
+  jq -c -n --argjson pid "$2" --argjson st "$3" --arg b "$4" --arg p "$5" --argjson at "${6:-1}" \
+    '{v: 1, session_id: "x", started_at: $at, ended: null, claude: {pid: $pid, start: $st}, host: {boot: $b}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$1.json"
 }
 NOWBOOT=11111111-1111-4111-8111-111111111111 OLDBOOT=22222222-2222-4222-8222-222222222222
 SA=aaaaaaaa-0000-4000-8000-000000000001 SB=aaaaaaaa-0000-4000-8000-000000000002 SC=aaaaaaaa-0000-4000-8000-000000000003
@@ -3719,7 +3728,7 @@ sfile "$SB" 4242 778 "$NOWBOOT" %2
 check "dead: the pid now runs another process" "$(session_alive "$SB" || echo no)" "no"
 sfile "$SB" 4243 777 "$NOWBOOT" %2
 check "dead: no such process" "$(session_alive "$SB" || echo no)" "no"
-jq '.ended = {reason: "other", at: 1}' "$KLEPSYDRA_DIR/fleet/$SA.json" >"$work/e.json"
+jq -c '.ended = {reason: "other", at: 1}' "$KLEPSYDRA_DIR/fleet/$SA.json" >"$work/e.json"
 check "dead: it ended" "$(KLEPSYDRA_DIR="$work/x" session_alive "$SA" || echo no)" "no"
 sfile "$SB" 4242 777 "$OLDBOOT" %2; sfile "$SC" 4242 777 "$OLDBOOT" %3
 repo=$work/recrepo
@@ -3822,7 +3831,7 @@ check "once they run, a second run recovers nothing" "$(rec --no-orchestrator | 
 echo "finished agents: one verdict per row, and --prune (#220)"
 SF=aaaaaaaa-0000-4000-8000-0000000000f1 SL=aaaaaaaa-0000-4000-8000-0000000000f2 SR=aaaaaaaa-0000-4000-8000-0000000000f3
 # The hook's own shape: SessionEnd's reason (prompt_input_exit, a /exit), or "gone".
-ended() { jq --arg r "${2:-prompt_input_exit}" '.ended = {reason: $r, at: 1792520221}' "$KLEPSYDRA_DIR/fleet/$1.json" >"$work/ended.tmp" && mv -f -- "$work/ended.tmp" "$KLEPSYDRA_DIR/fleet/$1.json"; }
+ended() { jq -c --arg r "${2:-prompt_input_exit}" '.ended = {reason: $r, at: 1792520221}' "$KLEPSYDRA_DIR/fleet/$1.json" >"$work/ended.tmp" && mv -f -- "$work/ended.tmp" "$KLEPSYDRA_DIR/fleet/$1.json"; }
 sfile "$SF" 4242 777 "$NOWBOOT" %4; ended "$SF"   # finished cleanly
 cp -p -- "$REGISTRY" "$work/reg-before-220"
 printf '%s\td\t%s\t%s\t/w\n%s\te\t%s\t%s\t/w\n' %4 "$work/bc.src" "$SF" %5 "$work/bc.src" "$SL" >>"$REGISTRY"
@@ -4079,7 +4088,7 @@ for path in hook poll; do
         printf '%s\tlivey\t%s\t%s\t/w\n%s\tfinx\t%s\t%s\t/w\n' %2 "$work/bc.src" "$S2" - "$work/bc.src" "$S1" >"$REGISTRY"
       fi
       case $sock in fleet) sp=$fsock ;; foreign) sp=/tmp/tmux-1/default ;; none) sp="" ;; esac
-      jq -n --arg s "$sp" '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "'"$NOWBOOT"'"}, tmux: ({pane: "%2"} + (if $s == "" then {} else {socket: $s} end))}' >"$KLEPSYDRA_DIR/fleet/$S1.json"
+      jq -c -n --arg s "$sp" '{v: 1, session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "'"$NOWBOOT"'"}, tmux: ({pane: "%2"} + (if $s == "" then {} else {socket: $s} end))}' >"$KLEPSYDRA_DIR/fleet/$S1.json"
       if [[ $path == hook ]]; then rev SessionStart "$S1" resume %2 "" "$sp"; else forget_resumed "$S1" finx; fi
       want="-"; [[ $sock == fleet ]] && want="%2"
       check "#261 review 9 ($path, $sock server, $order): the finished row takes the pane only on the fleet's server" \
@@ -4088,9 +4097,9 @@ for path in hook poll; do
     done
   done
 done
-sfile "$S1" 4242 777 "$NOWBOOT" %2; jq '.tmux.socket = "/tmp/tmux-1/default"' "$KLEPSYDRA_DIR/fleet/$S1.json" >"$work/s1.tmp" && mv -f -- "$work/s1.tmp" "$KLEPSYDRA_DIR/fleet/$S1.json"
+sfile "$S1" 4242 777 "$NOWBOOT" %2; jq -c '.tmux.socket = "/tmp/tmux-1/default"' "$KLEPSYDRA_DIR/fleet/$S1.json" >"$work/s1.tmp" && mv -f -- "$work/s1.tmp" "$KLEPSYDRA_DIR/fleet/$S1.json"
 check "#261 review 9: pane_runs refuses a session in another tmux server's pane of the same id" "$(pane_runs %2 "$S1" && echo runs || echo refused)" "refused"
-jq ".tmux.socket = \"$fsock\"" "$KLEPSYDRA_DIR/fleet/$S1.json" >"$work/s1.tmp" && mv -f -- "$work/s1.tmp" "$KLEPSYDRA_DIR/fleet/$S1.json"
+jq -c ".tmux.socket = \"$fsock\"" "$KLEPSYDRA_DIR/fleet/$S1.json" >"$work/s1.tmp" && mv -f -- "$work/s1.tmp" "$KLEPSYDRA_DIR/fleet/$S1.json"
 check "#261 review 9: and accepts it on the fleet's own server" "$(pane_runs %2 "$S1" && echo runs || echo refused)" "runs"
 rm -f -- "$KLEPSYDRA_DIR/fleet/$S1.json"
 cp -p -- "$work/reg-before-261r8" "$REGISTRY"; with_registry forget_finished "$S1" >/dev/null
@@ -4198,7 +4207,7 @@ rm -f -- "$FLEET_STATE/finished.tsv" "$FLEET_STATE/unpaused.tsv" "$work/p2.tsv"
 SX=aaaaaaaa-0000-4000-8000-0000000000f6 SY=aaaaaaaa-0000-4000-8000-0000000000f7 SZ=aaaaaaaa-0000-4000-8000-0000000000f8
 sfile "$SX" 4242 777 "$NOWBOOT" %8; ended "$SX" clear
 sfile "$SY" 4242 777 "$NOWBOOT" %8
-jq -n '{session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "11111111-1111-4111-8111-111111111111"}, tmux: {pane: "%8", socket: "/tmp/tmux-1/default"}}' >"$KLEPSYDRA_DIR/fleet/$SZ.json"
+jq -c -n '{v: 1, session_id: "x", ended: null, claude: {pid: 4242, start: 777}, host: {boot: "11111111-1111-4111-8111-111111111111"}, tmux: {pane: "%8", socket: "/tmp/tmux-1/default"}}' >"$KLEPSYDRA_DIR/fleet/$SZ.json"
 printf '%s\tcl\t%s\t%s\t/w\n' %8 "$work/bc.src" "$SX" >>"$REGISTRY"
 check "#261 review 2: a /clear's successor is found beside a same-id pane on another server" "$(row_state %8 "$SX")" "running"
 check "#261 review 2: and the row is never paused while it runs" "$(bash "$here/pause.sh" pause cl x 2>&1 | grep -c '^error:.*still runs')" "1"
@@ -4284,7 +4293,7 @@ cat >"$work/launch-steal.sh" <<STEAL
 #!/usr/bin/env bash
 printf '%s\n' "\$1" >>"$work/rec.log"
 if [[ \$1 == w ]]; then
-  jq -n '{session_id: "x", started_at: 99, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "$NOWBOOT"}, tmux: {pane: "%0"}}' >"$KLEPSYDRA_DIR/fleet/$SNEW.json"
+  jq -c -n '{v: 1, session_id: "x", started_at: 99, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "$NOWBOOT"}, tmux: {pane: "%0"}}' >"$KLEPSYDRA_DIR/fleet/$SNEW.json"
   echo "pane=%0 session=$SNEW account=x avail=1MiB brief=started"
 else
   echo "pane=%950 session=heph-new account=x avail=1MiB brief=started"
@@ -4373,7 +4382,7 @@ cat >"$work/launch-takes2.sh" <<TAKES
 #!/usr/bin/env bash
 printf '%s\n' "\$1" >>"$work/rec.log"
 if [[ \$1 == a ]]; then
-  jq -n '{session_id: "x", started_at: 50, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "$NOWBOOT"}, tmux: {pane: "%2"}}' >"$KLEPSYDRA_DIR/fleet/$SNEWA.json"
+  jq -c -n '{v: 1, session_id: "x", started_at: 50, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "$NOWBOOT"}, tmux: {pane: "%2"}}' >"$KLEPSYDRA_DIR/fleet/$SNEWA.json"
   echo "pane=%2 session=$SNEWA account=x avail=1MiB brief=started"
 else
   echo "pane=%7 session=b-new account=x avail=1MiB brief=started"
@@ -4395,7 +4404,7 @@ rm -f "$KLEPSYDRA_DIR/fleet/$SHEPH.json" "$KLEPSYDRA_DIR/fleet/$SW0.json"; : >"$
 echo "recover: a session on another tmux server is never taken for a row"
 SX=aaaaaaaa-0000-4000-8000-0000000000d7 SAJ=aaaaaaaa-0000-4000-8000-0000000000d8
 sfile "$SX" 4242 778 "$NOWBOOT" %3
-jq -n '{session_id: "x", started_at: 1, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "'"$NOWBOOT"'"}, tmux: {pane: "%3", socket: "/tmp/tmux-1001/default"}}' >"$KLEPSYDRA_DIR/fleet/$SAJ.json"
+jq -c -n '{v: 1, session_id: "x", started_at: 1, ended: null, claude: {pid: 4242, start: 777}, host: {boot: "'"$NOWBOOT"'"}, tmux: {pane: "%3", socket: "/tmp/tmux-1001/default"}}' >"$KLEPSYDRA_DIR/fleet/$SAJ.json"
 printf '%s\tw\t%s\t%s\t/w\n' %3 "$work/ba.src" "$SX" >"$REGISTRY"
 check "AJ's own session in pane %3 of his tmux is not worker w's" "$(rec --no-orchestrator --dry-run | head -1 | cut -d' ' -f1-3)" "would recover: w"
 rm -f "$KLEPSYDRA_DIR/fleet/$SX.json" "$KLEPSYDRA_DIR/fleet/$SAJ.json"; : >"$REGISTRY"
@@ -4451,8 +4460,8 @@ export FLEET_BOOT_ID="$work/boot_id" FLEET_PROC="$work/proc"
 login a; login b; reading a Personal 100 5000; reading b RIT 10 4000
 OS=aaaaaaaa-0000-4000-8000-0000000000a1 CUR=aaaaaaaa-0000-4000-8000-0000000000a2
 hfile() { # SID PID START PANE [ENDED-AT]: a fleet file, ended when ENDED-AT is given
-  jq -n --argjson pid "$2" --argjson st "$3" --arg b "$NOWBOOT" --arg p "$4" --arg e "${5:-}" \
-    '{session_id: "x", started_at: 1, ended: (if $e == "" then null else {at: ($e | tonumber)} end),
+  jq -c -n --argjson pid "$2" --argjson st "$3" --arg b "$NOWBOOT" --arg p "$4" --arg e "${5:-}" \
+    '{v: 1, session_id: "x", started_at: 1, ended: (if $e == "" then null else {at: ($e | tonumber)} end),
       claude: {pid: $pid, start: $st}, host: {boot: $b}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$1.json"
 }
 hcase() { # NAME OS-START: Heph's recorded session OS ended (started at OS-START); CUR, alive, in his pane
@@ -4483,7 +4492,7 @@ printf '%s\n' "$h" >"$FLEET_STATE/orchestrator.pane"; printf '%s\n' "$CUR" >"$FL
 hfile "$CUR" 4242 777 "$h"
 cat >"$work/launch-heph-phone.sh" <<EOF
 #!/usr/bin/env bash
-jq '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$CUR.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$CUR.json"
+jq -c '.prompt.at = 5' "$KLEPSYDRA_DIR/fleet/$CUR.json" >"$work/st.json" && mv "$work/st.json" "$KLEPSYDRA_DIR/fleet/$CUR.json"
 echo "pane=%996 session=x account=\$FLEET_ACCOUNT avail=1MiB brief=started"
 EOF
 LAUNCH="$work/launch-heph-phone.sh" FLEET_HEPH="$work/HEPH.md" FLEET_NOW=$noon bash "$here/resume-at-reset.sh" --once 2>/dev/null
@@ -5146,10 +5155,13 @@ check "tmux-conf.sh with no server running does nothing" "$(FLEET_SOCK=$cs bash 
 mkdir -p "$work/dproc/91001" "$work/dproc/91002" "$KLEPSYDRA_DIR/fleet"
 printf 'KERYX_VOICE=am_michael\0' >"$work/dproc/91001/environ"
 printf 'KERYX_VOICE=am_puck\0' >"$work/dproc/91002/environ"
-cat >"$KLEPSYDRA_DIR/fleet/s1.json" <<EOF
+S1=aaaaaaaa-0000-4000-8000-000000000481
+S2=aaaaaaaa-0000-4000-8000-000000000482
+S3=aaaaaaaa-0000-4000-8000-000000000483
+cat >"$KLEPSYDRA_DIR/fleet/$S1.json" <<EOF
 {"v":1,"session_id":"s1","orchestrator":true,"orchestrator_face":"am_michael","claude":{"pid":91001,"start":1}}
 EOF
-cat >"$KLEPSYDRA_DIR/fleet/s2.json" <<EOF
+cat >"$KLEPSYDRA_DIR/fleet/$S2.json" <<EOF
 {"v":1,"session_id":"s2","orchestrator":false,"voice":"af_bella","claude":{"pid":91002,"start":1}}
 EOF
 check "#389: doctor warns when card and terminal voices differ" \
@@ -5159,12 +5171,12 @@ check "#389: doctor does not warn when card and terminal voices match" \
   "$(KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn voice 91001:')" "0"
 # #417 review: a card with no voice keeps its fields in place (a merged empty
 # field read the start time as the pid and checked another process).
-cat >"$KLEPSYDRA_DIR/fleet/s3.json" <<EOF
+cat >"$KLEPSYDRA_DIR/fleet/$S3.json" <<EOF
 {"v":1,"session_id":"s3","orchestrator":false,"claude":{"pid":91003,"start":91002}}
 EOF
 check "#417 review: a card with no voice is not checked, and no other pid is" \
   "$(KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep -c '^warn voice 9100[23]:')" "1"
-rm -f "$KLEPSYDRA_DIR/fleet/s3.json"
+rm -f "$KLEPSYDRA_DIR/fleet/$S3.json"
 # The real wiring: the card's voice came from KERYX_VOICE, so the environment
 # always agrees; keryx's hold is what it speaks (a fallback or a pick).
 printf 'KERYX_VOICE=af_bella\0' >"$work/dproc/91002/environ"
@@ -5172,7 +5184,7 @@ printf '{"holders":{"91002:1":{"voice":"am_puck","seen":1}}}' >"$work/dvoices.js
 check "#395 review: doctor reads keryx's hold before the environment" \
   "$(KERYX_VOICES="$work/dvoices.json" KLEPSYDRA_PROC="$work/dproc" bash "$here/doctor.sh" 2>/dev/null | grep '^warn voice 91002:' | tr -s ' ')" \
   "warn voice 91002: card has af_bella but terminal has am_puck"
-rm -f "$KLEPSYDRA_DIR/fleet/s1.json" "$KLEPSYDRA_DIR/fleet/s2.json"
+rm -f "$KLEPSYDRA_DIR/fleet/$S1.json" "$KLEPSYDRA_DIR/fleet/$S2.json"
 rm -rf "$work/dproc/91001" "$work/dproc/91002"
 
 echo "#515: a brief naming more than one repo's items"

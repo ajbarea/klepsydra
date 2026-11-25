@@ -27,12 +27,11 @@ fi
 # The ids of the live sessions that name PANE on the fleet's tmux server (a file with no socket counts,
 # as in pane_runs): AJ's own tmux hands out the same %N, so a file for another socket is no one of ours.
 fleet_sessions() { # PANE
-  local f
-  while IFS= read -r f; do
-    [[ -f $f && ! -L $f ]] || continue
-    jq -e --arg p "$1" --arg s "/$FLEET_SOCK" '.tmux.pane == $p and .ended == null
-      and (.tmux.socket == null or (.tmux.socket | strings | endswith($s)))' "$f" >/dev/null 2>&1 && basename "$f" .json
-  done < <(grep -l -F -- "\"$1\"" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+  local f pane sock ended
+  while IFS=$'\t' read -r f pane sock ended _; do
+    [[ $pane == "$1" && $ended == 0 ]] || continue
+    [[ $sock == - || $sock == */"$FLEET_SOCK" ]] && printf '%s\n' "${f%.json}"
+  done < <(fleet_sessions_tsv)
 }
 # When PANE's process started, in epoch seconds.
 pane_born() { # PANE
