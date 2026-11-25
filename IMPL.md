@@ -23,6 +23,8 @@ Design from r1/r2 stands: one lock folder per host and boot under ~/.local/state
 - recover's wait: deadline on /proc/uptime (FLEET_UPTIME seam); tick count if unreadable.
 
 ## State
-- Merged origin/main cleanly.
-- Implemented r3 & r4: S1 (doctor boot seam), N1 (`own_data_dir` + in-place `lock_trace` with `2>/dev/null` before `>"$file"`), N2 (host-pruning wording), N3 (user-manager wait & `run-_-*` retention docs), single `$ld`-based `pending` stamp in `hooks/test_launch.sh` with grep guard, plus O1/F6/symlink/ro-dir tests.
-- Next: run light lints and covering fleet suites under `/tmp/fleet-heavy.lock`, verify mutants O1/F6, update PR #518 body, push `agy/518-r3`, reply on PR #551.
+- r3/r4 (agy, #551) merged into this branch; r5 review clean (all r4 findings mutation-checked).
+- main merged in (conflicts in launch.sh, test_launch.sh, IMPL.md came from #551's squash dropping its main-merge parent; branch side kept).
+- PR body rewritten from the final state (status, mutation table F2-F7, O1, T1).
+- Next: CI green on the merged head, whole-PR review against main (review-batch3), merge, `fleet install`.
+- Last step before merge: reread the #518 body against the final diff.
