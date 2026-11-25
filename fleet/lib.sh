@@ -747,6 +747,13 @@ finished_here() { # PANE
 # Two live files naming one pane (a killed pane never writes "ended", and
 # tmux reuses its id) is no answer at all.
 live_session() { # PANE
+  if [[ -z ${SESSION_ROWS+set} ]]; then
+    local _j _has=0
+    for _j in "$KLEPSYDRA_DIR"/fleet/*.json; do
+      [[ -f $_j && ! -L $_j ]] && { _has=1; break; }
+    done
+    (( _has )) || return 1
+  fi
   local f pane ended found=()
   while IFS=$'\t' read -r f pane _ ended _; do
     [[ $pane == "$1" && $ended == 0 ]] && found+=("${f%.json}")
