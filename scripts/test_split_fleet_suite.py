@@ -6,6 +6,7 @@ Run: python3 -I scripts/test_split_fleet_suite.py
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -76,7 +77,8 @@ def run(repo: Path, *args: str, stdin: str = "") -> subprocess.CompletedProcess[
 
 def shards(repo: Path) -> dict[str, str]:
     return {
-        p.name: p.read_text() for p in sorted((repo / "fleet" / "tests").glob("*.sh"))
+        p.name: p.read_text()
+        for p in sorted((repo / "fleet" / "tests" / "shards").glob("*.sh"))
     }
 
 
@@ -108,7 +110,7 @@ def main() -> None:
         in_bodies = 0
         for s in every:
             inside = False
-            for ln in a[f"{s}.sh"].splitlines():
+            for ln in a[f"{s}.sh"].split("\n_group_name=tail ")[0].splitlines():
                 if ln.startswith("_group_shard_line="):
                     inside = True
                 elif ln.startswith("printf '%sgroup"):
@@ -130,7 +132,7 @@ def main() -> None:
 
         for s in every:
             r = subprocess.run(
-                ["bash", "-n", str(repo / "fleet" / "tests" / f"{s}.sh")],
+                ["bash", "-n", str(repo / "fleet" / "tests" / "shards" / f"{s}.sh")],
                 capture_output=True,
                 text=True,
             )
@@ -160,14 +162,14 @@ def main() -> None:
             every,
         )
         check(
-            "an IMPL.md runs the shard that sweeps the docs",
-            "brief" in sel("IMPL.md"),
-            True,
+            "an IMPL.md, which the docs sweep reads, runs every shard",
+            sel("IMPL.md"),
+            every,
         )
         check(
-            "the wall's Rust view, which the suite reads, runs a shard",
-            sel("src-tauri/fleet/src/view.rs") != [],
-            True,
+            "the wall's Rust view, which the suite reads, runs every shard",
+            sel("src-tauri/fleet/src/view.rs"),
+            every,
         )
         check(
             "a file outside the app that nothing names runs every shard",
@@ -175,9 +177,9 @@ def main() -> None:
             every,
         )
         check(
-            "launch.sh reaches the launch shard",
-            "launch" in sel("fleet/launch.sh"),
-            True,
+            "launch.sh runs every shard",
+            sel("fleet/launch.sh"),
+            every,
         )
         subprocess.run(
             ["git", "-C", str(repo), "rm", "-q", "fleet/headless-rules.md"], check=True
@@ -253,6 +255,25 @@ def main() -> None:
             (0, True),
         )
         src.write_text(text)
+
+        # A make that started a shard passes SHARD on; the suite's make -n checks must not see it.
+        r = subprocess.run(
+            [
+                "bash",
+                "-c",
+                head + 'make -s -n -C "$1" test-fleet FLEET_HEAVY_HELD=1',
+                "x",
+                str(repo),
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "SHARD": "misc", "MAKEFLAGS": "SHARD=misc"},
+        )
+        check(
+            "a shard started by make SHARD= gives the suite a clean make",
+            r.stdout.strip(),
+            "bash fleet/test_fleet.sh",
+        )
 
     print(f"\n{'all passed' if not failures else f'{failures} failed'}")
     sys.exit(1 if failures else 0)

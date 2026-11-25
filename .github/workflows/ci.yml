@@ -214,6 +214,7 @@ jobs:
           echo "run=$run" >>"$GITHUB_OUTPUT"
 
   # Every shard reports a status, run or not, so the gate never waits on a missing one.
+  # The shard's name is AREA, never SHARD: make reads SHARD from the environment.
   fleet-shard:
     name: Fleet shard (${{ matrix.shard }})
     needs: shards
@@ -228,12 +229,12 @@ jobs:
         id: need
         env:
           RUN: ${{ needs.shards.outputs.run }}
-          SHARD: ${{ matrix.shard }}
+          AREA: ${{ matrix.shard }}
         run: |
           # jq -e exits 1 only for "not in the list"; any other failure runs the shard.
-          jq -e --arg s "$SHARD" 'index($s) != null' <<<"$RUN" >/dev/null && rc=0 || rc=$?
+          jq -e --arg s "$AREA" 'index($s) != null' <<<"$RUN" >/dev/null && rc=0 || rc=$?
           if (( rc == 1 )); then
-            echo "skipped: this change reaches no file the $SHARD shard runs"
+            echo "skipped: this change reaches no file the $AREA shard runs"
           else
             echo "run=true" >>"$GITHUB_OUTPUT"
           fi
@@ -248,11 +249,11 @@ jobs:
       - name: Run the shard
         if: steps.need.outputs.run == 'true'
         env:
-          SHARD: ${{ matrix.shard }}
+          AREA: ${{ matrix.shard }}
         run: |
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
           bash scripts/split-fleet-suite.sh
-          bash "fleet/tests/$SHARD.sh"
+          bash "fleet/tests/shards/$AREA.sh"
 
   # Branch protection requires this check by name: it passes only when every half did.
   # always(), not !cancelled(): a skipped job reports success, even as a required check.
