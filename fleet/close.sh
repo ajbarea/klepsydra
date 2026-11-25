@@ -7,21 +7,41 @@
 # /exit once it is confirmed at rest (close_now), and is never killed. The
 # agent's record in done-reports.tsv is dropped, which also clears the doctor's
 # flag. Exits 1 when NAME has not finished, the pane is the orchestrator's, is
-# not confirmed at rest, or is still there after /exit; 2 on bad usage.
+# not confirmed at rest, or is still there after /exit; 2 on bad usage. Each
+# refusal is logged with the check that failed and what differed;
+# `close.sh --why NAME` prints NAME's last close record from the fleet log.
 set -u
 FLEET_TARGET=fleet::close
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 FINISHED=${FLEET_FINISHED:-$FLEET_STATE/finished.tsv}
-(( $# == 1 )) && [[ -n $1 ]] || { err "usage: fleet close NAME"; exit 2; }
+usage="usage: fleet close NAME | fleet close --why NAME"
+# NAME's last close record in the fleet log (the current one, then the renamed ones, newest first):
+# its time and message, then each field (the check that failed, why, what differed) on its own line.
+why_report() { # NAME
+  local f rec=
+  while IFS= read -r f; do
+    rec=$(tr -d '\000' <"$f" 2>/dev/null | grep -a -F '"target":"fleet::close"' \
+      | jq -R -c --arg n "$1" 'fromjson? | select(type == "object" and .name == $n)' 2>/dev/null | tail -1)
+    [[ -n $rec ]] && break
+  done < <(printf '%s\n' "$FLEET_LOG"; find "${FLEET_LOG%/*}" -maxdepth 1 -name "$(basename "${FLEET_LOG%.log}")_*.log" -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+  [[ -n $rec ]] || { err "no close of $1 in the fleet log"; return 1; }
+  jq -r '"\(.ts) \(.level) \(.message)",
+    (to_entries[] | select(.key | IN("ts", "level", "target", "message", "run_id", "name") | not) | "  \(.key): \(.value)")' <<<"$rec"
+}
+case ${1:-} in
+  -h | --help) echo "$usage"; exit 0 ;;
+  --why) (( $# == 2 )) && [[ -n $2 ]] || { err "$usage"; exit 2; }; why_report "$2"; exit ;;
+esac
+(( $# == 1 )) && [[ -n $1 ]] || { err "$usage"; exit 2; }
 name=$1
 # The newest finished row of that name (names compare as text).
 mapfile -t row < <(awk -F'\t' -v n="$name" '$2 "" == n "" { p = $1; s = $4 } END { if (p != "") { print p; print s } }' "$FINISHED" 2>/dev/null)
 pane=${row[0]:-} sid=${row[1]:-}
 if [[ -z ${pane:-} ]]; then
-  flog WARN "close: no finished agent of that name" name="$name"
-  err "no finished agent named $name (fleet done marks one finished first)"
+  flog WARN "close: no finished agent of that name" name="$name" check=finished
+  err "no finished agent named $name (fleet done marks one finished first) [check: finished]"
   exit 1
 fi
 # The ids of the live sessions that name PANE on the fleet's tmux server (a file with no socket counts,
@@ -46,7 +66,9 @@ pane_born() { # PANE
 # written before the pane's process started (a reused pane whose new occupant writes no file),
 # unreadable, owing the wall's wrap-up an answer (its checkpoint turn runs on while the file says
 # done), working, or with background work (a shell or watcher dies with its pane). At rest, prints
-# the file's fingerprint, so a later read can tell whether anything was written since.
+# the file's fingerprint, so a later read can tell whether anything was written since. A subagent
+# in the background is in that list too; the footer's "← N agents" is not: it counts agent-view
+# sessions, which a supervisor runs apart from this pane, so /exit leaves them running.
 at_rest() { # PANE SID
   local f=$KLEPSYDRA_DIR/fleet/$2.json n r w born live
   [[ -f $f && ! -L $f ]] || { echo "unreadable its session file is missing"; return 1; }
@@ -70,38 +92,58 @@ at_rest() { # PANE SID
 }
 # SCREEN above the input box's top rule, escapes kept: a turn printing text or a spinner with no
 # timer changes it (the glyph and its colours move), where busy reads nothing.
-above_raw() { # SCREEN
-  local n
-  n=$(plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }')
-  head -n "$n" <<<"$1"
+above_raw() { head -n "$(above_rows "$1")" <<<"$1"; } # SCREEN
+# How many rows SCREEN has above the input box's top rule, blank ones included: counted from the
+# rule's position, since a command substitution drops a text's trailing blank rows.
+above_rows() { # SCREEN
+  plain <<<"$1" | awk 'index($0, "────") == 1 { r[++k] = NR } END { print (k >= 2) ? r[k - 1] - 1 : NR }'
 }
-# ABOVE (above_raw's) as plain lines, blank ones and a trailing slash-command menu dropped. Typing
-# /exit opens that menu just above the box: Claude Code 2.1.316 draws it over the transcript's last
-# rows (a full screen might scroll up instead). Prints how many menu lines went, then the rest.
-screen_lines() { # ABOVE
-  plain <<<"$1" | grep -v '^[[:space:]]*$' | awk '{ l[++n] = $0 } END {
-    k = 0; while (n > 0 && l[n] ~ /^ {2,4}(❯ )?\/[^ ]+( |$)/) { n--; k++ }
-    print k; for (i = 1; i <= n; i++) print l[i] }'
+# Whether RAW_ABOVE (above_raw's, escapes kept) shows Claude Code's command menu, its "❯ /exit" row first
+# (2.1.316 opens it on "/exit" with no space after it).
+menu_open() { plain <<<"$1" | grep -q '^  ❯ /exit\( \|$\)'; } # RAW_ABOVE
+# Erase our "/exit " from PANE's box once its text reads just /exit: six backspaces, then again for what
+# is left of /exit should more spaces have followed it (the box shows none), so no "/e" stays behind.
+back_out() { # PANE
+  local b n
+  t send-keys -t "$1" -N 6 BSpace
+  for n in 1 2; do
+    sleep "${FLEET_TICK:-0.5}"
+    b=$(input_text "$(screen "$1")")
+    [[ -n $b && /exit == "$b"* ]] || return 0
+    t send-keys -t "$1" -N "${#b}" BSpace
+  done
 }
-# Whether AFTER (a screen with /exit typed) shows REF's transcript (above_raw's) unchanged: its
-# first lines or its last ones, less at most the rows the menu covers, and no line it lacks.
-same_transcript() { # REF AFTER
-  local r a k n m
-  r=$(screen_lines "$1" | tail -n +2)
-  a=$(screen_lines "$(above_raw "$2")")
-  k=$(head -1 <<<"$a"); a=$(tail -n +2 <<<"$a")
-  n=$(grep -c . <<<"$r") m=$(grep -c . <<<"$a")
-  (( m >= 1 && m <= n && n - m <= k + 1 )) || return 1
-  [[ $(head -n "$m" <<<"$r") == "$a" || $(tail -n "$m" <<<"$r") == "$a" ]]
+# The first lines that differ between OLD and NEW (plain text), at most 5, each cut to 120
+# characters and joined by " | ", then how many blank lines differ: what a refusal's log shows of a
+# screen that changed. Blank lines are counted, not quoted, so they cannot hide the line that moved.
+excerpt() { # OLD NEW
+  local LC_ALL=C.UTF-8 l out='' d b
+  d=$(diff -- <(printf '%s\n' "$1") <(printf '%s\n' "$2") | grep -E '^[<>] ')
+  while IFS= read -r l; do
+    l=${l%"${l##*[![:space:]]}"}
+    out+="${out:+ | }${l:0:120}"
+  done < <(grep -E '^[<>] +[^[:space:]]' <<<"$d" | head -5)
+  b=$(grep -cE '^[<>][[:space:]]*$' <<<"$d")
+  (( b > 0 )) && out+="${out:+ | }($b blank lines)"
+  printf '%s' "${out:-(none)}"
 }
-# Whether PANE's screen above the box stays as REF (above_raw) and not busy for SECONDS.
+# The first line of stdin, cut to N characters (120).
+clip() { local LC_ALL=C.UTF-8 l; IFS= read -r l; printf '%s' "${l:0:${1:-120}}"; }
+# SID's session file in brief, for a refusal's log: its state, reason, background count, and when
+# it was last written.
+session_brief() { # SID
+  jq -c '{state, reason, background: ((.background // []) | if type == "array" then length else . end), written_at}' \
+    -- "$KLEPSYDRA_DIR/fleet/$1.json" 2>/dev/null || echo unreadable
+}
+# Whether PANE's screen above the box stays as REF (above_raw) and not busy for SECONDS. Fails with
+# STEADY_SCREEN set to the screen that broke it.
 steady() { # PANE SECONDS REF
   local i n s
   n=$(awk -v s="$2" -v t="${FLEET_TICK:-0.5}" 'BEGIN { n = int(s / t + 0.999); print (n < 1) ? 1 : n }')
   for (( i = 0; i < n; i++ )); do
     sleep "${FLEET_TICK:-0.5}"
     s=$(screen "$1")
-    ! busy "$s" && [[ $(above_raw "$s") == "$3" ]] || return 1
+    ! busy "$s" && [[ $(above_raw "$s") == "$3" ]] || { STEADY_SCREEN=$s; return 1; }
   done
 }
 # Claude Code's dialog on /exit while background work runs ("Exit and stop tasks" first), standing
@@ -113,45 +155,114 @@ exit_dialog() {
   grep -q '^ *Background work is running' <<<"$tail" && grep -q 'Esc to cancel' <<<"$tail"
 }
 no_exit_dialog() { ! exit_dialog "$1"; }
-# Refuse the close for WHY (at_rest's or the screen's), saying so; returns 10 to 12.
-refuse() { # NAME PANE WHY
-  flog WARN "close: not confirmed at rest; left open" name="$1" pane="$2" why="$3"
-  case $3 in
-    working) err "refused: $1 is working again (its session file says so); close it once the turn ends"; return 10 ;;
-    working*) err "refused: $1 is working again (${3#working (}; close it once the turn ends"; return 10 ;;
-    background*) err "refused: $1 still has background work running (a shell or watcher dies with its pane); close it once that ends"; return 11 ;;
-    wrapup*) err "refused: $1 owes the wall's wrap-up an answer (${3#wrapup }): its checkpoint turn may still run; close it once it answers or the request closes"; return 12 ;;
-    *) err "refused: cannot confirm $1 is idle (${3#* }); left open"; return 12 ;;
+# Refuse the close for WHY (at_rest's or the screen's), found by CHECK (busy, input_box,
+# session_file, quiet_screen, fingerprint, menu, transcript, input_text), saying so in one line that names
+# the check; the log line adds what differed (KEY=VALUE...). Returns 10 to 12.
+refuse() { # NAME PANE CHECK WHY [KEY=VALUE...]
+  local c=$3 w=$4 more
+  flog WARN "close: not confirmed at rest; left open" name="$1" pane="$2" check="$c" why="$w" "${@:5}"
+  more="[check: $c; fleet close --why $1]"
+  [[ $c == menu ]] && { err "refused: typing \"/exit \" in $1 opened Claude Code's command menu, which would hide a new turn; fleet close needs updating for this Claude Code; left open $more"; return 12; }
+  case $w in
+    working) err "refused: $1 is working again (its session file says so); close it once the turn ends $more"; return 10 ;;
+    working*) err "refused: $1 is working again (${w#working (}; close it once the turn ends $more"; return 10 ;;
+    background*) err "refused: $1 still has background work running (a shell or watcher dies with its pane); close it once that ends $more"; return 11 ;;
+    wrapup*) err "refused: $1 owes the wall's wrap-up an answer (${w#wrapup }): its checkpoint turn may still run; close it once it answers or the request closes $more"; return 12 ;;
+    *) err "refused: cannot confirm $1 is idle (${w#* }); left open $more"; return 12 ;;
   esac
+}
+# The last look before Enter, from close_now (it sets close_now's box, and check, why and more when
+# it fails): no spinner shows, the screen above the box is still REF, and the box still holds just
+# our /exit.
+last_look() { # PANE REF SETTLE
+  local s
+  s=$(screen "$1"); box=$(input_text "$s")
+  if busy "$s"; then
+    check=busy why="working (a turn started within ${3} s of /exit going in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
+  elif [[ $(above_raw "$s") != "$2" ]]; then
+    check=quiet_screen why="working (its screen changed just before Enter)"
+    more=(differs="$(excerpt "$(plain <<<"$2")" "$(above_raw "$s" | plain)")")
+  elif [[ $box != /exit ]]; then
+    check=input_text why="working (its box changed within ${3} s of /exit going in)" more=(text="$(clip 80 <<<"$box")")
+  else
+    return 0
+  fi
+  return 1
 }
 # The checks and the /exit hold one pane lock, so a `fleet send` that is mid-paste cannot start a
 # turn between them. A finished agent may work again (a follow-up message, a phone prompt, the
 # wrap-up's checkpoint): /exit would end the turn or kill its shells with the pane. So the pane must
 # look idle with an empty box, its session file be at rest, and then both stay unchanged for
-# FLEET_CLOSE_QUIET s (the hook writes the file async, up to a second after a prompt). /exit is
-# typed, both are read once more, and only then is Enter pressed. The pane is never killed: one that
-# does not go is left open and said so.
+# FLEET_CLOSE_QUIET s (the hook writes the file async, up to a second after a prompt). "/exit " is
+# typed with a trailing space, which keeps Claude Code's command menu shut (2.1.316: "/exit" alone
+# opens it over the transcript's last rows, where it would hide a new turn); Enter on it still
+# exits. Both are read once more, and again after FLEET_CLOSE_SETTLE s (2: past the hook's write),
+# the screen above the box byte for byte as before the quiet window, and only then is Enter
+# pressed. The pane is never killed: one that does not go is left open and said so.
 close_now() { # PANE NAME SID
-  local s ref fp why q=${FLEET_CLOSE_QUIET:-6}
+  local s ref fp why box q=${FLEET_CLOSE_QUIET:-6} g=${FLEET_CLOSE_SETTLE:-2}
   [[ $q =~ ^[0-9]+([.][0-9]+)?$ ]] || q=6
+  [[ $g =~ ^[0-9]+([.][0-9]+)?$ ]] || g=2
   s=$(screen "$1")
-  busy "$s" && { refuse "$2" "$1" "working ($1 is mid-turn)"; return; }
-  idle_empty "$s" || { refuse "$2" "$1" "unconfirmed its input box is not showing, or holds text"; return; }
-  fp=$(at_rest "$1" "$3") || { refuse "$2" "$1" "$fp"; return; }
+  busy "$s" && { refuse "$2" "$1" busy "working ($1 is mid-turn)" spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)"; return; }
+  if ! idle_empty "$s"; then
+    box=$(input_text "$s")
+    refuse "$2" "$1" input_box "unconfirmed its input box is not showing, or holds text" \
+      box="$(has_input_box "$s" && echo shown || echo missing)" text="$(clip 80 <<<"$box")"
+    return
+  fi
+  fp=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$fp" session="$(session_brief "$3")"; return; }
   ref=$(above_raw "$s")
-  steady "$1" "$q" "$ref" || { refuse "$2" "$1" "working (its screen changed within ${q} s)"; return; }
-  why=$(at_rest "$1" "$3") || { refuse "$2" "$1" "$why"; return; }
-  [[ $why == "$fp" ]] || { refuse "$2" "$1" "working (its session file was written within ${q} s)"; return; }
-  type_exactly "$1" "/exit" || return 13
+  steady "$1" "$q" "$ref" || { refuse "$2" "$1" quiet_screen "working (its screen changed within ${q} s)" \
+    busy="$(busy "$STEADY_SCREEN" && echo yes || echo no)" differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$STEADY_SCREEN" | plain)")"; return; }
+  why=$(at_rest "$1" "$3") || { refuse "$2" "$1" session_file "$why" session="$(session_brief "$3")"; return; }
+  [[ $why == "$fp" ]] || { refuse "$2" "$1" fingerprint "working (its session file was written within ${q} s)" \
+    fp_before="$fp" fp_after="$why" session="$(session_brief "$3")"; return; }
+  type_exactly "$1" "/exit " || { flog WARN "close: /exit would not go in; left open" name="$2" pane="$1" check=typing; return 13; }
   why=$(at_rest "$1" "$3")
   s=$(screen "$1")
-  if [[ $why != "$fp" ]] || busy "$s" || ! same_transcript "$ref" "$s" || [[ $(input_text "$s") != /exit ]]; then
+  box=$(input_text "$s")
+  # Each check in turn, the first that fails named: the file, a turn, the transcript, the box.
+  local check='' more=()
+  if [[ $why != "$fp" ]]; then
+    if [[ $why =~ ^[0-9]+\ [0-9]+$ ]]; then
+      check=fingerprint more=(fp_before="$fp" fp_after="$why" session="$(session_brief "$3")")
+      why="working (its session file was written as /exit went in)"
+    else
+      check=session_file more=(session="$(session_brief "$3")")
+    fi
+  elif busy "$s"; then
+    check=busy why="working (a turn started as /exit went in)" more=(spinner="$(near 4 | grep -E '… \(|esc to interrupt' | clip)")
+  elif menu_open "$(above_raw "$s")" && ! menu_open "$ref"; then
+    check=menu why="unconfirmed Claude Code's command menu opened over the transcript as \"/exit \" went in (a Claude Code that no longer shuts it on the space, or the space was lost), so a new turn would not show; fleet close needs updating for it"
+    more=(differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$s" | plain)")")
+  elif [[ $(above_raw "$s") != "$ref" ]]; then
+    check=transcript why="working (its screen changed as /exit went in)"
+    more=(differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$s" | plain)")")
+  elif [[ $box != /exit ]]; then
+    check=input_text why="working (its box changed as /exit went in)" more=(text="$(clip 80 <<<"$box")")
+  elif ! steady "$1" "$g" "$ref"; then
+    check=quiet_screen why="working (its screen changed within ${g} s of /exit going in)" box=$(input_text "$STEADY_SCREEN")
+    more=(differs="$(excerpt "$(plain <<<"$ref")" "$(above_raw "$STEADY_SCREEN" | plain)")")
+  elif why=$(at_rest "$1" "$3"); [[ $why != "$fp" ]]; then
+    if [[ $why =~ ^[0-9]+\ [0-9]+$ ]]; then
+      check=fingerprint more=(fp_before="$fp" fp_after="$why" session="$(session_brief "$3")")
+      why="working (its session file was written within ${g} s of /exit going in)"
+    else
+      check=session_file more=(session="$(session_brief "$3")")
+    fi
+    box=$(input_text "$(screen "$1")")
+  elif ! last_look "$1" "$ref" "$g"; then
+    :
+  fi
+  if [[ -n $check ]]; then
     # Back out only our own /exit: text typed after it stays, and so does the close's refusal.
-    [[ $(input_text "$s") == /exit ]] && t send-keys -t "$1" -N 5 BSpace
-    if [[ $why == "$fp" ]]; then why="working (its screen or box changed as /exit went in)"
-    elif [[ $why =~ ^[0-9]+\ [0-9]+$ ]]; then why="working (its session file was written as /exit went in)"; fi
-    refuse "$2" "$1" "$why"
-    return
+    [[ $box == /exit ]] && back_out "$1"
+    local rc
+    refuse "$2" "$1" "$check" "$why" "${more[@]}"; rc=$?
+    # Text typed after our /exit stays, so the box still starts with it: Enter there would exit.
+    [[ $box == /exit?* ]] && printf '%s\n' "note: $2's box still starts with \"/exit \" before the text typed after it; delete \"/exit \" before pressing Enter there, or the session exits" >&2
+    return "$rc"
   fi
   t send-keys -t "$1" Enter
   exit_wait "$1"
@@ -181,16 +292,19 @@ elif ! pane_runs "$pane" "$sid"; then
   if [[ -n $other ]]; then
     # A pane id a restarted tmux server gave to another session: never ours to close, and the
     # record is cleared, since no one can read that pane as this agent's any more.
-    flog WARN "close: the pane now runs another session; left open, record cleared" name="$name" pane="$pane" other="$other"
+    flog WARN "close: the pane now runs another session; left open, record cleared" name="$name" pane="$pane" other="$other" check=pane_session
     echo "left open: $pane now runs another session; $name's record is cleared"
   else
     # Its fleet file is gone or unreadable: not ours to close, and the record stays.
-    flog WARN "close: the pane does not run the finished session; left open" name="$name" pane="$pane"
-    err "left open: $pane no longer runs $name's session (or its fleet file is gone)"
+    flog WARN "close: the pane does not run the finished session; left open" name="$name" pane="$pane" check=pane_session
+    err "left open: $pane no longer runs $name's session (or its fleet file is gone) [check: pane_session; fleet close --why $name]"
     exit 1
   fi
-elif [[ $pane == "$(orchestrator)" ]]; then
-  err "refused: $pane is the orchestrator's pane"
+elif [[ $pane == "$(orchestrator)" ]] || jq -e '.orchestrator == true' -- "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1; then
+  # Two signals, either enough: orchestrator.pane, and the session file's own flag.
+  flog WARN "close: the orchestrator's pane; left open" name="$name" pane="$pane" check=orchestrator \
+    by="$([[ $pane == "$(orchestrator)" ]] && echo orchestrator.pane || echo session_file)"
+  err "refused: $pane is the orchestrator's pane [check: orchestrator; fleet close --why $name]"
   exit 1
 else
   pane_locked "$pane" close_now "$pane" "$name" "$sid"
@@ -199,15 +313,17 @@ else
     0) flog INFO "close: finished agent's pane closed" name="$name" pane="$pane"; echo "closed: $name ($pane)" ;;
     10 | 11 | 12) exit 1 ;;
     14)
-      flog WARN "close: /exit asked to stop background work; cancelled, left open" name="$name" pane="$pane"
-      err "left open: $name still runs background work (/exit asked to stop it; cancelled with Esc); close it once that ends"
+      flog WARN "close: /exit asked to stop background work; cancelled, left open" name="$name" pane="$pane" check=exit_dialog
+      err "left open: $name still runs background work (/exit asked to stop it; cancelled with Esc); close it once that ends [check: exit_dialog; fleet close --why $name]"
       exit 1 ;;
     15 | 16)
-      flog WARN "close: the pane did not go after /exit; left open" name="$name" pane="$pane" rc="$rc"
-      err "left open: $pane is still there after /exit$( (( rc == 16 )) && printf ' (its stop-tasks dialog would not cancel)'); look at it"
+      flog WARN "close: the pane did not go after /exit; left open" name="$name" pane="$pane" rc="$rc" check=exit_wait
+      err "left open: $pane is still there after /exit$( (( rc == 16 )) && printf ' (its stop-tasks dialog would not cancel)'); look at it [check: exit_wait; fleet close --why $name]"
       exit 1 ;;
-    75) err "could not take $pane's lock (a send is using it); try again"; exit 1 ;;
-    *) err "could not close $pane (/exit would not go in); it is left open"; exit 1 ;;
+    75)
+      flog WARN "close: the pane's lock was busy; left open" name="$name" pane="$pane" check=lock
+      err "could not take $pane's lock (a send is using it); try again [check: lock; fleet close --why $name]"; exit 1 ;;
+    *) err "could not close $pane (/exit would not go in); it is left open [check: typing; fleet close --why $name]"; exit 1 ;;
   esac
 fi
 with_registry dr_drop "$name" || { err "done-reports.tsv could not be updated"; exit 1; }
