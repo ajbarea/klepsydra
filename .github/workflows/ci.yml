@@ -43,6 +43,14 @@ jobs:
           node-version: '24'
       - name: Unit tests (ramp, countdown, reading age, multi-account rows)
         run: node --test src/*.test.js
+      # The one browser case CI runs: what the page renders, which the node
+      # guard reads only as CSS text (theme colours, computed alpha, ancestors).
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Browser check (no word on the strip fades, at every ink)
+        run: |
+          uvx --from playwright==1.65.2 playwright install --with-deps chromium
+          uv run -q --no-project --with playwright==1.65.2 python -I scripts/test_wall_browser.py strip_words_keep_their_ink
       # The hook is the only path that publishes usage, so its fixtures cover
       # the shapes that would otherwise fail silently: absent rate_limits, a
       # second account, malformed stdin, an unwritable destination.
