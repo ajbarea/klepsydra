@@ -31,6 +31,21 @@ prefs_get() { # KEY
 # there): "repo path, installed name" per entry. install.sh copies them, and
 # doctor checks the copies still match the checkout.
 FLEET_HOOK_DIR=${FLEET_HOOK_DIR:-$HOME/.claude}
+# The briefing repository (queue, needs-you, screenshots), resolved here only:
+# FLEET_BRIEFING when set, else the WSL clone, else ~/fleet-briefing (Debian),
+# else the WSL path. Exported, so the Python scripts and children read it.
+# BRIEFING_WSL_DEFAULT is the path the committed brief tail names.
+BRIEFING_WSL_DEFAULT=/mnt/c/Users/ajbar/fleet-briefing
+if [[ -z ${FLEET_BRIEFING:-} ]]; then
+  FLEET_BRIEFING=${FLEET_WSL_BRIEFING:-$BRIEFING_WSL_DEFAULT}
+  [[ ! -d $FLEET_BRIEFING && -d $HOME/fleet-briefing ]] && FLEET_BRIEFING=$HOME/fleet-briefing
+fi
+export FLEET_BRIEFING
+# STDIN with the tail's briefing path replaced by FLEET_BRIEFING, as literal text.
+briefing_paths() {
+  OLD=$BRIEFING_WSL_DEFAULT NEW=$FLEET_BRIEFING awk 'BEGIN { o = ENVIRON["OLD"]; n = ENVIRON["NEW"] }
+    { s = $0; out = ""; while ((i = index(s, o)) > 0) { out = out substr(s, 1, i - 1) n; s = substr(s, i + length(o)) } print out s }'
+}
 # shellcheck disable=SC2034 # read by install.sh and doctor.sh
 HOOK_COPIES=(
   "hooks/klepsydra-fleet.sh klepsydra-fleet.sh"
@@ -50,7 +65,7 @@ HOOK_COPIES=(
 
 # The preamble a fresh session's brief starts with; WHY says why it replaces the last one.
 fresh_preamble() { # WHY
-  printf 'Fresh start: a previous agent with the brief below %s; you replace it. Before acting, rebuild state from disk and GitHub: IMPL.md in the repo and in each worktree, git log and git status per worktree, open PRs with their comments and reviews, and your repo'"'"'s lines under "Running now" in /mnt/c/Users/ajbar/fleet-briefing/queue.md. Where those are newer than the brief, they win; never redo merged work. No /code-review high (nor xhigh or max); low or medium is fine.' "$1"
+  printf 'Fresh start: a previous agent with the brief below %s; you replace it. Before acting, rebuild state from disk and GitHub: IMPL.md in the repo and in each worktree, git log and git status per worktree, open PRs with their comments and reviews, and your repo'"'"'s lines under "Running now" in %s/queue.md. Where those are newer than the brief, they win; never redo merged work. No /code-review high (nor xhigh or max); low or medium is fine.' "$1" "$FLEET_BRIEFING"
 }
 
 t() { tmux -L "$FLEET_SOCK" "$@"; }
@@ -683,7 +698,7 @@ AWK
   echo "$count"
 }
 # The briefing's queue file (not FLEET_QUEUE: ci_watch.py reads that name as needs-you.md).
-FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-/mnt/c/Users/ajbar/fleet-briefing/queue.md}
+FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-$FLEET_BRIEFING/queue.md}
 # Put a line for an agent's undelivered report in the queue file, at the end of
 # its Running now section. RESULT says where the text stands: on mixed or held
 # it still sits in the orchestrator's box, so it is not sent again. The file is
@@ -729,6 +744,87 @@ pane_folder() { # PANE
 # shellcheck disable=SC2034 # read by recover.sh and resume-at-reset.sh
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
+UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+# --- session rows: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
+# One tab-separated row per named session file whose first line is a v1
+# object: its name, then what the jq array `fields` picks from the object
+# (`last_active` is its newest time field, `or_q` a string or "?"). One jq
+# reads every file; a file without a final newline cannot run into the next,
+# and a line that does not parse yields nothing. Callers pass only names they
+# checked, from inside the fleet folder.
+session_rows() { # fields file...
+  local fields=$1 f line
+  shift
+  (( $# )) || return 0
+  for f in "$@"; do
+    line=""
+    { IFS= read -r line <"$f"; } 2>/dev/null
+    printf '%s\t%s\n' "$f" "$line"
+  done | jq -Rr '
+    def last_active: [.started_at, .state_at, .where.at, .prompt.at, .reply.at, .ended.at, .written_at]
+      | map(numbers) | max // 0 | floor;
+    def or_q: if type == "string" and length > 0 then . else "?" end;
+    # The face of an orchestrator file, as the crate reads it: Athena (bf_alice
+    # was her key before 11-02), else Hephaestus.
+    def orch_face: if (.orchestrator_face | IN("bf_emma", "bf_alice")) then "bf_emma" else "am_michael" end;
+    (index("\t")) as $i | .[:$i] as $f
+    | (try (.[$i + 1:] | fromjson) catch empty) | select(type == "object" and .v == 1)
+    | try ([$f] + ('"$fields"')) catch empty
+    | @tsv' 2>/dev/null
+}
+
+# session_rows FIELDS over every session file in FOLDER (<uuid>.json, a file,
+# never a link), read from inside it, where every name is short.
+fleet_rows() { # folder fields
+  ( cd -- "$1" 2>/dev/null || exit 0
+    local f names=()
+    for f in *.json; do
+      [[ ${f%.json} =~ $UUID_RE && -f $f && ! -L $f ]] && names+=("$f")
+    done
+    session_rows "$2" "${names[@]}" )
+}
+# --- end session rows ---
+
+# Every session file as one row: NAME (<uuid>.json), PANE, SOCKET ("-" when
+# none), ENDED (0 or 1), STARTED_AT (0 when none), PID and START ("-" when
+# none); "?" for an empty or non-string value. One jq for the whole folder.
+# A caller that reads them many times in one run sets SESSION_ROWS to this
+# output first (doctor.sh does); the rows then come from it.
+SESSION_FIELDS='[(.tmux.pane | or_q), (if .tmux.socket == null then "-" else (.tmux.socket | or_q) end),
+  (if .ended == null then 0 else 1 end), ((.started_at | numbers) // 0), ((.claude.pid | numbers) // "-"),
+  ((.claude.start | numbers) // "-")]'
+fleet_sessions_tsv() {
+  if [[ -n ${SESSION_ROWS+set} ]]; then [[ -z $SESSION_ROWS ]] || printf '%s\n' "$SESSION_ROWS"; return 0; fi
+  if [[ ${FUNCNAME[1]:-} == live_session ]]; then
+    fleet_rows "$KLEPSYDRA_DIR/fleet" "$SESSION_FIELDS"
+    return
+  fi
+  local dir="${KLEPSYDRA_DIR:-$HOME/.local/share/klepsydra}/fleet"
+  local f b names=() rows
+  for f in "$dir"/*.json; do
+    [[ -f $f && ! -L $f ]] || continue
+    b=${f##*/}
+    [[ ${b%.json} =~ $UUID_RE ]] && names+=("$b")
+  done
+  rows=$(fleet_rows "$dir" "$SESSION_FIELDS")
+  local n_files=${#names[@]} n_rows=0
+  if [[ -n $rows ]]; then
+    mapfile -t _r <<<"$rows"
+    n_rows=${#_r[@]}
+  fi
+  if (( n_files != n_rows )); then
+    local parsed_names bad=()
+    parsed_names=$(awk -F'\t' '{ print $1 }' <<<"$rows")
+    for f in "${names[@]}"; do
+      grep -qxF -- "$f" <<<"$parsed_names" || bad+=("$f")
+    done
+    flog WARN "session file parse mismatch" named="$n_files" returned="$n_rows" bad="${bad[*]}"
+    [[ -n ${FLEET_STATE:-} && -d $FLEET_STATE ]] && printf '%s\n' "${bad[@]}" >"$FLEET_STATE/bad-sessions" 2>/dev/null || true
+  else
+    [[ -n ${FLEET_STATE:-} && -f $FLEET_STATE/bad-sessions ]] && rm -f -- "$FLEET_STATE/bad-sessions" 2>/dev/null || true
+  fi
+  [[ -z $rows ]] || printf '%s\n' "$rows"
+}
 # Whether PANE's window is the one its tmux session shows (#216). A pane's
 # successor opens behind and comes forward only in place of a window AJ was
 # looking at, so a replacement never moves him off the agent he is watching.
@@ -749,13 +845,17 @@ finished_here() { # PANE
 # Two live files naming one pane (a killed pane never writes "ended", and
 # tmux reuses its id) is no answer at all.
 live_session() { # PANE
-  local f found=()
-  # Only files that name the pane at all: one grep over the folder costs a
-  # third of a stat and a jq per file on the Windows mount (#311).
-  while IFS= read -r f; do
-    [[ -f $f && ! -L $f ]] || continue
-    jq -e --arg p "$1" '.tmux.pane == $p and .ended == null' "$f" >/dev/null 2>&1 && found+=("$(basename "$f" .json)")
-  done < <(grep -l -F -- "\"$1\"" "$KLEPSYDRA_DIR"/fleet/*.json 2>/dev/null)
+  if [[ -z ${SESSION_ROWS+set} ]]; then
+    local _j _has=0
+    for _j in "$KLEPSYDRA_DIR"/fleet/*.json; do
+      [[ -f $_j && ! -L $_j ]] && { _has=1; break; }
+    done
+    (( _has )) || return 1
+  fi
+  local f pane ended found=()
+  while IFS=$'\t' read -r f pane _ ended _; do
+    [[ $pane == "$1" && $ended == 0 ]] && found+=("${f%.json}")
+  done < <(fleet_sessions_tsv)
   (( ${#found[@]} == 1 )) || return 1
   printf '%s' "${found[0]}"
 }
@@ -1706,7 +1806,8 @@ session_alive() { # SID
   f=$KLEPSYDRA_DIR/fleet/$1.json
   [[ -f $f && ! -L $f ]] || return 1
   read -r pid start boot < <(jq -r 'select(.ended == null) | "\(.claude.pid // 0) \(.claude.start // 0) \(.host.boot // "")"' "$f" 2>/dev/null)
-  [[ ${pid:-0} =~ ^[1-9][0-9]*$ && -n ${boot:-} && $boot == "$(cat "${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}" 2>/dev/null)" ]] || return 1
+  local now_boot=""; { read -r now_boot <"${FLEET_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null
+  [[ ${pid:-0} =~ ^[1-9][0-9]*$ && -n ${boot:-} && $boot == "$now_boot" ]] || return 1
   [[ $(proc_start "$pid") == "$start" ]]
 }
 
@@ -1838,14 +1939,13 @@ drop_unpaused() { # SID
 # session_alive (this boot, the same process), ON_FLEET 1 when its socket is
 # the fleet's (or not recorded).
 live_fleet_sessions() {
-  local f id row
-  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-    [[ -f $f && ! -L $f ]] || continue
-    id=$(basename "$f" .json)
-    row=$(jq -r --arg s "/$FLEET_SOCK" 'select(.ended == null and .tmux.pane != null)
-      | [.tmux.pane, (if .tmux.socket == null or (.tmux.socket | endswith($s)) then 1 else 0 end)] | @tsv' "$f" 2>/dev/null) || continue
-    [[ -n $row ]] && session_alive "$id" && printf '%s\t%s\t%s\n' "${row%%$'\t'*}" "$id" "${row##*$'\t'}"
-  done
+  local f pane sock ended id
+  while IFS=$'\t' read -r f pane sock ended _; do
+    [[ $ended == 0 && $pane != '?' ]] || continue
+    id=${f%.json}
+    session_alive "$id" || continue
+    if [[ $sock == - || $sock == */"$FLEET_SOCK" ]]; then printf '%s\t%s\t1\n' "$pane" "$id"; else printf '%s\t%s\t0\n' "$pane" "$id"; fi
+  done < <(fleet_sessions_tsv)
 }
 
 # The one live fleet session in PANE that is neither OSID nor in AGENTS (the
@@ -1932,7 +2032,7 @@ heph_asks() { # SID HEPH
 heph_note() { # WHY SID HEPH DOING
   local asks
   asks=$(heph_asks "$2" "$3")
-  printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in /mnt/c/Users/ajbar/fleet-briefing/queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$4"
+  printf 'Fresh start: the orchestrator (Heph) %s; you replace it. Read %s first, then the "Running now" lines in %s/queue.md; %s Put anything below that changes the plan into HEPH.md now.\n\n' "$1" "$3" "$FLEET_BRIEFING" "$4"
   printf "AJ's messages to the last orchestrator after HEPH.md was last written:\n%s\n" "${asks:-- (none)}"
 }
 

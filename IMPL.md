@@ -1,41 +1,37 @@
-# IMPL: klepsydra#492, perf class (a): one process per batch in the fleet's shell loops
+# IMPL: fleet close refuses at-rest panes, the /exit menu wraps (#483)
 
-Branch perf/shell-forks (worktree .claude/worktrees/perf-shell-forks), cut `--no-track` from origin/main 958dbb2.
-Push only: `git push -u origin perf/shell-forks:perf/shell-forks`. Never push to main.
-Role (Athena 11-19): perf-k measures and specifies; agy workers implement slices from the specs; perf-k
-verifies each PR against before.md. perf-k codes a slice only when it is too subtle for Flash.
+Brief: fleet worker close-menu (task-close-menu.src). Branch fix/close-slash-menu, worktree
+.claude/worktrees/close-menu. Push only `git push -u origin HEAD:refs/heads/fix/close-slash-menu`.
+Do not merge: Heph reviews and merges. PR #496.
 
-## Slices (specs in ~/.local/state/fleet-orchestrator/briefs-free/perf-shell-forks-N-*.md)
-1. sessions: one jq for every session file (hook's fleet_rows block shared into lib.sh). agy, first.
-2. panes: live_panes_load once + pane_live. agy, after 1.
-3. lib-load: lib.sh load 16-19 -> 1 fork, flog +8 -> +5, hook mkdir. agy, after 1.
-4. screen parse (THIS BRANCH, perf-k): one awk per capture; armed_at; stopped_at via printf.
-5. paths: basename/dirname -> parameter expansion + lint. agy, after 1 and 3.
+## Cause
+- Typing /exit opens Claude Code 2.1.316's command menu over the transcript's last rows. At 84
+  columns two descriptions wrap and main's filter refused every close; at 160 nothing wraps.
 
-## Done
-- Baseline 06df2c2: docs/perf/2026-11-19-shell-forks/before.md, harness scripts/perf/forks/.
-- Slice 4 7662892: resume pass 772 -> 472, watch tick (3 panes) 152 -> 39, doctor 1645 -> 1479.
-  Differential test 22227 checks (368 screens x gawk+mawk, both orders) + stopped_at DST; Opus review
-  round 1: no divergence; should-fix (failed parse cached, cache transitions untested, 4 helpers
-  missing) fixed. Mutations: 7 of 9 killed and confirmed, keep-failed + no-idle-order rerunning.
-- Specs 1-3, 5 written, SOTA guard policy folded in (gate on counts, wall time reported only).
-- Reported to Athena 16:42 (fleet send).
+## Design
+- close types `/exit ` (trailing space: no menu; Enter still exits, submit trims). The screen above
+  the box must equal the pre-quiet-window screen byte for byte, after typing, after the settle and
+  at the last look. If the menu opens anyway: check `menu`. back_out erases our /exit only.
+
+## Done (11-20)
+- Merged main (#500 screen_parse in lib.sh) at 3065376: CI green; suite 1018/0.
+- Round 5 (fresh Opus): 0 Blocking; Should-fix = stale PR body (rewritten); minors fixed in
+  95b1edc (menu check replayed on 16 real menu screens + 6 "/exit " screens; comment rename).
+- Live proof (private socket, haiku, 2.1.316), branch: rest and 60-line reply closed at 84 and
+  160; busy refused `busy`; background shell and wrap-up refused `session_file`. main: rest
+  refused at 84, closed at 160. A close within seconds of a turn can refuse at quiet_screen when
+  a usage notice vanishes (safe).
+- ns477 (%48) and tech-labels (%4) panes were gone before a real close could be run.
+- Suite on 95b1edc: one run failed only the keryx isolation check (keryx turned off mid-run,
+  filed #516); rerun 1018/0.
+
+- Review-batch3 (11-25): main merged twice (5774651, then after #497). Round 6 (fresh Opus):
+  1 Should-fix: a refusal after AJ typed past our "/exit " kept "/exit " at the box's head
+  without saying so; 1320a64 adds a note to the refusal and the #483 review 2 case checks it.
+  Verify pass clean (551/0 to the end of the close section; the case fails without the note).
+  Deferred Minors: type_exactly's and back_out's blind backspaces (sub-second race), no test
+  that the note stays silent on a backed-out refusal.
 
 ## Next
-1. #500: round 2 (fresh Opus) CLEAN; its nits (armed_at takes its own screen, harness hook rows run with the read-only
-   tmux shim) committed with this IMPL. test_forks_screen.sh 26069 passed (strace 6.8). Report to Athena; do not merge.
-2. #510 (perf/readers, Closes #501): verify pass CLEAN; should-fix (ctime part of the change marker untested) fixed
-   on that branch. Do not merge.
-3. #497 (agy slice 1): re-verified 11-20 01:50 on 96777d2, both should-fix fixed (PR comment). #497 and #500 conflict
-   (test-forks target, CI step, lib.sh): second to merge rebases.
-4. Slices 2, 3, 5 (specs in briefs-free) start after #497 merges; agy implements unless Athena hands them to perf-k.
-5. Class c (frontend P1-P3, P12, A1) after the gauge header PR (feat/gauge-header-421) merges.
-- Checked and left: statusLine 6 processes / 2 jq per 30 s refresh per session (fixture run, strace).
-- Lesson: while a PR's CI runs, commit IMPL locally and push it with the next code change (a lone IMPL push cancels the run).
-
-## Verify
-- `bash fleet/test_forks_screen.sh` (STRACE=, mawk on PATH; ~2.5 min); `make test-forks`. strace here: `apt-get download strace && dpkg -x strace_*.deb root`, then STRACE=root/usr/bin/strace.
-- BEFORE/AFTER: detached worktree at origin/main + `SANDBOX_SEED=<copy> bash scripts/perf/forks/run.sh OUT %59 %60 %63`
-  for each checkout, under `flock -o /tmp/fleet-heavy.lock`.
-- strace/hyperfine/mawk without root: `apt-get download X && dpkg -x X_*.deb root`.
-- Never pkill -f a pattern that appears in your own command line (it kills your shell: exit 144).
+1. 📋 CI on the final head green, then merge (review-batch3).
+2. After merge (Heph): HEPH.md lines 14 and 19 still describe the pre-fix close (kill-pane advice).

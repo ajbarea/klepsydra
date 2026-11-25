@@ -163,6 +163,14 @@ proc_is() { # pid start
   [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
   proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
 }
+
+# The kernel's release string ("...microsoft-standard-WSL2" under WSL), into the
+# caller's `osrelease`; fails when it cannot be read.
+proc_osrelease() {
+  osrelease=""
+  { IFS= read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+  [[ -n $osrelease ]]
+}
 # --- end proc stat ---
 
 # Whether `pid` is Claude Code: by name, or an npm install's
@@ -299,6 +307,7 @@ tmux_facts() {
   fi
 }
 
+# --- session rows: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
 # One tab-separated row per named session file whose first line is a v1
 # object: its name, then what the jq array `fields` picks from the object
 # (`last_active` is its newest time field, `or_q` a string or "?"). One jq
@@ -336,6 +345,7 @@ fleet_rows() { # folder fields
     done
     session_rows "$2" "${names[@]}" )
 }
+# --- end session rows ---
 
 # Delete the files of sessions whose Claude Code process is gone and whose
 # last activity is more than a day old, heartbeats a day old with no session
@@ -990,7 +1000,7 @@ queue_cmd() { # queue|needs args...
       [[ $path != -* ]] || { echo "$usage" >&2; return 2; }
       [[ $path == /* ]] || path=$PWD/$path
       [[ ! -d $path ]] || { echo "klepsydra: $2 is a folder; name the $noun" >&2; return 2; }
-      { read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+      proc_osrelease
       if [[ $osrelease == *[Mm]icrosoft* ]] && command -v wslpath >/dev/null; then
         path=$(wslpath -w -- "$path" 2>/dev/null) || { echo "klepsydra: $2 has no Windows path" >&2; return 1; }
       fi

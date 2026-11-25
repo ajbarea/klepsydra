@@ -5,6 +5,9 @@ import { asksCount, build, EMPTY, EMPTY_NEEDS, headerCount, parse, present, queu
 
 const FIXTURE = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import.meta.url), "utf8");
 
+// process.threadCpuUsage needs Node 23.9; process.cpuUsage would count the GC helper threads.
+const NO_THREAD_CPU = process.threadCpuUsage ? false : "needs process.threadCpuUsage (Node 23.9+)";
+
 /**
  * This thread's CPU time for `f()`, in ms: neither a loaded machine's waits
  * nor the GC helper threads count.
@@ -219,7 +222,7 @@ test("textOf reads a node's whole text", () => {
   assert.equal(textOf(h.kids[0]), "A b c");
 });
 
-test("a file at the size cap parses and renders quickly, and its cost grows linearly", () => {
+test("a file at the size cap parses and renders quickly, and its cost grows linearly", { skip: NO_THREAD_CPU }, () => {
   const show = (bytes) => {
     const root = new El("div");
     for (const n of build(render(FIXTURE.repeat(Math.ceil(bytes / FIXTURE.length)).slice(0, bytes)).nodes, doc, { copy() {} })) root.append(n);
@@ -267,7 +270,7 @@ test("the Needs you count agrees with the panel, whatever the markup", () => {
   }
 });
 
-test("a long Needs you list counts in linear time", () => {
+test("a long Needs you list counts in linear time", { skip: NO_THREAD_CPU }, () => {
   assert.equal(render("## Needs you\n\n" + "- a\n".repeat(65000)).count, 65000);
   assertLinear((n) => assert.equal(render("## Needs you\n\n" + "- a\n".repeat(n)).count, n), 1000);
 });
@@ -301,8 +304,11 @@ test("comments are left out wherever they sit, and the text between them stays",
   assert.equal(dom("<!-- a -->\n").root.kids.length, 0);
   assert.equal(dom("a <!-- x --> b\n").root.textContent, "a  b");
   assert.equal(dom("<div><!-- x --></div>\n").root.textContent, "<div></div>");
-  // An unclosed comment shows as written, and many of them stay linear.
+  // An unclosed comment shows as written.
   assert.equal(dom("<!-- open\n").root.textContent, "<!-- open");
+});
+
+test("many unclosed comments stay linear", { skip: NO_THREAD_CPU }, () => {
   assertLinear((n) => dom("<!--".repeat(n)), 4096);
 });
 
@@ -432,6 +438,25 @@ test("#276: the Needs you file counts its section's asks, else every top-level l
   assert.equal(asks("# Title\n\nNothing waiting.\n"), 0, "a file with no list asks nothing");
   assert.equal(asksCount([]), null);
   assert.equal(asks(readFileSync(new URL("../scripts/fixtures/needs-demo.md", import.meta.url), "utf8")), 3, "the sample");
+});
+
+test("#568: a Needs you file titled by its H1 counts the open items of every H2 section", () => {
+  // needs-you.md as the orchestrator writes it (11-25), wording swapped: H1 title, H2 Today / Coming up / When convenient.
+  const real = readFileSync(new URL("../scripts/fixtures/needs-you-shape.md", import.meta.url), "utf8");
+  assert.deepEqual(
+    real.split("\n").filter((l) => l.startsWith("#")),
+    ["# Needs you", "## Today (Wed 11-25)", "## Coming up", "## When convenient"],
+    "the fixture keeps the real file's shape",
+  );
+  const open = real.split("\n").filter((l) => l.startsWith("- 📋")).length;
+  assert.equal(open, 18);
+  assert.equal(renderAsks(real).count, open, "every open step, at any section");
+  assert.equal(headerCount(renderAsks(real).count, null), open, "the header shows it");
+  const asks = (text) => renderAsks(text).count;
+  assert.equal(asks("# Needs you\n\n## Today\n- a\n- ✅ b\n  - nested\n\n## Later\n1. c\n"), 2, "done and nested items are not asks");
+  assert.equal(asks("# Needs you\n- top\n\n## Today\n- a\n"), 2, "a list above the first section counts too");
+  assert.equal(asks("# Needs you\n\n## Today\nNothing today.\n"), 0, "sections with no list ask nothing");
+  assert.equal(asksCount(sections(toTree(parse("# Needs you\n\n## Today\nNothing today.\n")))), null, "no list anywhere: no count");
 });
 
 test("#276: the header counts the Needs you file's asks, else the queue file's own section", () => {

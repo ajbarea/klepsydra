@@ -82,9 +82,11 @@ class Fake:
         self.calls.append(path)
         for b in self.broken:
             if b in path:
-                raise ci_watch.urllib.error.HTTPError(
+                err = ci_watch.urllib.error.HTTPError(
                     path, 403, "rate limited", {}, None
                 )
+                err.close()  # as the real get() leaves it: no open response
+                raise err
         url = urllib.parse.urlparse(path)
         q = dict(urllib.parse.parse_qsl(url.query))
         if url.path.endswith("/jobs"):
@@ -107,6 +109,42 @@ class Fake:
                 "full_name": self.full_name or url.path.removeprefix("/repos/"),
             }
         return keep(body) if keep else body
+
+
+def fresh(env, expr):
+    """ci_watch.py's settings in a fresh interpreter under ENV alone (#531)."""
+    code = f"import sys; sys.path.insert(0, {str(HERE)!r}); import ci_watch; print(ci_watch.{expr})"
+    keep = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("FLEET_BRIEFING", "FLEET_QUEUE", "BRIEFING_DIR")
+    }
+    return subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        env=keep | env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+class Briefing(unittest.TestCase):
+    def test_needs_you_follows_the_briefing_folder_lib_sh_resolves(self):
+        self.assertEqual(fresh({"FLEET_BRIEFING": "/b"}, "QUEUE"), "/b/needs-you.md")
+
+    def test_fleet_queue_still_wins(self):
+        self.assertEqual(
+            fresh({"FLEET_BRIEFING": "/b", "FLEET_QUEUE": "/q.md"}, "QUEUE"), "/q.md"
+        )
+
+    def test_a_bare_run_keeps_the_wsl_default(self):
+        self.assertEqual(
+            fresh({}, "QUEUE"), "/mnt/c/Users/ajbar/fleet-briefing/needs-you.md"
+        )
+        self.assertEqual(
+            fresh({"FLEET_BRIEFING": ""}, "QUEUE"),
+            "/mnt/c/Users/ajbar/fleet-briefing/needs-you.md",
+        )
 
 
 class Counts(unittest.TestCase):

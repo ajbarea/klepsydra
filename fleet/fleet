@@ -17,6 +17,7 @@
 #                         and send the one-line REPORT to the orchestrator (- reads stdin)
 #   fleet inbox [list [--json] [--all] | ack NAME... | --all | deliver [NAME...] | --all]  list, deliver or acknowledge undelivered reports
 #   fleet close NAME      close a finished agent's pane once its report is read
+#   fleet close --why NAME  the last close of NAME: closed, or the check that refused it and what differed
 #   fleet voices [MODE]   make keryx follow the tray's Voices mode (heph, everyone, off) now;
 #                         --if-changed only a mode not yet applied, --check only report
 #   fleet pause NAME WHY  set aside an agent whose session is gone (paused.tsv keeps its row)
@@ -42,7 +43,9 @@ case $cmd in
   send) exec bash "$here/send.sh" "$@" ;;
   voices) exec bash "$here/voices.sh" "$@" ;;
   pause | unpause) exec bash "$here/pause.sh" "$cmd" "$@" ;;
-  shots) exec python3 -I "$here/prune_shots.py" "$@" ;;
+  shots)
+    # shellcheck source=fleet/lib.sh
+    FLEET_BRIEFING=$(. "$here/lib.sh" && printf %s "$FLEET_BRIEFING") exec python3 -I "$here/prune_shots.py" "$@" ;;
   accounts)
     if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
     # shellcheck source=fleet/lib.sh
