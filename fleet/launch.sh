@@ -21,9 +21,14 @@ here=$(dirname "$(readlink -f "$0")")
 (( $# >= 2 )) || { err "usage: launch.sh NAME TEXTFILE [claude args...]"; exit 2; }
 name=$1 txt=$2
 shift 2
-[[ -r $txt && -s $txt ]] || { err "no brief at $txt"; exit 2; }
+# The pane's shell reads the brief from the session's folder, not this one.
+txt=$(readlink -f -- "$txt") || { err "no brief at $2"; exit 2; }
+{ [[ -r $txt ]] && grep -q '[^[:space:]]' -- "$txt"; } || { err "no brief at $txt"; exit 2; }
 # claude would read a brief that starts with "-" as an option.
 [[ $(head -c1 -- "$txt") != - ]] || { err "a brief cannot start with -: $txt"; exit 2; }
+# It goes on claude's command line, where one argument holds at most 128 KiB.
+size=$(stat -c %s -- "$txt")
+(( size <= ${FLEET_BRIEF_MAX:-120000} )) || { err "the brief is $size bytes, over the ${FLEET_BRIEF_MAX:-120000} a command line argument holds: $txt"; exit 2; }
 avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
 if (( avail < ${FLEET_MIN_AVAIL_MB:-3000} )); then
   flog WARN "launch held: too little memory" name="$name" avail_mb="$avail"
@@ -117,7 +122,12 @@ if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   # kills (11-11: a worker froze there, load 110).
   role=worker
   [[ $name == "$FLEET_ORCH_NAME" ]] && role=orchestrator
-  cmd="${FLEET_SYSTEMD_RUN:-systemd-run} --user --scope --collect --unit=fleet-$name-$(date +%s) $(fleet_slice_opts "$role") -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} ${tasks}$cmd"
+  # The brief is an argument: a description of its own keeps it out of the unit's
+  # name in the journal, and systemd 258 expands ${VAR} in a scope's arguments
+  # unless told not to (the flag is new in 254).
+  sdrun=${FLEET_SYSTEMD_RUN:-systemd-run} noexpand=""
+  (( $("$sdrun" --version 2>/dev/null | awk 'NR == 1 { print $2 + 0 }') >= 254 )) && noexpand="--expand-environment=no "
+  cmd="$sdrun --user --scope --collect --unit=fleet-$name-$(date +%s) --description=$(printf '%q' "fleet $name") ${noexpand}$(fleet_slice_opts "$role") -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} ${tasks}$cmd"
 fi
 began=$SECONDS
 DELIVER_DEADLINE=$((SECONDS + ${FLEET_LAUNCH_DEADLINE:-120}))
@@ -162,9 +172,14 @@ tp=""
 found() { [[ -n $tp ]] || tp=$(FLEET_PROJECTS="$account/projects" transcript "$sid"); [[ -n $tp ]]; }
 taken() { limit_line "$1" >/dev/null || { found && grep '"type":"user"' "$tp" | grep -vq '"isMeta":true'; }; }
 turned() { started "$1" || { found && grep -q '"type":"assistant"' "$tp"; }; }
+# Started only once a turn shows: a brief taken but never answered is not delivered.
 if ! wait_for "$pane" "$(capped "${FLEET_READY_WAIT:-60}")" taken; then
   brief=NOT-DELIVERED
-elif wait_for "$pane" "$(capped "${FLEET_TURN_WAIT:-60}")" turned && limit_line "$(screen "$pane")" >/dev/null; then
+elif limit_line "$(screen "$pane")" >/dev/null; then
+  brief=blocked-by-limit
+elif ! wait_for "$pane" "$(capped "${FLEET_TURN_WAIT:-60}")" turned; then
+  brief=NOT-DELIVERED
+elif limit_line "$(screen "$pane")" >/dev/null; then
   brief=blocked-by-limit
 else
   brief=started

@@ -798,7 +798,7 @@ printf 'Do the thing.\nThen the other thing.\n' >"$work/task.src"
 launch() { # NAME STATE-JSON: launch.sh with a fake claude starting from STATE
   printf '%s' "$2" >"$work/$1.json"; : >"$work/$1.log"
   FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="${LAUNCHER:-$work/launcher.sh}" FLEET_DIR="$work" \
-    FLEET_CLAUDE="python3 -I $fake $work/$1.json $work/$1.log" bash "$here/launch.sh" "$1" "$work/task.src" 2>/dev/null | head -1
+    FLEET_CLAUDE="python3 -I $fake $work/$1.json $work/$1.log" bash "$here/launch.sh" "$1" "${BRIEF:-$work/task.src}" 2>/dev/null | head -1
 }
 cp "$work/task.src" "$FLEET_STATE/task-agent1.src"
 out=$(launch agent1 '{"above":["Claude Code"]}')
@@ -830,6 +830,7 @@ echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"
 # A systemd-run that records its arguments and runs the command after its options.
 cat >"$work/systemd-run" <<EOF
 #!/usr/bin/env bash
+[[ \$1 == --version ]] && { echo "systemd \${SDRUN_VERSION:-255} (255.4-1ubuntu8)"; exit 0; }
 printf '%s\n' "\$*" >>"$work/sdrun.calls"
 while [[ \$1 == --* || \$1 == -p ]]; do [[ \$1 == -p ]] && shift; shift; done
 exec "\$@"
@@ -851,14 +852,17 @@ call=$(<"$work/sdrun.calls")
 check "#353: a worker's scope sits in the workers' slice and outlives an OOM kill in it" \
   "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]* -p MemoryMax=[^ ]* -p MemorySwapMax=[^ ]*' <<<"$call")" "--slice=fleet-workers.slice -p OOMPolicy=continue -p MemoryMax=5G -p MemorySwapMax=1G"
 check "#353: no MemoryHigh on the scope" "$(grep -c MemoryHigh <<<"$call")" "0"
+check "#316 review: the scope is described by its name alone (the brief stays out of the journal), and \${VAR} in the brief is never expanded" \
+  "$(grep -c -- '--description=fleet scoped --expand-environment=no --slice=' <<<"$call")" "1"
 check "#353: claude starts at OOM rank 0, its shells ranked first by BASH_ENV" \
   "$(grep -c "fleet-oom env .*BASH_ENV=$here/oom-tool.sh KLEPSYDRA_AGENT=scoped" <<<"$call") $(grep -c 'echo 0 >/proc/self/oom_score_adj' <<<"$call")" "1 1"
 : >"$work/sdrun.calls"
-out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+out=$(SDRUN_VERSION=249 FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
   FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
   bash "$here/launch.sh" heph "$work/task.src" 2>/dev/null | head -1)
 check "#353: the orchestrator's scope sits in the fleet's slice, beside the workers'" \
   "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]*' "$work/sdrun.calls")" "--slice=fleet.slice -p OOMPolicy=continue"
+check "#316 review: a systemd older than 254 gets no --expand-environment, which it lacks" "$(grep -c -- '--expand-environment' "$work/sdrun.calls")" "0"
 check "#353: and the launch logs which" "$(jq -r 'select(.message == "window opened" and .name == "heph") | .slice' "$FLEET_LOG")" "orchestrator"
 t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 # Placed by name, not by missing settings: a bare launch under another name is a worker.
@@ -925,6 +929,10 @@ check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
 out=$(FLEET_READY_WAIT=4 launch agent3 '{"above":["Claude Code"],"on_submit":"none","meta_first":true}')
 check "not delivered when no turn ever starts (a meta prompt record is not the brief)" "${out##* }" "brief=NOT-DELIVERED"
 check "and no key was sent to the pane" "$(grep -cE 'ESC|INTERRUPTED|^PASTE|RC REQUESTED' "$work/agent3.log")" "0"
+out=$(FLEET_TURN_WAIT=4 launch agent3b '{"above":["Claude Code"],"on_submit":"taken"}')
+check "#316 review: a brief taken but never answered is not delivered" "${out##* }" "brief=NOT-DELIVERED"
+out=$(cd "$work" && BRIEF=task.src launch agent3c '{"above":["Claude Code"]}')
+check "#316 review: a relative brief is read from where launch ran, not the pane's folder" "${out##* } $(grep -c '^SUBMIT Do the thing' "$work/agent3c.log")" "brief=started 1"
 
 : >"$FLEET_LOG"
 out=$(launch agent4 '{"above":["Claude Code"],"rc_delay":30}')
@@ -936,6 +944,13 @@ check "#315: a brief claude would read as an option is refused" \
 : >"$work/empty.src"
 check "#315: so is an empty one" \
   "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" empty "$work/empty.src" >/dev/null 2>&1; echo $?)" "2"
+printf ' \n\t\n' >"$work/blank.src"
+check "#316 review: and one of whitespace alone" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" blank "$work/blank.src" >/dev/null 2>&1; echo $?)" "2"
+head -c 120001 /dev/zero | tr '\0' x >"$work/big.src"
+check "#316 review: and one over the 120000 bytes a command line argument holds, with a reason" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" big "$work/big.src" 2>&1 >/dev/null | grep -c 'over the 120000'; echo $?)" "1
+0"
 
 out=$(FLEET_START_WAIT=1 launch agent5 '{"above":["Claude Code"],"busy_delay":2}')
 check "a turn whose spinner shows late is never interrupted" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
