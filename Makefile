@@ -21,8 +21,17 @@ HEAVY = $(if $(filter 1,$(FLEET_HEAVY_HELD)),,FLEET_HEAVY_HELD=1 bash fleet/heav
 SHELLCHECK ?= bash scripts/shellcheck.sh
 SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 
+# make test-fleet FLEET_SHARD=<area> runs one shard of it, as CI runs a pull request (#547);
+# a FLEET_SHARD exported in the shell runs the whole suite. The shards a change reaches:
+# git diff --name-only main... | bash scripts/split-fleet-suite.sh --select
+FLEET_PICK = $(if $(filter command line,$(origin FLEET_SHARD)),$(FLEET_SHARD))
+ifneq ($(filter environment%,$(origin FLEET_SHARD)),)
+ifneq ($(filter test-fleet,$(MAKECMDGOALS)),)
+$(warning FLEET_SHARD from the environment is ignored, so the whole suite runs; for one shard run make test-fleet FLEET_SHARD=$(FLEET_SHARD))
+endif
+endif
 test-fleet:
-	$(HEAVY) bash fleet/test_fleet.sh
+	$(HEAVY) bash $(if $(FLEET_PICK),-c 'bash scripts/split-fleet-suite.sh && exec bash fleet/tests/shards/$(FLEET_PICK).sh',fleet/test_fleet.sh)
 
 test-launch:
 	$(HEAVY) bash hooks/test_launch.sh
