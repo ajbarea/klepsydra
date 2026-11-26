@@ -44,7 +44,11 @@ window.__needsText = %(needs)s;
 window.__layout = %(layout)s;
 const send = (ch, v) => setTimeout(() => ch && ch.onmessage(v), 0);
 const lines = (t) => t.split('\\n');
-window.__republish = () => send(window.__needs, { path: 'C:/demo/needs-you.md', text: window.__needsText, problem: null });
+// As queue.rs's Follower: a view only when the text changed, after 250 ms of quiet.
+window.__sent = null;
+window.__republish = () => { window.__sent = window.__needsText; send(window.__needs, { path: 'C:/demo/needs-you.md', text: window.__needsText, problem: null }); };
+let settle = 0;
+const follow = () => { clearTimeout(settle); settle = setTimeout(() => { if (window.__needsText !== window.__sent) window.__republish(); }, 250); };
 window.__TAURI__ = { core: {
   Channel: class { },
   invoke: (cmd, args) => {
@@ -60,20 +64,24 @@ window.__TAURI__ = { core: {
     if (cmd === 'new_session_prefs') return Promise.resolve({ default: null, last: null });
     window.__calls.push([cmd, JSON.parse(JSON.stringify(args ?? null))]);
     if (cmd === 'needs_done') {
+      // needs.rs locate: the copy at the line asked for, else the nearest; never a tie.
       const have = lines(window.__needsText), want = lines(args.block);
-      const at = have.findIndex((_, i) => want.every((w, j) => have[i + j] === w));
-      if (at < 0 || !/^\\s*([-*+]|\\d+[.)])\\s/.test(want[0])) return Promise.reject('That item is no longer in the Needs you file as shown.');
+      const found = have.map((_, i) => i).filter((i) => want.every((w, j) => have[i + j] === w));
+      const d = (i) => Math.abs(i - (args.line ?? 0));
+      found.sort((a, b) => d(a) - d(b));
+      const at = found[0];
+      if (at === undefined || (found[1] !== undefined && d(found[1]) === d(at)) || !/^\\s*([-*+]|\\d+[.)])\\s/.test(want[0])) return Promise.reject('That item is no longer in the Needs you file as shown.');
       have.splice(at, want.length);
       window.__needsText = have.join('\\n');
-      setTimeout(window.__republish, 120);
-      return Promise.resolve({ block: args.block, after: at > 0 ? have[at - 1] : null, at });
+      follow();
+      return Promise.resolve({ undo: { block: args.block, after: at > 0 ? have[at - 1] : null, at }, text: window.__needsText });
     }
     if (cmd === 'needs_undo') {
       const have = lines(window.__needsText);
       have.splice(args.undo.at, 0, ...lines(args.undo.block));
       window.__needsText = have.join('\\n');
-      setTimeout(window.__republish, 120);
-      return Promise.resolve(null);
+      follow();
+      return Promise.resolve(window.__needsText);
     }
     if (cmd === 'jump_to_terminal') return Promise.resolve('Opened its terminal.');
     return Promise.resolve('ok');
@@ -236,7 +244,8 @@ def flow_b(run, page, needs):
     page.wait_for_timeout(400)
     s = state(page)
     done = [a for c, a in s["calls"] if c == "needs_done"]
-    run.check(done == [{"block": first_item}], f"{tag}: E sends the item's exact lines to the app", done)
+    at = needs.split("\n").index(first_item.split("\n")[0])
+    run.check(done == [{"block": first_item, "line": at}], f"{tag}: E sends the item's exact lines and where they start", done)
     run.check(int(s["pill"]) == before - 1 and s["rows"] == before - 1, f"{tag}: the count ticks down and the row leaves", [s["pill"], s["rows"]])
     text = page.evaluate("window.__needsText")
     run.check(first_item not in text, f"{tag}: the file no longer holds the item", None)
@@ -266,6 +275,26 @@ def flow_b(run, page, needs):
     run.check(held == 1, f"{tag}: holding E marks one item done", held)
     page.keyboard.press("u")
     page.wait_for_timeout(300)
+    # E then U at once, inside the file watcher's quiet time: the file never looks changed to it.
+    page.keyboard.press("e")
+    page.wait_for_timeout(30)
+    page.keyboard.press("u")
+    page.wait_for_timeout(700)
+    s = state(page)
+    run.check(page.evaluate("window.__needsText") == needs and int(s["pill"]) == before and s["rows"] == before, f"{tag}: E then U at once shows the item again", [s["pill"], s["rows"]])
+    # Twins: Done on the second removes the second, and the first stays in view.
+    twin = "- 📋 **Twin:** same words"
+    page.evaluate("(t) => { window.__needsText = t; window.__republish(); }", needs.replace("## When convenient\n", f"## When convenient\n\n{twin}\n", 1).replace("## Coming up\n", f"## Coming up\n\n{twin}\n", 1))
+    page.wait_for_timeout(200)
+    lines_before = page.evaluate("window.__needsText").split("\n")
+    page.locator(".ny-item", has_text="same words").nth(1).locator(".ny-done").click()
+    page.wait_for_timeout(500)
+    after = page.evaluate("window.__needsText").split("\n")
+    gone = [i for i, ln in enumerate(lines_before) if ln == twin]
+    run.check(after.count(twin) == 1 and after.index(twin) == gone[0], f"{tag}: Done on the second twin removes the second", gone)
+    run.check(page.locator(".ny-item", has_text="same words").count() == 1, f"{tag}: the twin left stays in view", page.locator(".ny-item", has_text="same words").count())
+    page.evaluate("(t) => { window.__needsText = t; window.__republish(); }", needs)
+    page.wait_for_timeout(200)
     # N, A and Esc do nothing behind a dialog.
     page.evaluate("document.getElementById('portrait').showModal()")
     page.keyboard.press("a")
