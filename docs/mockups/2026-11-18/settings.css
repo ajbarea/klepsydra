@@ -1,0 +1,135 @@
+/* Settings page mockups (#384). Row anatomy from Spotify's Windows settings
+   (AJ's reference shot) and the Windows App SDK settings guidance: a bold
+   section heading, then label, optional one-line description, control right. */
+
+button { font: 600 13px/1 var(--font); color: var(--ink); background: var(--button-bg); border: 1px solid var(--button-line); border-radius: 8px; padding: 9px 14px; white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+button.small { padding: 7px 12px; font-size: 12.5px; }
+.ico { display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none; }
+.ico svg { width: 100%; height: 100%; }
+code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 0.92em; }
+
+.window { border: 1px solid var(--line); border-radius: 12px; background: var(--page); overflow: hidden; }
+
+/* Controls */
+.tog { width: 44px; height: 24px; padding: 0; border-radius: 999px; position: relative; background: var(--button-bg); border: 1px solid var(--button-line); }
+.tog i { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink-dim); }
+.tog[aria-checked="true"] { background: var(--ink); border-color: var(--ink); }
+.tog[aria-checked="true"] i { left: 23px; background: var(--page); }
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--page-3); box-shadow: inset 0 0 0 1px var(--line); }
+.seg button { border: 0; background: transparent; padding: 7px 12px; border-radius: 6px; font-weight: 500; color: var(--ink-dim); }
+.seg button[aria-checked="true"] { background: var(--button-hover); color: var(--ink); font-weight: 650; box-shadow: inset 0 0 0 1px var(--button-line); }
+.sel { min-width: 200px; justify-content: space-between; font-weight: 500; background: var(--button-bg); }
+.sel .ico { width: 14px; height: 14px; color: var(--ink-dim); }
+.slider { display: inline-flex; align-items: center; gap: 12px; }
+.slider input { width: 220px; accent-color: var(--ink); }
+.slider output { min-width: 4ch; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.faces-pick { display: flex; gap: 10px; align-items: flex-start; }
+.faces-pick button { flex-direction: column; gap: 6px; padding: 6px; background: transparent; border-color: transparent; font-weight: 500; font-size: 12px; color: var(--ink-dim); }
+.faces-pick img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1px var(--line); }
+.faces-pick button[aria-checked="true"] { color: var(--ink); font-weight: 650; }
+.faces-pick button[aria-checked="true"] img { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px var(--ink); }
+.faces-pick .more { align-self: center; width: 52px; height: 52px; border-radius: 50%; justify-content: center; background: var(--button-bg); border-color: var(--button-line); color: var(--ink); font-weight: 650; }
+.accts { display: grid; gap: 6px; width: 100%; }
+.acct { display: grid; grid-template-columns: 26px 150px 1fr auto; gap: 12px; align-items: center; font-size: 13px; }
+.acct .mono { font-size: 11px; justify-self: center; }
+.acct .ad { color: var(--ink-dim); font-size: 12.5px; }
+.order { list-style: none; display: grid; gap: 4px; counter-reset: o; min-width: 240px; }
+.order li { counter-increment: o; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 7px; background: var(--page-3); box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; }
+.order li::before { content: counter(o); font-weight: 700; color: var(--ink-dim); min-width: 1ch; font-variant-numeric: tabular-nums; }
+.order .handle { order: 3; margin-left: auto; width: 8px; height: 18px; color: var(--ink-quiet); }
+.order .handle svg { width: 100%; height: 100%; }
+
+/* Rows */
+.row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 12px 0; }
+.row.tall { align-items: flex-start; }
+.row.stack { flex-direction: column; align-items: stretch; gap: 10px; }
+.rl { display: grid; gap: 3px; max-width: 60ch; }
+.lab { font-size: 14.5px; }
+.desc { font-size: 13px; color: var(--ink-dim); }
+.rc { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.row.stack .rc { justify-content: flex-start; }
+.section-lead { color: var(--ink-dim); font-size: 13.5px; margin: -2px 0 6px; }
+
+/* Sisters editor */
+.sis { display: grid; gap: 12px; width: 100%; }
+.sis-head { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; font-size: 13px; color: var(--ink-dim); }
+.sis-head .ok { display: inline-flex; gap: 6px; align-items: center; color: var(--ink); }
+.sis-head .ok .ico { width: 15px; height: 15px; }
+.sis-table { display: grid; grid-template-columns: minmax(170px, 1fr) auto auto 40px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.sis-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; column-gap: 14px; align-items: center; padding: 5px 8px 5px 14px; font-size: 13.5px; }
+.sis-row:nth-child(even) { background: var(--page-3); }
+.sis-row.th { font-size: 12px; color: var(--ink-dim); padding-top: 9px; padding-bottom: 7px; background: var(--page-2); }
+.sis-row .sn { font-weight: 600; }
+.sis-row.bb .sn { color: var(--ink-dim); font-weight: 500; }
+.sis-row .seg button { padding: 5px 10px; font-size: 12.5px; }
+.icon-btn { padding: 6px; background: transparent; border-color: transparent; color: var(--ink-dim); }
+.icon-btn .ico { width: 16px; height: 16px; }
+.sis-add { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.sis .file .ico { width: 16px; height: 16px; vertical-align: -3px; margin-right: 6px; }
+
+/* ═══ Variant A: one column, Spotify ═══ */
+.set-a { max-width: 1000px; margin: 0 auto; padding: 28px 40px 48px; }
+.set-a .top { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.set-a .top h1 { font-family: var(--title); font-weight: 650; font-size: 34px; margin-right: auto; }
+.set-a .back { padding: 7px; border-radius: 50%; }
+.set-a .search-btn { padding: 8px; border-radius: 50%; background: transparent; border-color: transparent; }
+.set-a section { padding: 16px 0 6px; }
+.set-a section + section { border-top: 1px solid var(--line); }
+.set-a h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.tray { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+.traymenu { background: var(--page-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px; display: grid; min-width: 200px; font-size: 13.5px; }
+.traymenu span { padding: 7px 12px; border-radius: 5px; }
+.traymenu span:nth-child(2) { background: var(--button-hover); }
+.traymenu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+
+/* ═══ Variant B: rail and cards, Windows 11 Settings ═══ */
+.set-b { display: grid; grid-template-columns: 290px 1fr; min-height: 640px; }
+.rail { padding: 22px 14px; border-right: 1px solid var(--line); background: var(--page-3); display: grid; align-content: start; gap: 4px; }
+.rail .app { display: flex; align-items: center; gap: 10px; padding: 0 8px 14px; font-family: var(--title); font-size: 20px; font-weight: 650; }
+.rail .search { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 0 0 12px; border-radius: 8px; background: var(--page-2); border: 1px solid var(--line); color: var(--ink-dim); font-size: 13.5px; }
+.rail .search .ico { width: 16px; height: 16px; }
+.rail a { display: flex; gap: 12px; align-items: center; padding: 9px 12px; border-radius: 7px; color: var(--ink); text-decoration: none; font-size: 14px; position: relative; }
+.rail a[aria-current="page"] { background: var(--button-hover); font-weight: 650; }
+.rail a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 30%; height: 40%; width: 3px; border-radius: 2px; background: var(--ink); }
+.rail a .ico { color: var(--ink-dim); }
+.pane { padding: 28px 40px 48px; max-width: 1080px; }
+.pane h1 { font-size: 28px; font-weight: 650; margin-bottom: 18px; }
+.pane section { margin-bottom: 26px; }
+.pane h2 { font-size: 14px; font-weight: 650; margin: 0 0 8px; }
+.cards { display: grid; gap: 3px; }
+.cards .row { background: var(--page-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; }
+
+@media (max-width: 640px) {
+  .set-a { padding: 18px 16px 32px; }
+  .set-a .top h1 { font-size: 26px; }
+  .row { flex-wrap: wrap; gap: 10px; }
+  .rc { justify-content: flex-start; }
+  .seg { flex-wrap: wrap; }
+  .sel { min-width: 0; }
+  .slider input { width: 180px; }
+  .acct { grid-template-columns: 26px 1fr auto; }
+  .acct .ad { grid-column: 2 / -1; grid-row: 2; }
+  .sis-table { grid-template-columns: minmax(0, 1fr) auto; }
+  .sis-row { padding: 8px 6px 8px 10px; row-gap: 6px; }
+  .sis-row .seg button { padding: 5px 8px; }
+  .sis-row > :nth-child(2) { grid-column: 1; grid-row: 2; }
+  .sis-row > :nth-child(3) { grid-column: 2; grid-row: 2; }
+  .sis-row > :nth-child(4) { grid-column: 2; grid-row: 1; justify-self: end; }
+  .sis-row.th { display: none; }
+  .faces-pick { flex-wrap: wrap; }
+  .set-b { grid-template-columns: 1fr; min-height: 0; }
+  .rail { border-right: 0; border-bottom: 1px solid var(--line); display: flex; overflow-x: auto; padding: 12px; gap: 6px; }
+  .rail .app, .rail .search { display: none; }
+  .rail a { flex: none; padding: 8px 12px; }
+  .rail a[aria-current="page"]::before { display: none; }
+  .pane { padding: 18px 12px 32px; }
+  .cards .row { padding: 12px; }
+}
+
+/* Engines (#384, AJ 11-18) */
+.eng-row .lab, .eng-missing .lab { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; }
+.eng-row .lab .ico, .eng-missing .lab .ico { width: 20px; height: 20px; }
+.eng-missing .lab { color: var(--ink-dim); }
+.eng-missing .ex { font-size: 11.5px; font-weight: 500; padding: 1px 7px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-quiet); }
+.unavail { font-size: 12.5px; color: var(--ink-dim); padding: 6px 10px; border-radius: 8px; border: 1px dashed var(--button-line); }
+.eng-missing { opacity: 0.9; }
