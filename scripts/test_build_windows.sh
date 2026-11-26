@@ -68,6 +68,7 @@ verdict() { check_stage "$1" "${2:-$work/none}" >/dev/null 2>&1; echo $?; }
 for bad in . .. Documents "a'b" klepsydra-buildx "" "klepsydra-build-a b" "klepsydra-build-a;b"; do
   check "refuses '$bad'" "$(verdict "$bad")" 2
 done
+check "refuses a name ending in a dot" "$(verdict klepsydra-build-a.)" 2
 for good in klepsydra-build klepsydra-build-launch klepsydra-build-v1.2_x; do
   check "accepts $good" "$(verdict "$good")" 0
 done
@@ -87,7 +88,7 @@ done
 
 # Filter expression test: anchored case-insensitive match on Windows stage path.
 expected_filter=$(cat <<'END'
-$_.CommandLine -match ('(?i)' + [regex]::Escape('C:\Users\x\klepsydra-build') + '(?=[\\/"''\s]|$)')
+$_.CommandLine -match ('(?i)' + [regex]::Escape('C:\Users\x\klepsydra-build') + '(?=[\\/"'']|$)')
 END
 )
 check "stage_filter produces expected expression" "$(stage_filter 'C:\Users\x\klepsydra-build')" "$expected_filter"
@@ -122,6 +123,8 @@ false	cargo.exe in C:\Users\x\klepsydra-build-foo\a
 false	powershell.exe C:\Users\x\klepsydra-build.bak
 false	cargo.exe D:\Users\x\klepsydra-build\src
 false	cargo.exe C:\Users\y\klepsydra-build\src
+false	"C:\Users\x\klepsydra-build - Copy\src-tauri\klepsydra.exe"
+false	code.exe C:\Users\x\klepsydra-build old\x
 END
 )" pass
   check "a branch stage's filter skips a longer branch name" "$(filter_table 'C:\Users\x\klepsydra-build-agy_5' <<'END'
@@ -342,6 +345,22 @@ out_kill=$(
 ) || rc_kill=$?
 check "a run that ignores TERM is killed and reported hung" \
   "$rc_kill $(grep -c 'hung after 1 min' <<<"$out_kill") $(grep -cF 'Stop-Process' "$work/pwsh_kill.log" 2>/dev/null || echo 0)" "1 1 1"
+
+# The whole path is matched, so nothing after a newline or CR slips past.
+check "the stop refuses a newline" "$(refused klepsydra-build $'C:\\x\\klepsydra-build\n\'; Get-Date; \'\\klepsydra-build')" "2 0"
+check "the stop refuses text ahead of the drive" "$(refused klepsydra-build 'zC:\x\klepsydra-build')" "2 0"
+check "the stop refuses a CR" "$(refused klepsydra-build $'C:\\x\r\\klepsydra-build')" "2 0"
+check "the stop refuses a part ending in a dot" "$(refused klepsydra-build 'C:\x.\klepsydra-build')" "2 0"
+check "the stop refuses a part ending in a space" "$(refused klepsydra-build 'C:\x \klepsydra-build')" "2 0"
+# A custom root wslpath cannot map is refused, never mapped to the default stage.
+mkdir -p "$work/failbin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$work/failbin/wslpath"
+chmod +x "$work/failbin/wslpath"
+rc_wf=0
+PATH="$work/failbin:$PATH" PWSH_LOG="$work/pwsh_wf.log" KLEPSYDRA_STAGE=klepsydra-build-test_wf \
+  timeout -k 2s 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 || rc_wf=$?
+check "a root wslpath cannot map is refused before any powershell" \
+  "$rc_wf $( [[ -e $work/pwsh_wf.log ]] && echo ran || echo none)" "2 none"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 finished=1

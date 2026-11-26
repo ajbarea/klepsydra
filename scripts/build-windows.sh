@@ -8,10 +8,13 @@
 # on Windows.
 set -euo pipefail
 
+# A stage name; it never ends in a dot, which Windows strips from a folder name.
+STAGE_NAME_RE='^klepsydra-build(-[A-Za-z0-9._]*[A-Za-z0-9_])?$'
+
 # Refuses a stage name or folder that rsync --delete must never touch.
 check_stage() {
   local name=$1 dir=$2
-  if [[ ! $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ ]]; then
+  if [[ ! $name =~ $STAGE_NAME_RE ]]; then
     echo "KLEPSYDRA_STAGE must be klepsydra-build or klepsydra-build-<name>: $name" >&2
     return 2
   fi
@@ -25,27 +28,19 @@ check_stage() {
 stage_filter() {
   local stage_target=$1
   cat <<END
-\$_.CommandLine -match ('(?i)' + [regex]::Escape('$stage_target') + '(?=[\\\\/"''\\s]|$)')
+\$_.CommandLine -match ('(?i)' + [regex]::Escape('$stage_target') + '(?=[\\\\/"'']|$)')
 END
 }
 
-# Accepts only a Windows stage path the stop and a cd can use safely: absolute
-# (a drive, or \\wsl.localhost\ or \\wsl$\), every part plain ASCII letters,
-# digits, space, dot, dash or underscore (no quote of any kind, no . or ..),
-# ending in the stage name. Anything else is refused, never stopped.
+# Accepts only a Windows stage path the stop and a cd can use safely, matched
+# whole by one anchored pattern: absolute (a drive, or \\wsl.localhost\ or
+# \\wsl$\), every part plain ASCII letters, digits, space, dot, dash or
+# underscore and not ending in a dot or space (so no quote, newline, . or ..),
+# the last part the stage name. Anything else is refused, never stopped.
+STAGE_WIN_RE='^([A-Za-z]:|\\\\wsl(\.localhost|\$))(\\[A-Za-z0-9 ._-]*[A-Za-z0-9_-])+$'
 check_stage_win() { # NAME WINPATH
-  local LC_ALL=C name=$1 win=${2%[\\/]} rest part parts=()
-  local ok=1 part_re='^[A-Za-z0-9 ._-]+$'
-  [[ $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ ]] || ok=0
-  if [[ $win =~ ^[A-Za-z]:\\(.+)$ ]]; then rest=${BASH_REMATCH[1]}
-  elif [[ $win =~ ^\\\\wsl(\.localhost|\$)\\(.+)$ ]]; then rest=${BASH_REMATCH[2]}
-  else ok=0; fi
-  # shellcheck disable=SC2141 # the separator is the backslash itself
-  (( ok )) && IFS=$'\\' read -r -a parts <<<"$rest"
-  for part in "${parts[@]}"; do
-    [[ $part =~ $part_re && $part != . && $part != .. ]] || ok=0
-  done
-  (( ok && ${#parts[@]} )) && [[ ${parts[-1]} == "$name" ]] && return 0
+  local LC_ALL=C name=$1 win=${2%\\}
+  [[ $name =~ $STAGE_NAME_RE && $win =~ $STAGE_WIN_RE && ${win##*\\} == "$name" ]] && return 0
   echo "build-windows: refusing Windows stage path '$2' for stage $name" >&2
   return 2
 }
@@ -116,7 +111,10 @@ check_stage "$stage_name" "$stage" || exit 2
 
 # The Windows path of the stage, derived from the stage itself, never given.
 if [[ -n ${KLEPSYDRA_STAGE_ROOT:-} ]]; then
-  stage_win=$(wslpath -w "$stage" 2>/dev/null || printf 'C:\\Users\\%s\\%s\n' "$USER" "$stage_name")
+  stage_win=$(wslpath -w "$stage" 2>/dev/null) || {
+    echo "build-windows: wslpath cannot map $stage to a Windows path" >&2
+    exit 2
+  }
 else
   stage_win="C:\\Users\\$USER\\$stage_name"
 fi
