@@ -1,30 +1,36 @@
-# IMPL: #517 launch lock before /run/user exists (PR #518, review r2, r3 & r4 fixes)
+# IMPL: card names keep room in narrow compact walls (#535, PR #538)
 
-## Task
-PR #518 review r3 & r4 (PR #551 into `fix/launch-lock-runtime-dir-517`):
-S1 (vacuous guard on trace-age in doctor / test), N1-N3, plus r4 fixes (in-place `lock_trace`, single Linux `tab-pending` path, docs & PR #518 body, O1 & F6 tests).
-Design from r1/r2 stands: one lock folder per host and boot under ~/.local/state/klepsydra.
+Branch fix/card-names-535, worktree .claude/worktrees/agy-535. Opus redesign
+(11-25) after the free-engine rounds ran out; spec:
+https://github.com/ajbarea/klepsydra/issues/535#issuecomment-7172801378
 
-## Shape
-- `lock_dir` + `lock_why` (identical block in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh,
-  statusline/klepsydra-statusline.sh, test-checked): LOCK_DIR = `run-<host>-<boot>` (seams
-  KLEPSYDRA_STATE, KLEPSYDRA_BOOT_ID, KLEPSYDRA_HOSTNAME); on refusal LOCK_WHY names the
-  reason (symlink, missing, not a folder, another user's, not writable / read-only, group or
-  other writable, mkdir's own error text). Prune touches only this host's `run-<host>-<uuid>`
-  while hostnames differ (an unusable hostname locks in `run-_-<boot>` and prunes nothing).
-- Hook: `lock_trace` writes `<epoch> <why>` in-place (`{ printf ...; } 2>/dev/null >"$file"`) to
-  `$KLEPSYDRA_DIR/lock-refused` only when `own_data_dir` (`dev.ajsoftworks.klepsydra`) holds and
-  the target is a regular file or absent (never a symlink or FIFO), at most every 600 s, builtins
-  only; also when the lock file will not open.
-- Launcher: the message carries LOCK_WHY; jump says the window changed and no tab opened.
-- `fleet doctor` "lock folder": runs the installed hook's block (else the checkout's): FAIL with
-  the reason, warn on a trace from this boot in the last hour (`t >= btime && t <= now`), else
-  ok with the folder.
-- recover's wait: deadline on /proc/uptime (FLEET_UPTIME seam); tick count if unreadable.
+## Slice
+One floor for every engine: `fleet/namewidth.js` measures each compact card's
+name (a Range, read all then write all, cached per card by text and loaded
+fonts) and sets `--name-w` on the card; `wall.css` gives the name's column
+`minmax(min(--name-w, 90px) + gap, 1fr)`. Who gives way: the name to its
+floor, then the pill's time, then its label, down to its mark; Open terminal
+and Clear never (max-content tracks). No `calc-size()`, no `@supports` fork,
+no comfortable block (the app never shows comfortable under 420 px).
 
-## State
-- r3/r4 (agy, #551) merged into this branch; r5 review clean (all r4 findings mutation-checked).
-- main merged in (conflicts in launch.sh, test_launch.sh, IMPL.md came from #551's squash dropping its main-merge parent; branch side kept).
-- PR body rewritten from the final state (status, mutation table F2-F7, O1, T1).
-- Next: CI green on the merged head, whole-PR review against main (review-batch3), merge, `fleet install`.
-- Last step before merge: reread the #518 body against the final diff.
+## Done
+- CSS + JS + node test (`src/fleet-namewidth.test.js`, 6).
+- `narrow_window_keeps_cards_inside` runs twice (as is, and with every
+  stylesheet's `calc-size()` stripped and `CSS.supports` denying it), at
+  360-1920 px incl. 880/900; asserts a time is cut only with its name at the
+  floor (one-line headers), a label only once the time is gone and with no
+  space left beside it, and no pill content outside its box. 57/57.
+- Mutants, each red: no shrink weight (12), rigid label (6, 880 px among them), no floor (4),
+  no measuring (4), the flex gap back (12).
+- Review round 1 (fresh Opus reader, 11-26): clean, all 4 earlier findings
+  closed. Its two Minors fixed: `pillSpill` compares to the pill's padding
+  edge (a rigid-label mutant now goes red at 880), and namewidth.js's `face`
+  comment says what wall.js passes (the fonts-loaded count).
+- Shots: fleet-briefing shots/2026-11-26/klepsydra-535-compact-*.
+
+## Verify
+- `node --test src/fleet-namewidth.test.js`
+- `flock -o /tmp/fleet-heavy.lock timeout 1500 uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py narrow_window_keeps_cards_inside`
+
+## Next
+1. 📋 Verify pass clean (11-26); merge once CI is green.
