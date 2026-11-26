@@ -18,6 +18,7 @@ A test steers it through a JSON state file, re-read on every tick:
              and queue_box, when set, is what the box holds after)
   rc         "off" (default) or "on": Remote Control already connected
   rc_delay   seconds before /remote-control's answer shows
+  limit_delay  seconds after a "limit" submit before its banner shows
   busy_delay seconds before a submitted turn's spinner shows
   menu       "limit" shows Claude Code's limit menu
   paste_prefix  text typed into the box just before the next paste (AJ
@@ -121,6 +122,9 @@ LIMIT_MENU = [
 ]
 
 
+LIMIT_BANNER = "  ⎿  You've hit your session limit · resets 1:10pm (America/New_York)"
+
+
 class Pane:
     def __init__(self, state_path, log_path):
         self.state_path = state_path
@@ -133,6 +137,7 @@ class Pane:
         self.rc_at = None  # when /remote-control's answer shows
         self.rc_was_on = False
         self.busy_at = None
+        self.limit_at = None  # when a limit submit's banner shows (limit_delay)
         self.last_submit = ""
         self.buf = b""
         self.shown = None
@@ -245,9 +250,12 @@ class Pane:
             self.state["above"].append("  Press up to edit queued messages")
             self.input = self.state.get("queue_box", "")
         elif then == "limit":
-            self.state["above"].append(
-                "  ⎿  You've hit your session limit · resets 1:10pm (America/New_York)"
-            )
+            # Claude Code writes the prompt record first; the banner follows the API's refusal.
+            delay = float(self.state.get("limit_delay", 0))
+            if delay:
+                self.limit_at = time.time() + delay
+            else:
+                self.state["above"].append(LIMIT_BANNER)
         self.save()
 
     def key(self, data):
@@ -339,6 +347,10 @@ class Pane:
                     self.log("TYPED " + rest)
 
     def tick(self):
+        if self.limit_at is not None and time.time() >= self.limit_at:
+            self.limit_at = None
+            self.state["above"].append(LIMIT_BANNER)
+            self.save()
         if self.busy_at is not None and time.time() >= self.busy_at:
             self.busy_at = None
             self.state["busy"] = True
