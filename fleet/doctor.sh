@@ -528,20 +528,21 @@ fi
 paused=$(awk -F'\t' '$1 != "" && $1 !~ /^#/ { printf "%s, ", $1 }' "${FLEET_PAUSED:-$FLEET_STATE/paused.tsv}" 2>/dev/null)
 [[ -n $paused ]] && report ok "paused agents" "${paused%, }: fleet unpause NAME brings one back" paused="${paused%, }"
 # Reports `fleet done` could not deliver, and finished panes left open and
-# unread (done-reports.tsv; `fleet close NAME` clears a row), #445.
+# unread (done-reports.tsv; `fleet close NAME` clears a row), #445, #367.
 undelivered="" unread="" panes_now=$(fleet_panes)
-while IFS=$'\t' read -r at rname rpane rresult; do
+# shellcheck disable=SC2034 # _ absorbs the optional 5th column (the report text)
+while IFS=$'\t' read -r at rname rpane rresult _; do
   [[ $at =~ ^[0-9]+$ ]] || continue
   if [[ $rresult == pending ]] && (( now - at <= 300 )); then
     : # its send is still running
-  elif [[ $rresult != sent && $rresult != queued ]]; then
+  elif [[ $rresult != sent && $rresult != queued && $rresult != delivered && $rresult != acked ]]; then
     undelivered+="$rname ($rresult), "
   elif (( now - at > ${FLEET_UNREAD_S:-1800} )) && grep -qx -- "$rpane" <<<"$panes_now"; then
     unread+="$rname ($rpane, $(( (now - at) / 60 )) min), "
   fi
 done < <(cat "$DONE_REPORTS" 2>/dev/null)
 if [[ -n $undelivered ]]; then
-  report warn "done reports" "not delivered to the orchestrator: ${undelivered%, }: in the queue file's Running now; fleet close NAME once read" undelivered="${undelivered%, }"
+  report warn "done reports" "not delivered to the orchestrator: ${undelivered%, }: fleet inbox (or queue file's Running now); fleet close NAME once read" undelivered="${undelivered%, }"
 elif [[ -n $unread ]]; then
   report warn "done reports" "finished and left open, report unread for over $(( ${FLEET_UNREAD_S:-1800} / 60 )) min: ${unread%, }: fleet close NAME" unread="${unread%, }"
 else
