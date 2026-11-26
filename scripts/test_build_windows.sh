@@ -4,9 +4,26 @@ set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+finished=0
+# An exit before the summary names the command that failed, so CI never ends
+# on a bare exit code (the build script it sources runs under set -e).
+on_exit() {
+  local rc=$?
+  rm -rf -- "${work:?}"
+  if ((finished == 0)); then
+    printf 'FAIL test_build_windows.sh ended before the summary (exit %s) at line %s: %s\n' "$rc" "$err_line" "$err_cmd" >&2
+    printf '::error file=scripts/test_build_windows.sh,line=%s::ended before the summary (exit %s): %s\n' "$err_line" "$rc" "$err_cmd"
+    ((rc != 0)) || rc=1
+  fi
+  exit "$rc"
+}
+err_line='?' err_cmd='?'
+trap 'err_line=$LINENO err_cmd=$BASH_COMMAND' ERR
+trap on_exit EXIT
 # shellcheck source=scripts/build-windows.sh
 source "$here/build-windows.sh"
+# The build script runs under set -e; the checks below must not inherit it.
+set +e -uo pipefail
 pass=0 fail=0
 
 check() {
@@ -47,25 +64,68 @@ END
 )
 check "stage_filter produces expected expression" "$(stage_filter 'C:\Users\x\klepsydra-build')" "$expected_filter"
 
+# Runs stage_filter's own output in PowerShell over a table of command lines
+# (one "want<TAB>command line" per stdin line); prints each mismatch, or
+# "pass". The filter reaches pwsh in a file, never through shell quoting.
+# shellcheck disable=SC2016 # PowerShell source: $ expressions reach pwsh unexpanded
+filter_table() {
+  local stage=$1 want cmd
+  {
+    echo '$cases = @('
+    while IFS=$'\t' read -r want cmd; do
+      printf "  [pscustomobject]@{ CommandLine = '%s'; want = \$%s }\n" "${cmd//\'/\'\'}" "$want"
+    done
+    echo ')'
+    printf '$bad = $cases | Where-Object { (%s) -ne $_.want }\n' "$(stage_filter "$stage")"
+    echo 'if ($bad) { $bad | ForEach-Object { "mismatch: " + $_.CommandLine } } else { "pass" }'
+  } >"$work/filter.ps1"
+  pwsh -NoProfile -NonInteractive -File "$work/filter.ps1" 2>&1
+}
+
 if command -v pwsh >/dev/null 2>&1; then
-  # shellcheck disable=SC2016 # PowerShell source: $ expressions reach pwsh unexpanded
-  pwsh_res=$(pwsh -NoProfile -Command '
-    $pattern = "(?i)" + [regex]::Escape("C:\Users\x\klepsydra-build") + "(?=[\\/\"'\''\s]|$)"
-    $cases = @(
-      @{ cmd = "cargo.exe run in C:\Users\x\klepsydra-build\src-tauri"; want = $true },
-      @{ cmd = "c:\users\X\klepsydra-build\target\release.exe"; want = $true },
-      @{ cmd = "cargo.exe in C:\Users\x\klepsydra-build-foo\a"; want = $false },
-      @{ cmd = "Code.exe C:\Users\x\klepsydra-build"; want = $true },
-      @{ cmd = "powershell.exe C:\Users\x\klepsydra-build.bak"; want = $false },
-      @{ cmd = "cargo.exe D:\Users\x\klepsydra-build\src"; want = $false }
-    )
-    $all_ok = $true
-    foreach ($c in $cases) {
-      if (($c.cmd -match $pattern) -ne $c.want) { $all_ok = $false }
-    }
-    if ($all_ok) { "pass" } else { "fail" }
-  ')
-  check "pwsh table test matches filter cases" "$pwsh_res" "pass"
+  check "stage_filter in pwsh matches its own stage only" "$(filter_table 'C:\Users\x\klepsydra-build' <<'END'
+true	cargo.exe run in C:\Users\x\klepsydra-build\src-tauri
+true	c:\users\X\klepsydra-build\target\release.exe
+true	Code.exe C:\Users\x\klepsydra-build
+true	node.exe "C:\Users\x\klepsydra-build" x
+true	node.exe 'C:\Users\x\klepsydra-build' x
+true	cargo.exe C:\Users\x\klepsydra-build/src-tauri
+false	cargo.exe in C:\Users\x\klepsydra-build-foo\a
+false	powershell.exe C:\Users\x\klepsydra-build.bak
+false	cargo.exe D:\Users\x\klepsydra-build\src
+false	cargo.exe C:\Users\y\klepsydra-build\src
+END
+)" pass
+  check "a branch stage's filter skips a longer branch name" "$(filter_table 'C:\Users\x\klepsydra-build-agy_5' <<'END'
+true	cargo.exe C:\Users\x\klepsydra-build-agy_5\src-tauri
+false	cargo.exe C:\Users\x\klepsydra-build-agy_533\src-tauri
+false	cargo.exe C:\Users\x\klepsydra-build\src-tauri
+END
+)" pass
+  # stop_script's own text, fed process objects shaped like Win32_Process
+  # (Name carries ".exe"), stops the stage's process and only that one.
+  gone() { # true once pid $1 has exited (zombie or reaped), within 5 s
+    local i state
+    for ((i = 0; i < 50; i++)); do
+      state=$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)
+      [[ -z $state || $state == Z ]] && return 0
+      sleep 0.1
+    done
+    return 1
+  }
+  sleep 300 & victim=$!
+  sleep 300 & bystander=$!
+  stop_script "@(
+    [pscustomobject]@{ ProcessId = $victim; Name = 'cargo.exe'; CommandLine = 'cargo.exe C:\Users\x\klepsydra-build\src-tauri' },
+    [pscustomobject]@{ ProcessId = $bystander; Name = 'cargo.exe'; CommandLine = 'cargo.exe C:\Users\x\klepsydra-build-foo\src-tauri' })" \
+    'C:\Users\x\klepsydra-build' >"$work/stop.ps1"
+  pwsh -NoProfile -NonInteractive -File "$work/stop.ps1" >/dev/null 2>&1
+  check "stop_script stops the stage's process" "$(gone "$victim" && echo stopped || echo running)" stopped
+  check "stop_script leaves another stage's process" "$(gone "$bystander" && echo stopped || echo running)" running
+  kill "$victim" "$bystander" 2>/dev/null
+  { wait "$victim" "$bystander"; } 2>/dev/null
+else
+  echo "  skip stage_filter and stop_script in pwsh (no pwsh on PATH)"
 fi
 
 # Timeout and cleanup tests with a fake powershell.exe (#560).
@@ -182,4 +242,5 @@ timeout 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 || rc_neg=$?
 check "negative timeout sanitized, normal run exits zero" "$rc_neg" 0
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
+finished=1
 ((fail == 0))

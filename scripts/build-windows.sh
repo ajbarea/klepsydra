@@ -36,11 +36,17 @@ stop_windows_stage_processes() {
   if [[ ! $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ ]]; then
     return 0
   fi
-  local filter
-  filter=$(stage_filter "$stage_target")
-  # shellcheck disable=SC2016 # PowerShell source: $ variables reach pwsh unexpanded.
   timeout 15s powershell.exe -NoProfile -Command \
-    "Get-CimInstance Win32_Process | Where-Object { \$_.ProcessId -ne \$PID -and $filter } | Stop-Process -Force -ErrorAction SilentlyContinue" 2>/dev/null || true
+    "$(stop_script 'Get-CimInstance Win32_Process' "$stage_target")" 2>/dev/null || true
+}
+
+# Prints the PowerShell that stops each process from source $1 whose command
+# line targets stage $2. Stop by -Id: piped whole, a Win32_Process binds its
+# Name ("cargo.exe") to -Name, which matches no process, so nothing stops.
+stop_script() {
+  # shellcheck disable=SC2016 # PowerShell source: $ variables reach pwsh unexpanded.
+  printf '%s | Where-Object { $_.ProcessId -ne $PID -and %s } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }\n' \
+    "$1" "$(stage_filter "$2")"
 }
 
 # Runs powershell under a time limit, stopping stage processes on timeout.
