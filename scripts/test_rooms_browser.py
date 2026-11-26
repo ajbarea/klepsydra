@@ -17,14 +17,15 @@ import functools
 import http.server
 import json
 import pathlib
-import random
-import re
 import socket
 import sys
 import threading
 import time
 
 from playwright.sync_api import sync_playwright
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from needs_scrub import scrub  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TIMES = {"status_at", "active_at", "updated_at", "quiet_since", "at", "started_at", "ends_at", "until", "settled_at", "turn_at"}
@@ -87,43 +88,6 @@ def shifted(value, by):
     if not isinstance(value, dict):
         return value
     return {k: v + by if k in TIMES and isinstance(v, (int, float)) else shifted(v, by) for k, v in value.items()}
-
-
-WORDS = "alpha bravo cedar delta ember fable grove harbor island jasper kettle lumen meadow north orbit pine quartz river stone tide".split()
-DATE = re.compile(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b|\b\d{1,2}-\d{1,2}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}\b")
-
-
-def scrub(text, seed=386):
-    """`text` with every word and digit swapped and every link pointed at
-    example.com; markdown, dates, weekdays and times stay, so the shape and
-    the due chips are the real file's and no word of it is."""
-    rng = random.Random(seed)
-    kept = []
-
-    def hold(m):
-        kept.append(m.group())
-        return chr(0xE000 + len(kept) - 1)  # a private-use mark: no letter or digit to swap
-
-    text = re.sub(r"\]\([^)]*\)", lambda m: "](" + hold(re.match(r".*", "https://example.com/item")) + ")", text)
-    text = re.sub(r"https?://\S+", lambda m: hold(re.match(r".*", "https://example.com/item")), text)
-    text = DATE.sub(hold, text)
-    text = re.sub(r"^#+ .*$", lambda m: hold(m), text, flags=re.M)
-    word = lambda m: (lambda w: w.capitalize() if m.group()[0].isupper() else w)(rng.choice(WORDS))
-    text = re.sub(r"[A-Za-z]+", word, text)
-    text = re.sub(r"\d", lambda _: str(rng.randrange(10)), text)
-    for _ in range(2):  # a held heading holds its held dates
-        text = re.sub("[\ue000-\uf8ff]", lambda m: kept[ord(m.group()) - 0xE000], text)
-    # Section titles are the file's own words: placeholders keep the order, dates stay.
-    titles = iter(["## Today", "## Coming up", "## When convenient", "## Later"])
-    out = []
-    for line in text.split("\n"):
-        if line.startswith("## "):
-            date = re.search(r" \(.*\)$", line)
-            line = next(titles, "## More") + (" (" + " ".join(DATE.findall(date.group())) + ")" if date and DATE.search(date.group()) else "")
-        elif line.startswith("# "):
-            line = "# Needs you"
-        out.append(line)
-    return "\n".join(out)
 
 
 class Run:
