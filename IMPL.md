@@ -22,12 +22,16 @@ that text), Undo of the first twin, an empty item no longer throws (room shows a
 minors: two-digit dates, COM before ShellExecuteW, temp file mode at create, 7-hash scrub;
 plus a lone-CR seam that swallowed a blank line.
 
+Round 4 (fresh Opus reader): 1 Should-fix, a file with a BOM could never be marked done (the
+watcher strips it, Done compared raw bytes); fixed in 5d28b0e with a shared `without_bom`, plus
+minors (Rust trims only spaces/tabs, ShellExecuteExW + SEE_MASK_NOASYNC, shared COM guard,
+stale problem line). Windows --check clean; rooms 89/0; shots retaken on 5d28b0e.
+
 ## Next
-- Review round 4: fresh Opus reader on origin/main...HEAD + round 3 findings (running 11-26).
-- Retake shots per layout at 1920/390 on the final head (`test_rooms_browser.py --shots DIR
-  --needs <file>` scrubs it) into fleet-briefing shots/2026-11-25, README line exists.
-- PR body rewrite (live vs tested), push, CI (flakes #471, #573: rerun once), merge,
-  fleet install, Windows build, one live 1920 shot.
+- Review round 5 (ceiling): fresh Opus reader on origin/main...HEAD + round 4 findings.
+  Clean → one verify pass; else report what stays open.
+- PR body rewrite (live vs tested), CI (flakes #471, #573: rerun once), merge,
+  fleet install, Windows build, one live 1920 shot, report fix-571-1125.md.
 
 ## Verify
 - `cargo test -p klepsydra-fleet needs::`, `node --test src/*.test.js`,
