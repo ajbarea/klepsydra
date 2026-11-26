@@ -948,9 +948,9 @@ printf ' \n\t\n' >"$work/blank.src"
 check "#316 review: and one of whitespace alone" \
   "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" blank "$work/blank.src" >/dev/null 2>&1; echo $?)" "2"
 head -c 120001 /dev/zero | tr '\0' x >"$work/big.src"
-check "#316 review: and one over the 120000 bytes a command line argument holds, with a reason" \
+check "#316 review: and one over the 120000 bytes a command line argument holds, with a reason (exit 2)" \
   "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" big "$work/big.src" 2>&1 >/dev/null | grep -c 'over the 120000'; echo $?)" "1
-0"
+2"
 
 out=$(FLEET_START_WAIT=1 launch agent5 '{"above":["Claude Code"],"busy_delay":2}')
 check "a turn whose spinner shows late is never interrupted" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
