@@ -111,11 +111,12 @@ export function createDone(invoke) {
     get undoable() {
       return token !== null;
     },
-    async done(item) {
+    /** Mark `item` done; `seen` is the file's text as the room rendered it (the app writes only while it still is). */
+    async done(item, seen) {
       if (busy) return { ok: false, why: null };
       busy = true;
       try {
-        const r = await invoke("needs_done", { block: item.block, line: item.line ?? null });
+        const r = await invoke("needs_done", { seen, block: item.block, line: item.line });
         token = r.undo;
         return { ok: true, text: r.text };
       } catch (err) {
@@ -480,11 +481,21 @@ export function createRooms({
     else showToast(item?.links.length ? "This link opens from the file only; C copies it." : "This item has no link to open.");
   }
 
+  /** The model of `text`; a file the room cannot read is a problem line, never a frozen room. */
+  function modelOf(text) {
+    try {
+      return { model: needsModel(text ?? "", now()), problem: null };
+    } catch (err) {
+      return { model: { items: [], count: 0, next: null }, problem: `The Needs you file could not be shown: ${err?.message ?? err}` };
+    }
+  }
+
   /** The file as the app just wrote it: the room shows it now, not when the watcher next reads. */
   function written(text) {
     if (typeof text !== "string") return;
-    fileState = { ...fileState, text };
-    needs = needsModel(text, now());
+    const { model, problem } = modelOf(text);
+    fileState = { ...fileState, text, problem: problem ?? fileState.problem };
+    needs = model;
   }
 
   async function markDone(item) {
@@ -500,7 +511,7 @@ export function createRooms({
     focusKey = nextKey;
     paint();
     if (view === "needs" && nextKey) focusRow(nextKey);
-    const r = await writer.done(item);
+    const r = await writer.done(item, fileState.text ?? "");
     hidden.delete(item.key);
     if (r.ok) written(r.text);
     paint();
@@ -686,8 +697,9 @@ export function createRooms({
   return {
     /** A new read of the Needs you file: `{path, text, problem, missing}`; `calm` shows the problem as a note. */
     updateNeeds(view_) {
-      fileState = { text: view_.text ?? null, problem: view_.missing ? null : view_.problem ?? null, calm: view_.calm === true };
-      needs = needsModel(fileState.text ?? "", now());
+      const { model, problem } = modelOf(view_.text);
+      fileState = { text: view_.text ?? null, problem: problem ?? (view_.missing ? null : view_.problem ?? null), calm: problem ? false : view_.calm === true };
+      needs = model;
       // A Done on its way stays hidden only while the file still holds the item.
       hidden = new Set([...hidden].filter((k) => needs.items.some((i) => i.key === k)));
       paint();

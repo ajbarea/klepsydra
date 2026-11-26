@@ -84,6 +84,14 @@ test("a loose list's item ends at its last text line, not the blank line after i
   );
 });
 
+test("an empty list item is an item with no title, never a crash", () => {
+  for (const text of ["-\n", "- \n", "- 📋\n", "1.\n", "- a\n-\n- b\n"]) {
+    const m = needsModel(text, TODAY);
+    assert.ok(m.items.every((i) => typeof i.title === "string" && typeof i.block === "string"), JSON.stringify(text));
+  }
+  assert.deepEqual(needsModel("- a\n-\n- b\n", TODAY).items.map((i) => [i.title, i.line]), [["a", 0], ["(untitled item)", 1], ["b", 2]]);
+});
+
 test("a lone carriage return ends a line for the blocks as it does for the parser", () => {
   const m = needsModel("- 📋 a\rb\n- 📋 c\n- 📋 d\n", TODAY);
   assert.deepEqual(
@@ -96,9 +104,12 @@ test("a lone carriage return ends a line for the blocks as it does for the parse
   );
 });
 
-test("each item's block is the source lines from its line on, whatever the line endings", () => {
-  for (const eol of ["\n", "\r\n", "\r"]) {
-    const text = FILE.replaceAll("\n", eol);
+test("each item's block is the source lines from its line on, whatever the line endings and shapes", () => {
+  // Shapes where an item ends at something other than a sibling: a rule, a fence, a quote, HTML,
+  // a blank line then an indented paragraph, an indented heading, an empty item, an ordered list's sub-items.
+  const SHAPES = "- 📋 a\n---\n- b\n***\n* c\n  # inside\n- d\n\n  more of d\n- e\n```\ncode\n```\n- f\n> quote\n- g\n<div>x</div>\n\n -  h\n   - i\n1. j\n  - k\n-\n- l\n";
+  for (const eol of ["\n", "\r\n", "\r"]) for (const base of [FILE, SHAPES]) {
+    const text = base.replaceAll("\n", eol);
     const lines = text.split(/\r\n?|\n/);
     for (const i of needsModel(text, TODAY).items) {
       assert.equal(lines.slice(i.line, i.line + i.block.split("\n").length).join("\n"), i.block, JSON.stringify([eol, i.title]));
@@ -151,7 +162,8 @@ test("due dates: the first date the item names, nearest today, shown as a date",
   assert.equal(dueOf("December 6 deadline", TODAY)?.getDate(), 6);
   assert.equal(dueOf("Sept. 9", TODAY)?.getMonth(), 8);
   assert.equal(dueOf("Mon 1-4 kickoff", TODAY)?.getDate(), 4, "a weekday before it makes a short date a date");
-  assert.equal(dueOf("by 1-05", TODAY)?.getMonth(), 0);
+  assert.equal(dueOf("by 01-05", TODAY)?.getMonth(), 0);
+  for (const none of ["rounds 1-10", "between 3-10 items", "techne#189 r1-10", "A6 4-11pm", "Python 3-12", "by 1-05"]) assert.equal(dueOf(none, TODAY), null, none);
   assert.deepEqual(dueLabel(new Date(2026, 10, 25), TODAY), { label: "Today", tone: "today", days: 0 });
   assert.equal(dueLabel(new Date(2026, 10, 26), TODAY).label, "Tomorrow, Thu 11-26");
   assert.equal(dueLabel(new Date(2026, 10, 27), TODAY).tone, "soon");
@@ -179,12 +191,12 @@ test("Done sends the item's block to the app and Undo puts back that block alone
   const writer = createDone(invoke);
   const item = needsModel(FILE, TODAY).items[1];
   assert.equal(item.line, 11, "the line the item starts on, as the app counts lines");
-  assert.deepEqual(await writer.done(item), { ok: true, text: "after done" });
+  assert.deepEqual(await writer.done(item, FILE), { ok: true, text: "after done" });
   assert.ok(writer.undoable);
   assert.deepEqual(await writer.undo(), { ok: true, text: "after undo" });
   assert.deepEqual(await writer.undo(), { ok: false, why: null }, "a second Undo does nothing");
   assert.deepEqual(calls, [
-    ["needs_done", { block: item.block, line: 11 }],
+    ["needs_done", { seen: FILE, block: item.block, line: 11 }],
     ["needs_undo", { undo: { block: item.block, after: "above", at: 3 } }],
   ]);
 });

@@ -1,12 +1,16 @@
 //! Marking a Needs you item done from the wall (#386, with #86's write
-//! rules). The markdown file stays the source of truth: Done removes the
-//! item's exact lines (its nested lines too) as the wall last read them, and
-//! Undo puts those lines back after the line that preceded them. Nothing else
-//! in the file is touched, so an agent's edit elsewhere survives both. The
-//! write is an atomic replace, and the file is read again just before the
-//! rename: a file that changed in between is edited afresh, never
-//! overwritten with a stale copy.
+//! rules). The markdown file stays the source of truth, and the wall's parser
+//! (markdown-it) alone decides where an item starts and ends: Done names the
+//! file as the wall rendered it, the item's lines and the line they start on,
+//! and removes exactly those lines only while the file is still that text. A
+//! file an agent changed since is refused, never guessed at; the wall shows
+//! the new text and the item can be marked again. Undo puts the lines back
+//! where they stood, or after their old neighbour if the file moved on.
+//! Nothing else in the file is touched. The write is an atomic replace, and
+//! the file is read again just before the rename: a file that changed in
+//! between is edited afresh, never overwritten with a stale copy.
 
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -15,12 +19,14 @@ use crate::bounded::{read_text, Refused};
 use crate::queue::MAX_BYTES;
 
 /// What Undo needs to put an item back: its lines, the line above them when
-/// it was removed, and where it stood.
+/// it was removed, where it stood, and the file's fingerprint just after Done.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Undo {
     pub block: String,
     pub after: Option<String>,
     pub at: usize,
+    #[serde(default)]
+    pub done: String,
 }
 
 /// How many times a write is tried while other writers keep changing the file.
@@ -28,8 +34,10 @@ const TRIES: usize = 3;
 /// The longest link the wall opens.
 pub const URL_MAX: usize = 2048;
 
+pub const CHANGED: &str =
+    "The Needs you file changed since the wall showed it, so nothing was written. The wall shows it as it is now; mark the item again.";
 pub const GONE: &str =
-    "That item is no longer in the Needs you file as shown (edited or already done); nothing was written.";
+    "That item is not in the Needs you file where the wall showed it; nothing was written.";
 const NOT_ITEM: &str = "Only a list item can be marked done.";
 const BUSY: &str =
     "The Needs you file kept changing while it was saved; nothing was written. Try again.";
@@ -78,128 +86,97 @@ fn block_lines(block: &str) -> Vec<&str> {
     v
 }
 
-/// A line's indent in columns, a tab to the next multiple of four.
-fn indent(line: &str) -> usize {
-    line.chars()
-        .take_while(|c| *c == ' ' || *c == '\t')
-        .fold(0, |n, c| if c == '\t' { n / 4 * 4 + 4 } else { n + 1 })
-}
-
-/// Whether the item whose first line is `first` ends before `next`: the end
-/// of the file, a blank line, a heading, or a list item no deeper than it.
-/// Anything else (a nested line, a lazy continuation) is still the item's.
-fn ends_before(first: &str, next: Option<&str>) -> bool {
-    let Some(next) = next.map(bare) else {
-        return true;
-    };
-    next.trim().is_empty()
-        || (indent(next) <= 3 && next.trim_start().starts_with('#'))
-        || (is_item(next) && indent(next) <= indent(first))
-}
-
-/// A markdown list item's first line: a bullet or a number, then a space.
+/// A markdown list item's first line: a bullet or a number, then a space or
+/// the line's end (an empty item).
 fn is_item(line: &str) -> bool {
     let t = line.trim_start();
+    let after = |rest: &str| rest.is_empty() || rest.starts_with([' ', '\t']);
     if let Some(rest) = t.strip_prefix(['-', '*', '+']) {
-        return rest.starts_with(' ') || rest.starts_with('\t');
+        return after(rest);
     }
     let digits = t.bytes().take_while(u8::is_ascii_digit).count();
-    (1..=9).contains(&digits)
-        && t[digits..].starts_with(['.', ')'])
-        && t[digits + 1..].starts_with([' ', '\t'])
+    (1..=9).contains(&digits) && t[digits..].starts_with(['.', ')']) && after(&t[digits + 1..])
 }
 
-/// Every place `want` stands in `have`, line for line.
-fn matches<'a>(have: &'a [&str], want: &'a [&str]) -> impl Iterator<Item = usize> + 'a {
-    let last = if want.is_empty() || want.len() > have.len() {
-        0
-    } else {
-        have.len() - want.len() + 1
-    };
-    (0..last).filter(move |&i| {
-        have[i..i + want.len()]
+/// Whether `want` stands in `have` at `at`, line for line.
+fn stands_at(have: &[&str], want: &[&str], at: usize) -> bool {
+    at + want.len() <= have.len()
+        && have[at..at + want.len()]
             .iter()
             .zip(want)
             .all(|(h, w)| bare(h) == *w)
-    })
 }
 
-/// Where `want` first stands in `have`, line for line.
-fn find(have: &[&str], want: &[&str]) -> Option<usize> {
-    matches(have, want).next()
+/// A short fingerprint of a file's text, to tell Undo whether it moved on.
+fn fingerprint(text: &str) -> String {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    format!("{:016x}-{}", h.finish(), text.len())
 }
 
-/// Where the item `want` stands in `have`: the copy at `line` (the wall's
-/// reading), else the one nearest it, else (no line) the first; refused when
-/// two are as near, or when the copy found is only the start of a longer item.
-fn locate(have: &[&str], want: &[&str], line: Option<usize>) -> Option<usize> {
-    let found: Vec<usize> = matches(have, want).collect();
-    let at = match line {
-        None => *found.first()?,
-        Some(l) => {
-            let best = *found.iter().min_by_key(|&&i| i.abs_diff(l))?;
-            let d = best.abs_diff(l);
-            if found.iter().filter(|&&i| i.abs_diff(l) == d).count() > 1 {
-                return None;
-            }
-            best
-        }
-    };
-    ends_before(want[0], have.get(at + want.len()).copied()).then_some(at)
-}
-
-/// `text` without the item `block` (see `locate`; `line` is where the wall
-/// read it), and how to put it back. Refused when `block` is not a list item
-/// or is not a whole item in `text` line for line.
-pub fn remove(text: &str, block: &str, line: Option<usize>) -> Result<(String, Undo), String> {
+/// `text` without the item `block`, which the wall read at line `line` of
+/// `seen`, and how to put it back. Refused when the file is no longer `seen`,
+/// when `block` is not a list item, or when it is not at `line`.
+pub fn remove(text: &str, seen: &str, block: &str, line: usize) -> Result<(String, Undo), String> {
+    if text != seen {
+        return Err(CHANGED.into());
+    }
     let want = block_lines(block);
     if !want.first().is_some_and(|l| is_item(l)) {
         return Err(NOT_ITEM.into());
     }
     let have = lines(text);
-    let at = locate(&have, &want, line).ok_or(GONE)?;
-    let mut out = String::with_capacity(text.len());
+    if !stands_at(&have, &want, line) {
+        return Err(GONE.into());
+    }
+    let mut out = String::with_capacity(text.len() + 1);
     for (i, l) in have.iter().enumerate() {
-        if !(at..at + want.len()).contains(&i) {
+        if !(line..line + want.len()).contains(&i) {
+            // A lone `\r` then a line starting `\n` would fuse into one CRLF ending and lose a line.
+            if out.ends_with('\r') && l.starts_with('\n') {
+                out.push('\n');
+            }
             out.push_str(l);
         }
     }
     let undo = Undo {
         block: want.join("\n"),
-        after: at.checked_sub(1).map(|i| bare(have[i]).to_string()),
-        at,
+        after: line.checked_sub(1).map(|i| bare(have[i]).to_string()),
+        at: line,
+        done: fingerprint(&out),
     };
     Ok((out, undo))
 }
 
-/// `text` with the undone block back after the line that stood above it
-/// (its nearest copy to where the block was), else at its old place. A block
-/// already standing there is not added twice.
+/// `text` with the undone block back: where it stood when the file is as
+/// Done left it, else after the line that stood above it (its nearest copy
+/// to where the block was), else at its old place.
 pub fn restore(text: &str, undo: &Undo) -> Result<String, String> {
     let want = block_lines(&undo.block);
     if !want.first().is_some_and(|l| is_item(l)) {
         return Err(NOT_ITEM.into());
     }
     let have = lines(text);
-    let pos = match &undo.after {
-        None => 0,
-        Some(a) => have
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| bare(l) == a)
-            .map(|(j, _)| j + 1)
-            .min_by_key(|&p| p.abs_diff(undo.at))
-            .unwrap_or_else(|| undo.at.min(have.len())),
+    let pos = if fingerprint(text) == undo.done {
+        undo.at.min(have.len())
+    } else {
+        match &undo.after {
+            None => 0,
+            Some(a) => have
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| bare(l) == a)
+                .map(|(j, _)| j + 1)
+                .min_by_key(|&p| p.abs_diff(undo.at))
+                .unwrap_or_else(|| undo.at.min(have.len())),
+        }
     };
-    if pos + want.len() <= have.len() && find(&have[pos..pos + want.len()], &want) == Some(0) {
-        return Ok(text.to_string());
-    }
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let mut out = String::with_capacity(text.len() + undo.block.len() + want.len() * 2);
     for l in &have[..pos] {
         out.push_str(l);
     }
-    if pos > 0 && !have[pos - 1].ends_with('\n') {
+    if pos > 0 && !have[pos - 1].ends_with(['\n', '\r']) {
         out.push_str(eol);
     }
     for l in &want {
@@ -279,10 +256,15 @@ pub fn rewrite<T>(
             }
             _ => {}
         }
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        // Created with the old file's mode, so a private 0600 file is never readable to others, even briefly.
+        #[cfg(unix)]
+        if let Ok(meta) = std::fs::metadata(path) {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            opts.mode(meta.permissions().mode() & 0o7777);
+        }
+        opts.open(&tmp)
             .and_then(|mut f| {
                 std::io::Write::write_all(&mut f, new.as_bytes())?;
                 f.sync_all()
@@ -316,10 +298,10 @@ pub struct Done {
     pub text: String,
 }
 
-/// Mark the item `block`, which starts at line `line` as the wall read the
-/// file, done in the file at `path`: its lines leave the file.
-pub fn mark_done(path: &Path, block: &str, line: Option<usize>) -> Result<Done, String> {
-    rewrite(path, |text| remove(text, block, line)).map(|(undo, text)| Done { undo, text })
+/// Mark the item `block`, which starts at line `line` of `seen` (the file as
+/// the wall rendered it), done in the file at `path`: its lines leave the file.
+pub fn mark_done(path: &Path, seen: &str, block: &str, line: usize) -> Result<Done, String> {
+    rewrite(path, |text| remove(text, seen, block, line)).map(|(undo, text)| Done { undo, text })
 }
 
 /// Put back the item `undo` names in the file at `path`; the file as written.
@@ -333,18 +315,24 @@ mod tests {
     use crate::scan::tests::Scratch;
 
     const FILE: &str = "# Needs you\n\n## Today\n- 📋 **One:** first\n- 📋 **Two:** second\n  - 📋 nested step [a](https://example.com/a)\n  more of two\n- 📋 **Three:** third\n\n## Later\n- 📋 **Four:** fourth\n";
+    const TWO: &str =
+        "- 📋 **Two:** second\n  - 📋 nested step [a](https://example.com/a)\n  more of two";
+
+    fn done(text: &str, block: &str, line: usize) -> Result<(String, Undo), String> {
+        remove(text, text, block, line)
+    }
 
     #[test]
     fn done_removes_the_item_and_its_nested_lines_only() {
-        let block =
-            "- 📋 **Two:** second\n  - 📋 nested step [a](https://example.com/a)\n  more of two";
-        let (out, undo) = remove(FILE, block, None).unwrap();
+        let (out, undo) = done(FILE, TWO, 4).unwrap();
         assert_eq!(
             out,
             "# Needs you\n\n## Today\n- 📋 **One:** first\n- 📋 **Three:** third\n\n## Later\n- 📋 **Four:** fourth\n"
         );
-        assert_eq!(undo.at, 4);
-        assert_eq!(undo.after.as_deref(), Some("- 📋 **One:** first"));
+        assert_eq!(
+            (undo.at, undo.after.as_deref()),
+            (4, Some("- 📋 **One:** first"))
+        );
         assert_eq!(
             restore(&out, &undo).unwrap(),
             FILE,
@@ -354,21 +342,35 @@ mod tests {
 
     #[test]
     fn a_trailing_blank_line_in_the_block_is_not_part_of_it() {
-        let (out, _) = remove(FILE, "- 📋 **Three:** third\n\n", None).unwrap();
-        assert!(
-            out.contains("first\n- 📋 **Two:**") && out.contains("of two\n\n## Later"),
-            "{out}"
-        );
+        let (out, _) = done(FILE, "- 📋 **Three:** third\n\n", 7).unwrap();
+        assert!(out.contains("of two\n\n## Later"), "{out}");
     }
 
     #[test]
-    fn an_item_no_longer_in_the_file_is_refused() {
-        for block in [
-            "- 📋 **Two:** second, edited",
-            "- 📋 **Two:** second\n  more of two",
-            "- 📋 **Five:** none",
+    fn a_file_changed_since_the_wall_read_it_is_refused() {
+        // An agent added a line above, or edited the item: the wall's lines and line no longer hold.
+        let moved = format!("x\n{FILE}");
+        assert_eq!(remove(&moved, FILE, TWO, 4).unwrap_err(), CHANGED);
+        assert_eq!(remove(&moved, FILE, TWO, 5).unwrap_err(), CHANGED);
+        // Shown afresh, the same item goes from its new line.
+        let (out, _) = remove(&moved, &moved, TWO, 5).unwrap();
+        assert!(!out.contains("**Two:**") && out.starts_with("x\n"), "{out}");
+    }
+
+    #[test]
+    fn an_item_not_at_its_line_is_refused() {
+        for (block, line) in [
+            ("- 📋 **Two:** second, edited", 4),
+            ("- 📋 **Two:** second", 3),
+            (TWO, 3),
+            ("- 📋 **Five:** none", 4),
+            (TWO, 99),
         ] {
-            assert_eq!(remove(FILE, block, None).unwrap_err(), GONE, "{block}");
+            assert_eq!(
+                done(FILE, block, line).unwrap_err(),
+                GONE,
+                "{block} at {line}"
+            );
         }
     }
 
@@ -383,21 +385,21 @@ mod tests {
             "12345678901. x",
             "plain line",
         ] {
-            assert_eq!(
-                remove(FILE, block, None).unwrap_err(),
-                NOT_ITEM,
-                "{block:?}"
-            );
+            assert_eq!(done(FILE, block, 0).unwrap_err(), NOT_ITEM, "{block:?}");
         }
-        for ok in ["* x", "+ x", "1. x", "2) x", "  - x", "-\tx"] {
-            assert!(is_item(ok), "{ok}");
+        for ok in [
+            "* x", "+ x", "1. x", "2) x", "  - x", "-\tx", "-", "- ", "1.",
+        ] {
+            assert!(is_item(ok), "{ok:?}");
         }
+        let (out, _) = done("- a\n-\n- b\n", "-", 1).unwrap();
+        assert_eq!(out, "- a\n- b\n", "an empty item goes too");
     }
 
     #[test]
     fn crlf_files_keep_their_line_endings() {
         let crlf = FILE.replace('\n', "\r\n");
-        let (out, undo) = remove(&crlf, "- 📋 **One:** first", None).unwrap();
+        let (out, undo) = done(&crlf, "- 📋 **One:** first", 3).unwrap();
         assert!(
             !out.contains("One") && !out.replace("\r\n", "").contains('\n'),
             "{out:?}"
@@ -406,52 +408,141 @@ mod tests {
     }
 
     #[test]
-    fn the_first_of_two_identical_items_goes() {
-        let text = "- 📋 a\n- 📋 b\n- 📋 a\n";
-        let (out, undo) = remove(text, "- 📋 a", None).unwrap();
-        assert_eq!(out, "- 📋 b\n- 📋 a\n");
-        assert_eq!((undo.at, undo.after.as_deref()), (0, None));
-        assert_eq!(restore(&out, &undo).unwrap(), text);
+    fn a_lone_carriage_return_ends_a_line_as_it_does_for_the_wall() {
+        let text = "- 📋 a\rb\n- 📋 c\n- 📋 d\n";
+        let (out, undo) = done(text, "- 📋 c", 2).unwrap();
+        assert_eq!(out, "- 📋 a\rb\n- 📋 d\n");
+        assert_eq!(restore(&out, &undo).unwrap(), "- 📋 a\rb\n- 📋 c\n- 📋 d\n");
+        let (out, _) = done(text, "- 📋 a\nb", 0).unwrap();
+        assert_eq!(out, "- 📋 c\n- 📋 d\n");
+    }
+
+    #[test]
+    fn a_lone_carriage_return_before_a_blank_line_keeps_the_blank_line() {
+        let (out, undo) = done("* c\r-\n\n> q\n", "-", 1).unwrap();
+        assert_eq!(out, "* c\r\n\n> q\n", "the blank line stays its own line");
+        assert_eq!(
+            lines(&restore(&out, &undo).unwrap())
+                .iter()
+                .map(|l| bare(l))
+                .collect::<Vec<_>>(),
+            ["* c", "-", "", "> q"]
+        );
+    }
+
+    #[test]
+    fn twins_go_by_their_line_and_come_back_to_it() {
+        let text = "## Today\n- 📋 a\n- 📋 a\n- 📋 b\n";
+        for line in [1, 2] {
+            let (out, undo) = done(text, "- 📋 a", line).unwrap();
+            assert_eq!(out, "## Today\n- 📋 a\n- 📋 b\n");
+            assert_eq!(
+                restore(&out, &undo).unwrap(),
+                text,
+                "undo of twin {line} puts it back"
+            );
+        }
     }
 
     #[test]
     fn undo_follows_its_neighbour_when_the_file_moved_and_keeps_others_edits() {
-        let (out, undo) = remove(FILE, "- 📋 **Three:** third", None).unwrap();
-        // An agent adds a line at the top and edits Four meanwhile.
+        let (out, undo) = done(FILE, "- 📋 **Three:** third", 7).unwrap();
         let edited = format!("NEW TOP\n{}", out.replace("fourth", "fourth, edited"));
-        let back = restore(&edited, &undo).unwrap();
         assert_eq!(
-            back,
+            restore(&edited, &undo).unwrap(),
             format!("NEW TOP\n{}", FILE.replace("fourth", "fourth, edited"))
         );
     }
 
     #[test]
     fn undo_with_its_neighbour_gone_goes_back_to_its_old_place() {
-        let (out, undo) = remove(FILE, "- 📋 **Three:** third", None).unwrap();
+        let (out, undo) = done(FILE, "- 📋 **Three:** third", 7).unwrap();
         assert_eq!(undo.after.as_deref(), Some("  more of two"));
-        let gone = out.replace("  more of two\n", "");
-        let back = restore(&gone, &undo).unwrap();
+        let back = restore(&out.replace("  more of two\n", ""), &undo).unwrap();
         let at: Vec<&str> = back.lines().collect();
         assert_eq!(at[undo.at], "- 📋 **Three:** third", "{back}");
     }
 
     #[test]
-    fn undo_twice_adds_the_item_once() {
-        let (out, undo) = remove(FILE, "- 📋 **One:** first", None).unwrap();
-        let once = restore(&out, &undo).unwrap();
-        assert_eq!(restore(&once, &undo).unwrap(), once);
+    fn undo_at_the_end_of_a_file_without_a_final_newline() {
+        let (out, undo) = done("- 📋 a\n- 📋 b", "- 📋 b", 1).unwrap();
+        assert_eq!(out, "- 📋 a\n");
+        assert_eq!(restore(&out, &undo).unwrap(), "- 📋 a\n- 📋 b\n");
+        let (_, undo) = done("- 📋 a\n- 📋 b\n", "- 📋 b", 1).unwrap();
+        assert_eq!(restore("- 📋 a", &undo).unwrap(), "- 📋 a\n- 📋 b\n");
     }
 
     #[test]
-    fn undo_at_the_end_of_a_file_without_a_final_newline() {
-        let text = "- 📋 a\n- 📋 b";
-        let (out, undo) = remove(text, "- 📋 b", None).unwrap();
-        assert_eq!(out, "- 📋 a\n");
-        assert_eq!(restore(&out, &undo).unwrap(), "- 📋 a\n- 📋 b\n");
-        // The neighbour is the file's last line, now without its newline.
-        let (_, undo) = remove("- 📋 a\n- 📋 b\n", "- 📋 b", None).unwrap();
-        assert_eq!(restore("- 📋 a", &undo).unwrap(), "- 📋 a\n- 📋 b\n");
+    fn an_undo_token_from_an_older_build_still_restores() {
+        let old: Undo =
+            serde_json::from_str(r#"{"block":"- 📋 b","after":"- 📋 a","at":1}"#).unwrap();
+        assert_eq!(restore("- 📋 a\n", &old).unwrap(), "- 📋 a\n- 📋 b\n");
+    }
+
+    /// A small deterministic generator, so the sweep below needs no crate.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+    }
+
+    #[test]
+    fn any_lines_the_wall_names_go_alone_and_come_back_byte_for_byte() {
+        let parts = [
+            "- 📋 a", "- 📋 a", "  - sub", "  more", "", "## H", "1. n", "-", "---", "> q", "```",
+            "text", "* c", "   - x",
+        ];
+        let eols = ["\n", "\r\n", "\r"];
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut checked = 0;
+        for _ in 0..3000 {
+            let n = 1 + rng.next(12);
+            let mut text = String::new();
+            for _ in 0..n {
+                text.push_str(parts[rng.next(parts.len())]);
+                let mixed = rng.next(4) == 0;
+                text.push_str(eols[rng.next(if mixed { 3 } else { 1 })]);
+            }
+            if rng.next(5) == 0 {
+                text.pop(); // no final line ending
+            }
+            let have = lines(&text);
+            for line in 0..have.len() {
+                if !is_item(bare(have[line])) {
+                    continue;
+                }
+                let len = 1 + rng.next(3).min(have.len() - line - 1);
+                let block: Vec<&str> = have[line..line + len].iter().map(|l| bare(l)).collect();
+                if block.last().is_some_and(|l| l.trim().is_empty()) {
+                    continue; // the wall trims an item's trailing blank lines, so no block ends in one
+                }
+                let Ok((out, undo)) = done(&text, &block.join("\n"), line) else {
+                    continue; // a block whose own last lines are blank is trimmed; not a wall block
+                };
+                let gone = line..line + block_lines(&block.join("\n")).len();
+                let kept: Vec<&str> = (0..have.len())
+                    .filter(|i| !gone.contains(i))
+                    .map(|i| bare(have[i]))
+                    .collect();
+                assert_eq!(
+                    lines(&out).iter().map(|l| bare(l)).collect::<Vec<_>>(),
+                    kept,
+                    "{text:?} line {line}"
+                );
+                let back = restore(&out, &undo).unwrap();
+                assert_eq!(
+                    lines(&back).iter().map(|l| bare(l)).collect::<Vec<_>>(),
+                    have.iter().map(|l| bare(l)).collect::<Vec<_>>(),
+                    "{text:?} line {line}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 5000, "{checked}");
     }
 
     #[test]
@@ -489,10 +580,11 @@ mod tests {
         let dir = Scratch::new("needs-done");
         let path = dir.0.join("needs-you.md");
         std::fs::write(&path, FILE).unwrap();
-        let done = mark_done(&path, "- 📋 **One:** first", None).unwrap();
+        let d = mark_done(&path, FILE, "- 📋 **One:** first", 3).unwrap();
         let after = std::fs::read_to_string(&path).unwrap();
         assert!(!after.contains("**One:**"), "{after}");
-        undo_done(&path, &done.undo).unwrap();
+        assert_eq!(d.text, after, "Done answers with the file as written");
+        assert_eq!(undo_done(&path, &d.undo).unwrap(), FILE);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), FILE);
         let left: Vec<_> = std::fs::read_dir(&dir.0)
             .unwrap()
@@ -506,40 +598,46 @@ mod tests {
     }
 
     #[test]
-    fn mark_done_refuses_a_missing_item_and_leaves_the_file() {
+    fn mark_done_refuses_and_leaves_the_file() {
         let dir = Scratch::new("needs-gone");
         let path = dir.0.join("needs-you.md");
         std::fs::write(&path, FILE).unwrap();
-        assert_eq!(mark_done(&path, "- 📋 nope", None).unwrap_err(), GONE);
+        assert_eq!(mark_done(&path, FILE, "- 📋 nope", 3).unwrap_err(), GONE);
+        assert_eq!(
+            mark_done(&path, "older text", "- 📋 **One:** first", 3).unwrap_err(),
+            CHANGED
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), FILE);
-        assert!(mark_done(&dir.0.join("missing.md"), "- 📋 x", None)
+        assert!(mark_done(&dir.0.join("missing.md"), "", "- 📋 x", 0)
             .unwrap_err()
             .contains("no Needs you file"));
     }
 
     #[test]
-    fn a_write_between_the_read_and_the_rename_is_kept() {
+    fn a_write_between_the_read_and_the_rename_is_kept_and_done_refused() {
         let dir = Scratch::new("needs-race");
         let path = dir.0.join("needs-you.md");
         std::fs::write(&path, FILE).unwrap();
         let calls = std::cell::Cell::new(0);
-        let out = rewrite(&path, |text| {
+        let err = rewrite(&path, |text| {
             calls.set(calls.get() + 1);
             if calls.get() == 1 {
                 // Another writer saves after our read, before our rename.
                 std::fs::write(&path, format!("{text}- 📋 added by an agent\n")).unwrap();
             }
-            remove(text, "- 📋 **One:** first", None)
+            remove(text, FILE, "- 📋 **One:** first", 3)
         })
-        .unwrap()
-        .0;
-        assert_eq!(calls.get(), 2, "edited afresh");
+        .unwrap_err();
+        assert_eq!(
+            (calls.get(), err.as_str()),
+            (2, CHANGED),
+            "read afresh, then refused"
+        );
         let after = std::fs::read_to_string(&path).unwrap();
         assert!(
-            after.contains("added by an agent") && !after.contains("**One:**"),
+            after.contains("added by an agent") && after.contains("**One:**"),
             "{after}"
         );
-        assert_eq!(out.at, 3);
     }
 
     #[test]
@@ -551,59 +649,11 @@ mod tests {
         let err = rewrite(&path, |text| {
             n.set(n.get() + 1);
             std::fs::write(&path, format!("{text}x\n")).unwrap();
-            remove(text, "- 📋 **One:** first", None)
+            Ok((format!("{text}OURS\n"), ()))
         })
         .unwrap_err();
         assert_eq!((err.as_str(), n.get()), (BUSY, TRIES));
-        assert!(std::fs::read_to_string(&path).unwrap().contains("**One:**"));
-    }
-
-    #[test]
-    fn done_takes_the_twin_at_its_line_not_the_first() {
-        let text = "## A\n- 📋 a\n## B\n- 📋 a\n";
-        let (out, undo) = remove(text, "- 📋 a", Some(3)).unwrap();
-        assert_eq!(out, "## A\n- 📋 a\n## B\n");
-        assert_eq!(restore(&out, &undo).unwrap(), text);
-        // A line added above since the wall read it leaves the twins as near: no guess.
-        let moved = format!("x\n{text}");
-        assert_eq!(remove(&moved, "- 📋 a", Some(3)).unwrap_err(), GONE);
-        // One copy only: found wherever it moved.
-        let (out, _) = remove("x\ny\n- 📋 b\n", "- 📋 b", Some(0)).unwrap();
-        assert_eq!(out, "x\ny\n");
-    }
-
-    #[test]
-    fn done_never_takes_the_first_line_of_a_longer_item() {
-        let text = "- 📋 Call Bob\n  - details A\n- 📋 Call Bob\n";
-        let (out, _) = remove(text, "- 📋 Call Bob", Some(2)).unwrap();
-        assert_eq!(out, "- 📋 Call Bob\n  - details A\n");
-        // The longer item has the line asked for: it is not this block, so nothing goes.
-        assert_eq!(remove(text, "- 📋 Call Bob", Some(0)).unwrap_err(), GONE);
-        // A lazy continuation line is the item's too.
-        assert_eq!(
-            remove("- 📋 a\nmore of a\n- 📋 b\n", "- 📋 a", Some(0)).unwrap_err(),
-            GONE
-        );
-        // Two twins as far from the line asked for: no guess.
-        assert_eq!(
-            remove("- 📋 a\n- 📋 x\n- 📋 a\n", "- 📋 a", Some(1)).unwrap_err(),
-            GONE
-        );
-        // What ends an item: a blank line, a sibling, a heading, the end of the file.
-        for after in ["\n", "- 📋 b\n", "## H\n", ""] {
-            let t = format!("- 📋 a\n{after}");
-            assert!(remove(&t, "- 📋 a", Some(0)).is_ok(), "{t:?}");
-        }
-    }
-
-    #[test]
-    fn a_lone_carriage_return_ends_a_line_as_it_does_for_the_wall() {
-        let text = "- 📋 a\rb\n- 📋 c\n- 📋 d\n";
-        let (out, undo) = remove(text, "- 📋 c", Some(2)).unwrap();
-        assert_eq!(out, "- 📋 a\rb\n- 📋 d\n");
-        assert_eq!(restore(&out, &undo).unwrap(), text);
-        let (out, _) = remove(text, "- 📋 a\nb", Some(0)).unwrap();
-        assert_eq!(out, "- 📋 c\n- 📋 d\n");
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("OURS"));
     }
 
     #[test]
@@ -611,9 +661,9 @@ mod tests {
         let dir = Scratch::new("needs-text");
         let path = dir.0.join("needs-you.md");
         std::fs::write(&path, FILE).unwrap();
-        let done = mark_done(&path, "- 📋 **One:** first", Some(3)).unwrap();
-        assert_eq!(done.text, std::fs::read_to_string(&path).unwrap());
-        assert_eq!(undo_done(&path, &done.undo).unwrap(), FILE);
+        let d = mark_done(&path, FILE, "- 📋 **One:** first", 3).unwrap();
+        assert_eq!(d.text, std::fs::read_to_string(&path).unwrap());
+        assert_eq!(undo_done(&path, &d.undo).unwrap(), FILE);
     }
 
     #[cfg(unix)]
@@ -624,9 +674,11 @@ mod tests {
         let path = dir.0.join("needs-you.md");
         std::fs::write(&path, FILE).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        mark_done(&path, "- 📋 **One:** first", Some(3)).unwrap();
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        mark_done(&path, FILE, "- 📋 **One:** first", 3).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[cfg(unix)]
@@ -637,7 +689,7 @@ mod tests {
         std::fs::write(&real, FILE).unwrap();
         let path = dir.0.join("needs-you.md");
         std::os::unix::fs::symlink(&real, &path).unwrap();
-        assert!(mark_done(&path, "- 📋 **One:** first", None)
+        assert!(mark_done(&path, FILE, "- 📋 **One:** first", 3)
             .unwrap_err()
             .contains("not a regular file"));
         assert_eq!(std::fs::read_to_string(&real).unwrap(), FILE);

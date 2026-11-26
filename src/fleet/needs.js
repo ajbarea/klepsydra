@@ -72,7 +72,7 @@ export function itemParts(li) {
   }
   const lead = unmarked(kids);
   const head = lead.find((k) => !(typeof k === "string" && !k.trim()));
-  if (isEl(head) && head.tag === "strong") {
+  if (head && isEl(head) && head.tag === "strong") {
     const detail = lead.slice(lead.indexOf(head) + 1);
     if (typeof detail[0] === "string") {
       detail[0] = detail[0].replace(/^\s*[:.]?\s*/, "");
@@ -108,9 +108,10 @@ const DATES = [
   [/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g, (m) => [Number(m[2]), Number(m[3]), Number(m[1])]],
   // After a weekday, any month-day: "Mon 1-4".
   [/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?,?\s+(\d{1,2})-(\d{1,2})(?![\d-]|:\d)/g, (m) => [Number(m[1]), Number(m[2]), null]],
-  // Alone, a two-digit day ("11-26", "1-05"), so a count range ("2-3 paragraphs") is no date;
-  // not a time range (9:30-10:00), a number range (1.5-2), an issue (#12-3) or a range of units.
-  [new RegExp(String.raw`(?<![\d#.-]|\d:)(\d{1,2})-(\d{2})(?![\d-]|:\d|${UNIT})`, "g"), (m) => [Number(m[1]), Number(m[2]), null]],
+  // Alone, two digits each ("11-26", "01-05"), so a count range ("2-3 paragraphs", "rounds 1-10") is
+  // no date; not glued to a word (r1-10), a time range (9:30-10:00), a number range (1.5-2), an
+  // issue (#12-3) or a range of units.
+  [new RegExp(String.raw`(?<![\w#.-]|\d:)(\d{2})-(\d{2})(?![\d-]|:\d|${UNIT})`, "g"), (m) => [Number(m[1]), Number(m[2]), null]],
   // A month's name or its short form, capitalised: "Dec 6", "Sept. 9"; not "Decide 3" or "may 2".
   [
     /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b\.?\s+(\d{1,2})(?![\d:])/g,

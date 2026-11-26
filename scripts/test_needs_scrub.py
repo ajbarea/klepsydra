@@ -25,6 +25,7 @@ SECRET = [
     "Ångström",
     "Müller",
     "privatething",
+    "Seventhlevel",
     "ajbarea",
     "secretrepo",
 ]
@@ -35,6 +36,7 @@ FILE = """# Needs you: Reznik's list
   - 📋 nested step for Zoë at https://example.org/privatething
 ### Ångström subgroup
 #### Müller deep heading
+####### Seventhlevel words
 1. ⏸ numbered item 2026-12-01
 """
 
@@ -63,7 +65,7 @@ def main():
     )
     check(
         "headings keep their level",
-        [ln.split(" ")[0] for ln in out.split("\n") if ln.startswith("#")]
+        [ln.split(" ")[0] for ln in out.split("\n") if re.match(r"#{1,6} ", ln)]
         == ["#", "##", "###", "####"],
         out,
     )

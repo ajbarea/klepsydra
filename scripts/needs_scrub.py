@@ -46,7 +46,7 @@ def scrub(text, seed=386):
         text,
     )
     text = DATE.sub(hold, text)
-    text = re.sub(r"^#+ .*$", lambda m: hold(m), text, flags=re.M)
+    text = re.sub(r"^#{1,6} .*$", lambda m: hold(m), text, flags=re.M)
     text = re.sub(r"^\s*\d+[.)](?=\s)", lambda m: hold(m), text, flags=re.M)
 
     def word(m):

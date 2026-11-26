@@ -788,8 +788,24 @@ pub fn open_link(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         use windows::core::{w, HSTRING, PCWSTR};
+        use windows::Win32::System::Com::{
+            CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        };
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        /// Balances a CoInitializeEx that succeeded on this thread.
+        struct Com;
+        impl Drop for Com {
+            fn drop(&mut self) {
+                unsafe { CoUninitialize() };
+            }
+        }
+        // ShellExecute's remarks: some shell extensions need a single-threaded apartment.
+        // A pool thread already in another apartment keeps it (the call then fails and is not balanced).
+        let _com =
+            unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }
+                .is_ok()
+                .then_some(Com);
         let file = HSTRING::from(url);
         // SAFETY: both strings outlive the call; no window, parameters or folder.
         let code = unsafe {

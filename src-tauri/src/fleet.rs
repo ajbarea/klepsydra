@@ -543,17 +543,19 @@ fn needs_file(app: &AppHandle) -> Result<PathBuf, String> {
     needs_source(app).0
 }
 
-/// Mark a Needs you item done from the wall: `block` is the item's lines as
-/// the wall read them, starting at `line`; they leave the file. Returns what
-/// Undo needs and the file as written.
+/// Mark a Needs you item done from the wall: `block` is the item's lines,
+/// starting at `line` of `seen`, the file as the wall rendered it; they leave
+/// the file only while it is still `seen`. Returns what Undo needs and the
+/// file as written.
 #[tauri::command]
 pub async fn needs_done(
     app: AppHandle,
+    seen: String,
     block: String,
-    line: Option<usize>,
+    line: usize,
 ) -> Result<needs::Done, String> {
     let path = needs_file(&app)?;
-    tauri::async_runtime::spawn_blocking(move || needs::mark_done(&path, &block, line))
+    tauri::async_runtime::spawn_blocking(move || needs::mark_done(&path, &seen, &block, line))
         .await
         .map_err(|e| format!("Could not save the Needs you file: {e}"))?
 }

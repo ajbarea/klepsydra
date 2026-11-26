@@ -64,13 +64,11 @@ window.__TAURI__ = { core: {
     if (cmd === 'new_session_prefs') return Promise.resolve({ default: null, last: null });
     window.__calls.push([cmd, JSON.parse(JSON.stringify(args ?? null))]);
     if (cmd === 'needs_done') {
-      // needs.rs locate: the copy at the line asked for, else the nearest; never a tie.
+      // needs.rs remove: only while the file is the text the wall rendered, exactly the lines at `line`.
+      if (args.seen !== window.__needsText) return Promise.reject('The Needs you file changed since the wall showed it.');
       const have = lines(window.__needsText), want = lines(args.block);
-      const found = have.map((_, i) => i).filter((i) => want.every((w, j) => have[i + j] === w));
-      const d = (i) => Math.abs(i - (args.line ?? 0));
-      found.sort((a, b) => d(a) - d(b));
-      const at = found[0];
-      if (at === undefined || (found[1] !== undefined && d(found[1]) === d(at)) || !/^\\s*([-*+]|\\d+[.)])\\s/.test(want[0])) return Promise.reject('That item is no longer in the Needs you file as shown.');
+      if (!want.every((w, j) => have[args.line + j] === w) || !/^\\s*([-*+]|\\d+[.)])(\\s|$)/.test(want[0])) return Promise.reject('That item is not in the Needs you file where the wall showed it.');
+      const at = args.line;
       have.splice(at, want.length);
       window.__needsText = have.join('\\n');
       follow();
@@ -248,7 +246,7 @@ def flow_b(run, page, needs):
     s = state(page)
     done = [a for c, a in s["calls"] if c == "needs_done"]
     at = needs.split("\n").index(first_item.split("\n")[0])
-    run.check(done == [{"block": first_item, "line": at}], f"{tag}: E sends the item's exact lines and where they start", done)
+    run.check(done == [{"seen": needs, "block": first_item, "line": at}], f"{tag}: E sends the item's exact lines, where they start and the file it read", done)
     run.check(int(s["pill"]) == before - 1 and s["rows"] == before - 1, f"{tag}: the count ticks down and the row leaves", [s["pill"], s["rows"]])
     text = page.evaluate("window.__needsText")
     run.check(first_item not in text, f"{tag}: the file no longer holds the item", None)
@@ -296,6 +294,15 @@ def flow_b(run, page, needs):
     gone = [i for i, ln in enumerate(lines_before) if ln == twin]
     run.check(after.count(twin) == 1 and after.index(twin) == gone[0], f"{tag}: Done on the second twin removes the second", gone)
     run.check(page.locator(".ny-item", has_text="same words").count() == 1, f"{tag}: the twin left stays in view", page.locator(".ny-item", has_text="same words").count())
+    page.evaluate("(t) => { window.__needsText = t; window.__republish(); }", needs)
+    page.wait_for_timeout(200)
+    # An agent's edit the wall has not shown yet: Done writes nothing and says why.
+    edited = "- 📋 **Agent:** added a moment ago\n" + needs
+    page.evaluate("(t) => { window.__needsText = t; }", edited)
+    page.locator(".ny-item .ny-done").first.click()
+    page.wait_for_timeout(300)
+    s = state(page)
+    run.check(page.evaluate("window.__needsText") == edited and s["toast"] and "changed since" in s["toast"], f"{tag}: Done on a file changed since it was shown writes nothing and says so", s["toast"])
     page.evaluate("(t) => { window.__needsText = t; window.__republish(); }", needs)
     page.wait_for_timeout(200)
     # N, A and Esc do nothing behind a dialog.
