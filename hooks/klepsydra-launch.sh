@@ -51,10 +51,91 @@ COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .git
 AGY_ASK=${KLEPSYDRA_AGY_ASK:-30} # seconds for one agy listing; a launch asks with less
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
-LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-launch-$UID.lock
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
+# The folder for the locks and stamps every caller must share: one per host and
+# boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
+# used only while it and the folder above it are ours, not symlinks and the
+# folder above it is writable by no one else. Sets LOCK_DIR, or empties it,
+# says why in LOCK_WHY and fails; never waits, never prints. Not
+# XDG_RUNTIME_DIR: a WSL boot sets it before logind makes it, and the overlay's
+# shells may lack it, so callers would split between two locks (#517). Making
+# this boot's folder removes this host's folders last changed before this boot
+# began (btime), which only ended boots can be. Another host's are untouched
+# while hostnames differ (same-name hosts on one shared HOME still prune each
+# other). An unusable hostname never prunes, so run-_-* accumulates one small
+# folder per boot. The host is the kernel's hostname, so renaming a host
+# mid-boot moves its lock.
+lock_why() { # PATH [w]: fails with LOCK_WHY set when PATH is no folder of ours (w: or not writable)
+  local mode
+  if [[ -L $1 ]]; then LOCK_WHY="$1 is a symlink"
+  elif [[ ! -e $1 ]]; then LOCK_WHY="$1 is missing"
+  elif [[ ! -d $1 ]]; then LOCK_WHY="$1 is not a folder"
+  elif [[ ! -O $1 ]]; then LOCK_WHY="$1 belongs to another user"
+  elif [[ -n ${2:-} && ! -w $1 ]]; then
+    mode=$(stat -c %A -- "$1" 2>/dev/null)
+    if [[ ${mode:2:1} == w ]]; then LOCK_WHY="$1 cannot be written (a read-only file system, or locked)"
+    else LOCK_WHY="$1 is not writable (mode ${mode:-unknown})"; fi
+  else return 0; fi
+  return 1
+}
+# shellcheck disable=SC2034 # LOCK_WHY is for the caller
+lock_dir() {
+  local base=${KLEPSYDRA_STATE:-} given boot="" host="" run old name mode key val btime="" m err prune=1
+  LOCK_DIR="" LOCK_WHY=""
+  if [[ -z $base ]]; then
+    if [[ -n ${HOME:-} ]]; then base=$HOME
+    else local HOME; unset HOME; base=~; fi # bash reads the password file's home
+    base=$base/.local/state/klepsydra
+  fi
+  given=$base
+  while [[ $base == */ ]]; do base=${base%/}; done
+  if [[ $base != /* ]]; then
+    if [[ $given == /* ]]; then LOCK_WHY="the state folder cannot be /"
+    else LOCK_WHY="the state folder '$given' is not an absolute path"; fi
+    return 1
+  fi
+  # builtin reads: no process
+  { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null
+  [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown prune=0
+  { read -r host <"${KLEPSYDRA_HOSTNAME:-/proc/sys/kernel/hostname}"; } 2>/dev/null
+  [[ ${#host} -le 253 && $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || host=_ prune=0 # no hostname has a _, so no host's prune reaches it
+  run=$base/run-$host-$boot
+  if [[ ! -e $run && ! -L $run ]]; then
+    if [[ ! -e $base && ! -L $base ]]; then
+      if ! err=$({ mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>&1); then
+        if [[ ! -e $base && ! -L $base ]]; then # not another caller's mkdir winning
+          LOCK_WHY="cannot make $base${err:+: ${err##*: }}"; return 1
+        fi
+      fi
+    fi
+    lock_why "$base" || return 1
+    mode=$(stat -c %a -- "$base" 2>/dev/null) # once a boot: others could plant links
+    if [[ ! $mode =~ ^[0-7]{3,4}$ ]] || (( (8#$mode & 8#022) != 0 )); then
+      LOCK_WHY="$base is writable by its group or others (mode ${mode:-unknown})"; return 1
+    fi
+    if err=$(mkdir -m 700 -- "$run" 2>&1); then
+      if (( prune )); then
+        while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done 2>/dev/null </proc/stat
+        for old in "$base/run-$host-"*; do
+          name=${old##*/}; name=${name#"run-$host-"}
+          [[ $btime =~ ^[0-9]+$ && $name =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ &&
+            $old != "$run" && -d $old && ! -L $old ]] || continue
+          m=$(stat -c %Y -- "$old" 2>/dev/null) && [[ $m =~ ^[0-9]+$ ]] && (( m < btime )) && rm -rf -- "${old:?}" 2>/dev/null
+        done
+      fi
+    elif [[ ! -e $run && ! -L $run ]]; then # not another caller's mkdir winning
+      LOCK_WHY="cannot make $run${err:+: ${err##*: }}"; return 1
+    fi
+  fi
+  lock_why "$base" && lock_why "$run" w || return 1
+  LOCK_DIR=$run
+}
+# --- end lock dir ---
+lock_dir
+LOCK=${LOCK_DIR:+$LOCK_DIR/klepsydra-launch-$UID.lock}
 PROC_ROOT=${KLEPSYDRA_PROC:-/proc} # tests point this at a fake /proc
 # A tab opened but not yet attached: "EPOCH KEY", KEY its socket args and target.
-PENDING=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-tab-pending-$UID
+PENDING=${LOCK_DIR:+$LOCK_DIR/klepsydra-tab-pending-$UID}
 PENDING_FOR=30
 # A socket path safe to hand wt.exe, which splits its arguments at ";".
 SOCKET_RE='^/[A-Za-z0-9._/-]{1,255}$'
@@ -72,10 +153,19 @@ need() { command -v "$1" >/dev/null 2>&1 || fail "$2"; }
 
 has_client() { [[ -n $(tmux "${@:2}" list-clients -t "$1" -F x 2>/dev/null) ]]; } # target socket-args...
 
+# Stop when lock_dir found no folder of ours to lock in, saying why.
+no_lock_dir() { # [what the click did already] [what it then did not]
+  [[ -n $LOCK_DIR ]] && return 0
+  fail "${1:+$1, but }klepsydra has no lock folder (${LOCK_WHY:-reason unknown}), so ${2:-this click went no further}."
+}
+
 # Serialise launches: one tab per fleet even for back-to-back clicks.
 take_lock() { # [what to say when another holds it for 10 s]
+  no_lock_dir
   { exec {LOCKFD}>>"$LOCK"; } 2>/dev/null || fail "Could not open $LOCK."
-  flock -w 10 "$LOCKFD" || fail "${1:-Another launch is still running.}"
+  local wait=${KLEPSYDRA_LOCK_WAIT:-10}
+  [[ $wait =~ ^[0-9]{1,3}(\.[0-9]{1,3})?$ ]] || wait=10
+  flock -w "$wait" "$LOCKFD" || fail "${1:-Another launch is still running.}"
 }
 
 # Whether this is WSL (a Windows Terminal tab) rather than a native Linux desktop.
@@ -130,9 +220,9 @@ tab_preflight() {
 # Set for the fleet's own tab: its title is fixed, so Jump can find it.
 TITLE_ARGS=()
 
-# Whether the stamp is ours to use: only our own regular file counts, since in
-# the /tmp fallback another user could plant one, or a FIFO that would block
-# its read under the lock. Anything else there is removed when it is ours.
+# Whether the stamp is ours to use: only our own regular file counts, since a
+# FIFO or a link left there would block its read under the lock. Anything else
+# there is removed when it is ours.
 stamp_usable() {
   [[ -f $PENDING && -O $PENDING && ! -L $PENDING ]] && return 0
   [[ -e $PENDING || -L $PENDING ]] && rm -f -- "$PENDING" 2>/dev/null
@@ -643,6 +733,7 @@ jump() { # socket pane pid start
     printf "Selected the session's tmux window.\n"
     return 0
   fi
+  no_lock_dir "Selected the session's tmux window" "no terminal tab opened for it"
   take_lock "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
   if ! has_client "=$session" "${t[@]}"; then
     tab_preflight
@@ -680,12 +771,13 @@ leave_modes() {
 # just have finished.
 own_pane() { # socket pane pid start
   fleet_pane "$@"
-  local file=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-pane-$UID-${pane#%}.lock
+  no_lock_dir
+  local file=$LOCK_DIR/klepsydra-pane-$UID-${pane#%}.lock
   { exec {PANEFD}>>"$file"; } 2>/dev/null || fail "Could not open $file."
   flock -n "$PANEFD" || fail "$busy"
   # The fleet's typing lock too (fleet/lib.sh pane_locked, #325), so these keys
   # never land inside a message a fleet script is typing. Its folder is under
-  # HOME, which every caller shares; XDG_RUNTIME_DIR may differ between them.
+  # HOME, which every caller shares, as lock_dir's is.
   local typing=${FLEET_STATE:-$HOME/.local/state/fleet-orchestrator}/locks
   if [[ -d $typing ]]; then
     { exec {TYPEFD}>>"$typing/send-${pane#%}"; } 2>/dev/null || fail "Could not open $typing/send-${pane#%}."

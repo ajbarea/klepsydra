@@ -17,6 +17,10 @@ export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 # Never AJ's keryx: the resume service skips voices, and voices.sh finds no keryx
 # and reads a private keryx config, unless a case hands it a stub (#273).
 export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_BROWSERS=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
+# The hooks' lock folder is the suite's, and recover waits for no real user
+# manager unless a case says so (#517).
+printf 'testhost\n' >"$work/hostname"
+export KLEPSYDRA_STATE="$work/klepsydra-state" KLEPSYDRA_HOSTNAME="$work/hostname" FLEET_SYSTEMD_BOOTED="$work/no-systemd"
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 # A copy as it was, so a change can be told apart from a toggle (#516).
@@ -1469,6 +1473,29 @@ check "#263: the resume loop line says what its last pass saw" "$(doctor | grep 
 printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "#244: a hook copy older than the checkout fails, and only it is named" \
   "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
+cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
+# #518: the lock folder, from the installed hook's own block.
+lkrun="$KLEPSYDRA_STATE/run-testhost-$(</proc/sys/kernel/random/boot_id)"
+check "#518: a lock folder the hooks can use is ok, and named" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"
+ln -s "$KLEPSYDRA_STATE" "$work/lk-link"
+check "#518: one they cannot use fails with the reason" "$(KLEPSYDRA_STATE="$work/lk-link" doctor | grep 'lock folder' | cut -d: -f1-2)" \
+  "FAIL lock folder: $(tilde "$work/lk-link") is a symlink"
+rm -f -- "$work/lk-link"
+lknow=$(date +%s)
+printf 'btime %s\n' $((lknow - 600)) >"$work/dproc/stat"
+printf '%s %s\n' $((lknow - 60)) "cannot make x: No space left on device" >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: a refusal the hook traced in the last hour is a warning, with its reason" \
+  "$(doctor | grep 'lock folder' | grep -c '^warn lock folder: the fleet hook could not lock at [0-9:]* (cannot make x: No space left on device), so it recorded no session then; it can now')" "1"
+printf '%s old\n' $((lknow - 900)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: one from before this boot is not" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+printf 'btime %s\n' $((lknow - 7200)) >"$work/dproc/stat"
+printf '%s old\n' $((lknow - 3700)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: nor one over an hour old" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+printf '%s future\n' $((lknow + 600)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: nor one stamped in the future" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+rm -f -- "$KLEPSYDRA_DIR/lock-refused" "$work/dproc/stat"
+printf '#!/usr/bin/env bash\n# an old hook with no lock folder of its own\n' >"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
+check "#518: an installed hook with no lock_dir is checked with the checkout's" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"
 cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "the phone wall and its Tailscale twin answer" "$(grep -c '^ok   phone wall.*: answers at ' <<<"$out")" "2"
 check "#246: and the usage readings are fresh" "$(grep -c '^ok   usage readings: observed 3[0-9] s ago' <<<"$out")" "1"
@@ -4613,6 +4640,21 @@ flock "$FLEET_STATE/.recover.lock" sleep 3 &
 sleep 0.3
 check "a second run while one holds the lock refuses" "$(bash "$here/recover.sh" --no-orchestrator 2>&1; echo "rc=$?")" $'error: another fleet recover is running\nrc=1'
 wait
+# At a boot the wait for the runtime folder runs under the lock (#517), so a
+# second run is refused at once, not after the wait.
+XDG_RUNTIME_DIR="$work/rec-not-yet" FLEET_RUNTIME_WAIT=10 FLEET_RUNTIME_TICK=0.1 LAUNCH=/bin/false \
+  bash "$here/recover.sh" --no-orchestrator >/dev/null 2>"$work/rec-wait.err" &
+rw=$!
+for _ in $(seq 100); do grep -q 'waiting for the runtime folder' "$work/rec-wait.err" && break; sleep 0.1; done
+s=$EPOCHREALTIME
+out=$(XDG_RUNTIME_DIR="$work/rec-not-yet" FLEET_RUNTIME_WAIT=10 LAUNCH=/bin/false bash "$here/recover.sh" --no-orchestrator 2>&1; echo "rc=$?")
+e=$EPOCHREALTIME
+check "#517: a second run while one waits for the runtime folder is refused at once" \
+  "$out|$(( (${e/./} - ${s/./}) < 2000000 ))" $'error: another fleet recover is running\nrc=1|1'
+mkdir -m 700 "$work/rec-not-yet"
+wait "$rw"
+check "#517: and the first goes on once the folder comes, after one log line" \
+  "$(grep -c 'waiting for the runtime folder' "$work/rec-wait.err") $(grep -c 'did not appear' "$work/rec-wait.err")" "1 0"
 rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session"; : >"$REGISTRY"; unset FLEET_BOOT_ID FLEET_PROC FLEET_PROJECTS
 
 echo "the orchestrator's identity across /clear and tmux restarts (#173 review)"
@@ -5438,6 +5480,70 @@ check "every line is one JSON object with ts, level, target and message" \
 FLEET_LOG_MAX=200 FLEET_TARGET=fleet::test bash -c ". '$here/lib.sh'; for i in 1 2 3 4 5 6 7 8; do flog INFO line\$i; done"
 check "past its cap the log is renamed, and only the newest four are kept" \
   "$(find "${FLEET_LOG%/*}" -name 'fleet_*.log' | wc -l)" "4"
+
+echo "wait_runtime_dir: recover's wait for the boot's runtime folder (#517)"
+# wr VAR=value...: "rc|stderr lines joined by ;|now (under 0.9 s), 1-3s or slow"
+wr() {
+  local s e rc
+  s=$EPOCHREALTIME
+  # shellcheck disable=SC2016 # the inner shell expands its own $1
+  env "$@" bash -c '. "$1"; wait_runtime_dir' _ "$here/lib.sh" 2>"$work/wr.err"; rc=$?
+  e=$EPOCHREALTIME
+  local us=$(( ${e/./} - ${s/./} )) took=slow
+  if (( us < 900000 )); then took=now; elif (( us >= 1000000 && us < 3000000 )); then took=1-3s; fi
+  printf '%s|%s|%s' "$rc" "$(sed -E 's/^[^ ]+ [^ ]+ //' "$work/wr.err" | paste -sd';')" "$took"
+}
+mkdir -m 700 "$work/wr-own"
+check "#517: unset XDG_RUNTIME_DIR: nothing to wait for" "$(wr -u XDG_RUNTIME_DIR)" "0||now"
+check "#517: a folder of ours: no wait, no line" "$(wr XDG_RUNTIME_DIR="$work/wr-own/")" "0||now"
+( sleep 0.4; mkdir -m 700 "$work/wr-late" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-late" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517: a folder made while it waits: one line, then on" "${out%|*}" "0|INFO waiting for the runtime folder before launching dir=$work/wr-late timeout_s=5"
+check "#517: as soon as it comes" "${out##*|}" "now"
+out=$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1)
+check "#517: never made: gives up at its timeout with a warning" "$out" \
+  "1|INFO waiting for the runtime folder before launching dir=$work/wr-never timeout_s=1;WARN the runtime folder did not appear; launching anyway dir=$work/wr-never timeout_s=1|1-3s"
+check "#517: FLEET_RUNTIME_WAIT=0 gives up at once" "$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=0)" \
+  "1|WARN the runtime folder did not appear; launching anyway dir=$work/wr-never timeout_s=0|now"
+# Waiting cannot make a folder ours: warned at once, whatever the timeout.
+check "#517 N4: a foreign folder is no runtime folder, and no wait" "$(wr XDG_RUNTIME_DIR=/usr FLEET_RUNTIME_WAIT=5)" \
+  "1|WARN the runtime folder is not this user's own; launching anyway dir=/usr|now"
+( sleep 0.3; ln -s "$work/wr-own" "$work/wr-late-link" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-late-link" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517 N4: one that comes as a symlink ends the wait at once, warned" "${out#*;}" \
+  "WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-late-link|now"
+ln -s "$work/wr-own" "$work/wr-link"
+# Where systemd booted, the user manager's socket ends the wait, not the folder.
+mkdir -p "$work/wr-sd" "$work/wr-own/systemd"
+( sleep 0.4; python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$work/wr-own/systemd/private" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_SYSTEMD_BOOTED="$work/wr-sd" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517 review: with systemd, the folder alone is not enough: waits for the user manager" "$out" \
+  "0|INFO waiting for the runtime folder before launching dir=$work/wr-own timeout_s=5 user_manager=$work/wr-own/systemd/private|now"
+rm -f -- "$work/wr-own/systemd/private"
+check "#517 review: and a user manager that never starts is warned about at the timeout" \
+  "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_SYSTEMD_BOOTED="$work/wr-sd" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1)" \
+  "1|INFO waiting for the runtime folder before launching dir=$work/wr-own timeout_s=1 user_manager=$work/wr-own/systemd/private;WARN the user manager did not start; launching anyway dir=$work/wr-own timeout_s=1|1-3s"
+rm -rf -- "${work:?}/wr-own/systemd" "${work:?}/wr-sd"
+check "#517 N4: nor a symlink, even to a folder of ours" "$(wr XDG_RUNTIME_DIR="$work/wr-link" FLEET_RUNTIME_WAIT=5)" \
+  "1|WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-link|now"
+for v in abc 1.5 -3 1234567; do
+  check "#517 N1: FLEET_RUNTIME_WAIT=$v is warned about and taken as 180" "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_RUNTIME_WAIT="$v")" \
+    "0|WARN FLEET_RUNTIME_WAIT is not a whole number of seconds; waiting 180 value=$v|now"
+done
+check "#517 N1: a leading zero is still seconds" "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_RUNTIME_WAIT=08)" "0||now"
+# #518 N2: the wait runs on the time since boot (/proc/uptime), which a WSL
+# clock step does not move: uptime jumping 200 s ends a 5 s wait at once.
+printf '1000.00 5.00\n' >"$work/wr-uptime"
+( sleep 0.3; printf '1200.00 5.00\n' >"$work/wr-uptime" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1 FLEET_UPTIME="$work/wr-uptime")
+wait
+check "#518 N2: the deadline is uptime's, not the wall clock's" "${out%%|*}|${out##*|}" "1|now"
+check "#518 N2: without /proc/uptime it counts its ticks, still to the timeout" \
+  "$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1 FLEET_UPTIME="$work/no-uptime" | sed 's/.*|//')" "1-3s"
+rm -rf -- "${work:?}/wr-own" "${work:?}/wr-late" "${work:?}/wr-link" "${work:?}/wr-late-link"
 
 echo "the suite's own isolation"
 check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""
