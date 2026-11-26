@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { asksCount, build, EMPTY, EMPTY_NEEDS, headerCount, parse, present, queueLabel, render, renderAsks, safeHref, sections, textOf, toTree } from "./fleet/queue.js";
+import { asksCount, build, EMPTY, parse, present, render, safeHref, sections, textOf, toTree } from "./fleet/queue.js";
 
 const FIXTURE = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import.meta.url), "utf8");
 
@@ -204,13 +204,6 @@ test("the Needs you count is its top-level items less the done ones, and null wi
   assert.equal(count("## Not needs you\n\n- a\n"), null);
 });
 
-test("the header label cannot be read as the sessions' needs-you tally", () => {
-  assert.equal(queueLabel(null), "Queue");
-  assert.equal(queueLabel(3), "Queue · 3 for you");
-  assert.equal(queueLabel(0), "Queue · 0 for you");
-  for (const n of [null, 0, 1, 9]) assert.doesNotMatch(queueLabel(n), /needs/i);
-});
-
 test("the renderer never writes markup, even from hostile text", () => {
   const hostile = "<script>x</script>\n\n[a](javascript:x) <img src=x onerror=y> <!-- c --> `<b>` ```\n<i>\n```\n";
   assert.doesNotThrow(() => dom(hostile));
@@ -234,7 +227,7 @@ test("a file at the size cap parses and renders quickly, and its cost grows line
 
 test("the docked width keeps to its bounds and leaves the cards room; no number is the default", async () => {
   globalThis.window ??= {};
-  const { clampWidth, WIDTH } = await import("./fleet/queuepanel.js");
+  const { clampWidth, WIDTH } = await import("./fleet/sidepanel.js");
   assert.equal(clampWidth(NaN, 1920), WIDTH.initial);
   assert.equal(clampWidth(Number(undefined), 1920), WIDTH.initial);
   assert.equal(clampWidth(Infinity, 1920), WIDTH.max);
@@ -312,20 +305,9 @@ test("many unclosed comments stay linear", { skip: NO_THREAD_CPU }, () => {
   assertLinear((n) => dom("<!--".repeat(n)), 4096);
 });
 
-test("the Queue label hides its words below exactly the dock breakpoint", () => {
-  const js = readFileSync(new URL("./fleet/queuepanel.js", import.meta.url), "utf8");
-  const side = readFileSync(new URL("./fleet/sidepanel.js", import.meta.url), "utf8");
-  const DOCK_MIN_PX = Number(side.match(/export const DOCK_MIN_PX = (\d+);/)?.[1]);
-  const css = readFileSync(new URL("./fleet/wall.css", import.meta.url), "utf8");
-  const m = css.match(/@media \(width < (\d+)px\) \{\s*#queue-open \.for-you \{/);
-  assert.ok(m, "the narrow rule for the label's words");
-  assert.equal(Number(m[1]), DOCK_MIN_PX);
-  assert.match(js, /more\.className = "for-you"/);
-});
-
 test("text sizes step as browsers zoom, stay in bounds, and read a stored value back safely", async () => {
   globalThis.window ??= {};
-  const { TEXT_SIZES, stepText, textKey, textSize } = await import("./fleet/queuepanel.js");
+  const { TEXT_SIZES, stepText, textKey, textSize } = await import("./fleet/sidepanel.js");
   assert.equal(TEXT_SIZES[0], 0.75);
   assert.equal(TEXT_SIZES.at(-1), 2);
   assert.ok(TEXT_SIZES.includes(1), "100% is a step, so reset lands on one");
@@ -352,7 +334,7 @@ test("text sizes step as browsers zoom, stay in bounds, and read a stored value 
 
 test("a drag snaps shut past half the panel's minimum and full past half the cards' minimum", async () => {
   globalThis.window ??= {};
-  const { snap, WIDTH, WALL_MIN, clampWidth } = await import("./fleet/queuepanel.js");
+  const { snap, WIDTH, WALL_MIN, clampWidth } = await import("./fleet/sidepanel.js");
   assert.equal(WALL_MIN, 700, "the room clampWidth leaves the cards");
   assert.equal(clampWidth(Infinity, 1920), Math.min(WIDTH.max, 1920 - WALL_MIN));
   const shutBelow = WIDTH.min / 2;
@@ -375,7 +357,7 @@ test("a drag snaps shut past half the panel's minimum and full past half the car
 
 test("the stored view reads back safely, an older build's open flag standing in for a missing one", async () => {
   globalThis.window ??= {};
-  const { parseView } = await import("./fleet/queuepanel.js");
+  const { parseView } = await import("./fleet/sidepanel.js");
   assert.equal(parseView("shut", null), "shut");
   assert.equal(parseView("docked", null), "docked");
   assert.equal(parseView("full", "0"), "full", "the view wins over the old flag");
@@ -390,7 +372,7 @@ test("the stored view reads back safely, an older build's open flag standing in 
 
 test("the separator's keys: arrows step, Home and End reach the bounds then snap past them, Enter shuts or restores", async () => {
   globalThis.window ??= {};
-  const { separatorKey, WIDTH } = await import("./fleet/queuepanel.js");
+  const { separatorKey, WIDTH } = await import("./fleet/sidepanel.js");
   const max = 900; // at 1920
   const k = (key, view, width) => separatorKey(key, view, width, max);
   assert.deepEqual(k("ArrowLeft", "docked", 480), { view: "docked", width: 480 + WIDTH.step });
@@ -413,31 +395,13 @@ test("the separator's keys: arrows step, Home and End reach the bounds then snap
   assert.equal(k("Enter", "shut", 480), null, "a shut panel's separator is hidden");
 });
 
-test("Ctrl+Alt+B toggles the panel, as VS Code's secondary side bar; nothing else does", async () => {
-  globalThis.window ??= {};
-  const { toggleKey } = await import("./fleet/queuepanel.js");
-  const key = (k, code, mods = {}) => toggleKey({ key: k, code, ctrlKey: true, altKey: true, metaKey: false, shiftKey: false, repeat: false, ...mods });
-  assert.equal(key("b", "KeyB"), true);
-  assert.equal(key("B", "KeyB"), true, "with Caps Lock");
-  assert.equal(key("b", "KeyN"), true, "Dvorak: the letter, not the place");
-  assert.equal(key("x", "KeyB"), false, "Dvorak's x sits where QWERTY's b is");
-  assert.equal(key("и", "KeyB"), true, "a non-Latin layout: its place, as browsers fall back");
-  assert.equal(key("{", "KeyB"), true, "AltGr+B typing a character: its place");
-  assert.equal(key("b", "KeyB", { repeat: true }), false, "a held key toggles once");
-  assert.equal(key("b", "KeyB", { altKey: false }), false, "Ctrl+B alone is not it");
-  assert.equal(key("b", "KeyB", { ctrlKey: false }), false);
-  assert.equal(key("b", "KeyB", { shiftKey: true }), false);
-  assert.equal(key("b", "KeyB", { metaKey: true }), false);
-  assert.equal(key("n", "KeyN"), false);
-});
-
 test("#276: the Needs you file counts its section's asks, else every top-level list's, less done", () => {
-  const asks = (text) => renderAsks(text).count;
+  const asks = (text) => asksCount(sections(toTree(parse(text)))) ?? 0;
   assert.equal(asks("# Needs you\n\nIntro.\n\n## Needs you\n- a\n- ✅ b\n- c\n\n## Later\n- d\n"), 2, "its section only");
   assert.equal(asks("- a\n- b\n  - nested\n- ✅ c\n\n1. d\n"), 3, "no section: every top-level list");
   assert.equal(asks("# Title\n\nNothing waiting.\n"), 0, "a file with no list asks nothing");
   assert.equal(asksCount([]), null);
-  assert.equal(asks(readFileSync(new URL("../scripts/fixtures/needs-demo.md", import.meta.url), "utf8")), 3, "the sample");
+  assert.equal(asks(readFileSync(new URL("../scripts/fixtures/needs-demo.md", import.meta.url), "utf8")), 7, "the sample");
 });
 
 test("#568: a Needs you file titled by its H1 counts the open items of every H2 section", () => {
@@ -450,47 +414,11 @@ test("#568: a Needs you file titled by its H1 counts the open items of every H2 
   );
   const open = real.split("\n").filter((l) => l.startsWith("- 📋")).length;
   assert.equal(open, 18);
-  assert.equal(renderAsks(real).count, open, "every open step, at any section");
-  assert.equal(headerCount(renderAsks(real).count, null), open, "the header shows it");
-  const asks = (text) => renderAsks(text).count;
+  const asks = (text) => asksCount(sections(toTree(parse(text)))) ?? 0;
+  assert.equal(asks(real), open, "every open step, at any section");
   assert.equal(asks("# Needs you\n\n## Today\n- a\n- ✅ b\n  - nested\n\n## Later\n1. c\n"), 2, "done and nested items are not asks");
   assert.equal(asks("# Needs you\n- top\n\n## Today\n- a\n"), 2, "a list above the first section counts too");
   assert.equal(asks("# Needs you\n\n## Today\nNothing today.\n"), 0, "sections with no list ask nothing");
   assert.equal(asksCount(sections(toTree(parse("# Needs you\n\n## Today\nNothing today.\n")))), null, "no list anywhere: no count");
 });
 
-test("#276: the header counts the Needs you file's asks, else the queue file's own section", () => {
-  assert.equal(headerCount(2, 5), 2);
-  assert.equal(headerCount(0, 5), 0, "none for you is a count, not a fallback");
-  assert.equal(headerCount(null, 5), 5, "no Needs you file shown: one file held both");
-  assert.equal(headerCount(undefined, null), null);
-  assert.equal(queueLabel(headerCount(null, null)), "Queue");
-});
-
-test("#276: the Needs you list names its own file in its empty and fault lines", () => {
-  const doc = { createElement: () => ({ append() {}, setAttribute() {}, addEventListener() {}, dataset: {} }), createTextNode: (t) => t };
-  const opt = { empty: EMPTY_NEEDS, what: "Needs you file" };
-  const missing = present({ path: "/n.md", text: null, problem: "No Needs you file at this path.", missing: true }, () => undefined, doc, () => {}, renderAsks, opt);
-  assert.deepEqual([missing.problem, missing.empty], [EMPTY_NEEDS, true]);
-  const boom = () => {
-    throw new Error("x");
-  };
-  assert.equal(present({ path: "/n.md", text: "a", problem: null }, () => undefined, doc, () => {}, boom, opt).problem, "The Needs you file could not be shown: x");
-  assert.equal(present({ path: "/q.md", text: "a", problem: null }, () => undefined, doc, () => {}, boom).problem, "The queue file could not be shown: x", "the queue's line unchanged");
-});
-
-test("#276: the split between the lists keeps both in view and moves by the APG splitter keys", async () => {
-  const { SPLIT, clampShare, splitKey } = await import("./fleet/queuepanel.js");
-  assert.ok(SPLIT.min > 0 && SPLIT.max < 100 && SPLIT.min < SPLIT.start && SPLIT.start < SPLIT.max, "neither list can close");
-  assert.equal(clampShare(NaN), SPLIT.start, "a stored value that is no number");
-  assert.equal(clampShare(-20), SPLIT.min);
-  assert.equal(clampShare(140), SPLIT.max);
-  assert.equal(clampShare(42.4), 42);
-  assert.equal(splitKey("ArrowDown", 40), 40 + SPLIT.step);
-  assert.equal(splitKey("ArrowUp", 40), 40 - SPLIT.step);
-  assert.equal(splitKey("PageDown", 40), 40 + SPLIT.page);
-  assert.equal(splitKey("ArrowUp", SPLIT.min), SPLIT.min, "held at the bound");
-  assert.equal(splitKey("Home", 50), SPLIT.min);
-  assert.equal(splitKey("End", 50), SPLIT.max);
-  for (const k of ["ArrowLeft", "Enter", "a", "Tab"]) assert.equal(splitKey(k, 40), null, k);
-});

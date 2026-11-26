@@ -1,932 +1,720 @@
-// Rooms: Needs you and Agents as two experiences, three layouts (#386).
-// Replaces the stacked drawer with dedicated rooms:
-// Layout B: "Two rooms" (chair's pick, default)
-// Layout D: "Inbox and Floor" (vote winner)
-// Layout E: "Amber Door" (right panel over dimmed wall)
-
-import { asksCount, parse, toTree, sections } from "./queue.js";
+// Needs you and Agents as two experiences (#386), in three layouts the
+// settings pick: B "Two rooms" (default), D "Inbox and Floor" and E "Amber
+// Door". One model drives every number (needs.js); every word from the
+// Needs you file or a session goes in as text (queue.js build), and links
+// open only through the app's checked command.
+import { build } from "./queue.js";
+import { dueLabel, dueNow, isTodaySection, needsModel } from "./needs.js";
+import { press, say, setOff, syncChildren } from "./dom.js";
+import { startedNeeding } from "./model.js";
 
 export const LAYOUTS = ["B", "D", "E"];
 export const DEFAULT_LAYOUT = "B";
+export const LAYOUT_NAMES = { B: "Two rooms", D: "Inbox and Floor", E: "Amber Door" };
+/** A saved layout, else the default. */
+export const parseLayout = (v) => (LAYOUTS.includes(v) ? v : DEFAULT_LAYOUT);
 
-/** Parse saved layout preference; default to B. */
-export function parseLayout(val) {
-  return LAYOUTS.includes(val) ? val : DEFAULT_LAYOUT;
-}
+/** How long Undo stays after Done, and a jump toast after a block or finish. */
+export const UNDO_MS = 6000;
+export const JUMP_MS = 8000;
 
-const DONE_PREFIX = "✅";
-const PENDING_PREFIX = "📋";
-
-/**
- * Extract links from a markdown string: [label](url).
- * Returns array of { label, url, kind }.
- */
-export function extractLinks(text) {
-  if (!text) return [];
-  const links = [];
-  const re = /\[([^\]]+)\]\(([^)]+)\)/g;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const label = m[1].trim();
-    const url = m[2].trim();
-    let kind = "web";
-    if (/\.(md|txt|rs|js|json|toml|py|sh|pdf)$/i.test(url) || url.startsWith("file://") || url.startsWith("~/")) kind = "file";
-    else if (/\/$/.test(url) || url.includes("folder")) kind = "folder";
-    else if (/#\d+/.test(label) || url.includes("/pull/")) kind = "pr";
-    else if (/issues\/\d+/.test(url)) kind = "issue";
-    links.push({ label, url, kind });
-  }
-  return links;
-}
+/** Blocked on you: a question waits, or it stopped on an error. */
+const BLOCKED = new Set(["needs_you", "error"]);
+const LANES = {
+  B: [
+    ["blocked", "Blocked", (s) => BLOCKED.has(s)],
+    ["working", "Working", (s) => s === "working"],
+    ["finished", "Finished", (s) => s === "done"],
+    ["idle", "Idle", () => true],
+  ],
+  D: [
+    ["working", "Working", (s) => s === "working"],
+    ["blocked", "Needs you", (s) => BLOCKED.has(s)],
+    ["finished", "Finished", (s) => s === "done"],
+    ["idle", "Idle", () => true],
+  ],
+};
 
 /**
- * Clean title and detail from a list item line.
- * Input: "- 📋 **Title:** detail text [link](url)"
+ * The cards in status lanes for `layout`: a `{lane, label, count}` head
+ * before each lane that has cards, each lane in the cards' own order. E keeps
+ * the wall as it is (no heads).
  */
-export function cleanItemText(raw) {
-  let s = raw.replace(/^[-*+]\s*/, "").trim();
-  s = s.replace(/^(?:📋|✅)\s*/u, "").trim();
-
-  let title = "";
-  let detail = "";
-
-  // Check for bold title at start: **Title** or **Title:**
-  const boldMatch = s.match(/^\*\*([^*]+)\*\*(?::?\s*(.*))?$/s);
-  if (boldMatch) {
-    title = boldMatch[1].trim();
-    detail = (boldMatch[2] || "").trim();
-  } else {
-    // Look for first colon or period
-    const colonIdx = s.indexOf(":");
-    if (colonIdx > 0 && colonIdx < 80) {
-      title = s.slice(0, colonIdx).trim();
-      detail = s.slice(colonIdx + 1).trim();
-    } else {
-      title = s;
-      detail = "";
-    }
-  }
-
-  // Strip trailing colon from title if any
-  if (title.endsWith(":")) title = title.slice(0, -1).trim();
-
-  // Strip markdown link markup from title if present
-  title = title.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`]/g, "").trim();
-  return { title, detail };
+export function lanes(cards, layout) {
+  const defs = LANES[layout];
+  if (!defs) return cards;
+  const groups = defs.map(() => []);
+  for (const c of cards) groups[defs.findIndex(([, , takes]) => takes(c.status))].push(c);
+  const out = [];
+  defs.forEach(([lane, label], i) => {
+    if (!groups[i].length) return;
+    out.push({ lane, label, count: groups[i].length });
+    for (const c of groups[i]) out.push(c);
+  });
+  return out;
 }
 
+/** The sessions that finished since `before` (statuses()); none on the first look. */
+export function finished(before, sessions) {
+  if (!before) return new Set();
+  return new Set(
+    sessions.filter((s) => s.status === "done" && !String(before.get(s.session_id)).startsWith("done")).map((s) => s.session_id),
+  );
+}
+
+/** The block and finish events between two looks, by session id: blocks first. */
+export function transitions(before, sessions) {
+  return [
+    ...[...startedNeeding(before, sessions)].map((id) => ({ id, kind: "blocked" })),
+    ...[...finished(before, sessions)].map((id) => ({ id, kind: "finished" })),
+  ];
+}
+
+/** E opens its panel on a new block, once, and never while the user types or a dialog is open. */
+export const autoOpens = ({ layout, typing, modal }) => layout === "E" && !typing && !modal;
+
 /**
- * Parse needs-you.md markdown text into structured items grouped by section.
- * Completed items (with ✅) are omitted.
+ * The room's action for a key press, or null to leave it alone. `ctx`:
+ * `view` ("needs" or "agents"), `typing` (focus in a text field), `modal` (a
+ * dialog, popover or menu is open), `control` (focus on a button, link or
+ * summary, whose Enter and Space are its own) and `jump` (a jump toast is up).
  */
-export function parseNeedsItems(text) {
-  if (!text) return [];
-  const lines = text.split(/\r?\n/);
-  const items = [];
-  let currentSection = "Today";
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith("## ")) {
-      currentSection = trimmed.slice(3).trim();
-      continue;
-    }
-
-    if (!trimmed.startsWith("- ") && !trimmed.startsWith("* ") && !/^\d+\.\s/.test(trimmed)) {
-      continue;
-    }
-
-    // Done items are never shown
-    if (trimmed.includes(DONE_PREFIX)) {
-      continue;
-    }
-
-    const links = extractLinks(line);
-    const { title, detail } = cleanItemText(trimmed);
-
-    // Grouping
-    let group = currentSection;
-    if (/today/i.test(currentSection)) group = "Today";
-    else if (/coming up|next 7|this week/i.test(currentSection)) group = "Coming up";
-    else if (/when convenient|later|anytime/i.test(currentSection)) group = "When convenient";
-
-    items.push({
-      lineIndex: i,
-      rawLine: line,
-      title: title || trimmed,
-      detail,
-      links,
-      group,
-      section: currentSection,
-    });
-  }
-
-  return items;
+export function keyAction(e, ctx) {
+  if (e.defaultPrevented || ctx.typing || ctx.modal) return null;
+  if (e.ctrlKey || e.metaKey || e.altKey) return null;
+  const k = e.key;
+  const steps = { j: "down", ArrowDown: "down", k: "up", ArrowUp: "up" };
+  if (ctx.view === "needs" && steps[k] && !(ctx.control && k.startsWith("Arrow"))) return steps[k];
+  if (e.repeat) return null;
+  if (k === "n" || k === "N") return "needs";
+  if (k === "a" || k === "A") return "agents";
+  if (k === "Escape") return ctx.view === "needs" ? "back" : null;
+  if (k === "Enter") return ctx.control ? null : ctx.jump ? "jump" : ctx.view === "needs" ? "open" : null;
+  if (ctx.view !== "needs") return null;
+  return { o: "open", e: "done", u: "undo", c: "copy" }[k] ?? null;
 }
 
 /**
- * Parse queue.md "Running now" section into items without session cards.
+ * Done and Undo for the room: `invoke` is the app's command call. One Done
+ * at a time; Undo puts back the last one, once.
  */
-export function parseQueueNow(text) {
-  if (!text) return [];
-  const lines = text.split(/\r?\n/);
-  const items = [];
-  let inNow = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (line.startsWith("## ")) {
-      inNow = /running now/i.test(line);
-      continue;
-    }
-    if (!inNow) continue;
-    if (!line.startsWith("- ") && !line.startsWith("* ")) continue;
-
-    const links = extractLinks(line);
-    const { title, detail } = cleanItemText(line);
-    let state = "working";
-    if (/review/i.test(line)) state = "review";
-    else if (/scheduled/i.test(line)) state = "scheduled";
-    else if (/parked/i.test(line)) state = "parked";
-    else if (/done/i.test(line) || line.includes(DONE_PREFIX)) state = "done";
-
-    items.push({
-      title: title || line,
-      note: detail,
-      links,
-      state,
-    });
-  }
-
-  return items;
-}
-
-/**
- * Remove an item from needs-you.md text when marked done.
- * Returns { newText, removedLine }.
- */
-export function markItemDone(text, lineIndex) {
-  if (!text) return { newText: "", removedLine: "" };
-  const lines = text.split(/\r?\n/);
-  if (lineIndex < 0 || lineIndex >= lines.length) return { newText: text, removedLine: "" };
-  const removedLine = lines[lineIndex];
-  lines.splice(lineIndex, 1);
-  return { newText: lines.join("\n"), removedLine };
-}
-
-/**
- * Restore a removed line at lineIndex.
- */
-export function undoItemDone(text, lineIndex, removedLine) {
-  if (!text && !removedLine) return "";
-  const lines = (text || "").split(/\r?\n/);
-  const idx = Math.max(0, Math.min(lineIndex, lines.length));
-  lines.splice(idx, 0, removedLine);
-  return lines.join("\n");
-}
-
-/**
- * Compute total needs count: open asks in needs-you.md + sessions blocked on AJ.
- */
-export function needsCount(needsText, sessions = []) {
-  let asks = 0;
-  if (needsText) {
-    const parsed = sections(toTree(parse(needsText)));
-    asks = asksCount(parsed) ?? parseNeedsItems(needsText).length;
-  }
-  const blocked = sessions.filter((s) => s.status === "needs_you").length;
-  return asks + blocked;
-}
-
-/**
- * Count working sessions.
- */
-export function workingCount(sessions = []) {
-  return sessions.filter((s) => s.status === "working").length;
-}
-
-/**
- * Create the Rooms manager that binds Needs you and Agents views.
- */
-export function createRooms({
-  wallContainer,
-  headerNav,
-  needsRoomContainer,
-  phoneTabBar,
-  getSessions = () => [],
-  getCast = () => null,
-  onTerminal = () => {},
-  onSaveNeeds = () => {},
-  onLayoutChanged = () => {},
-}) {
-  let currentView = "agents"; // "agents" | "needs"
-  let currentLayout = parseLayout(localStorage.getItem("needs_layout"));
-  let needsText = "";
-  let needsPath = "";
-  let queueText = "";
-  let focusedIndex = 0;
-  let undoTimer = null;
-  let lastUndo = null; // { text, lineIndex, removedLine }
-  let jumpToastTimer = null;
-  let jumpSessionId = null;
-  let lastSessionStatuses = new Map();
-
-  // Storage / Prefs
-  function setLayout(layout) {
-    currentLayout = parseLayout(layout);
-    localStorage.setItem("needs_layout", currentLayout);
-    if (typeof window !== "undefined" && window.__TAURI__?.core?.invoke) {
-      window.__TAURI__.core.invoke("set_needs_layout", { layout: currentLayout }).catch(() => {});
-    }
-    renderViews();
-    onLayoutChanged(currentLayout);
-  }
-
-  function getLayout() {
-    return currentLayout;
-  }
-
-  // Toast notification
-  function showToast(message, actionLabel, onAction, durationMs = 5000) {
-    const existing = document.querySelector(".room-toast");
-    if (existing) existing.remove();
-
-    const toast = document.createElement("div");
-    toast.className = "room-toast";
-    toast.setAttribute("role", "status");
-
-    const textSpan = document.createElement("span");
-    textSpan.textContent = message;
-    toast.append(textSpan);
-
-    if (actionLabel && onAction) {
-      const actBtn = document.createElement("button");
-      actBtn.type = "button";
-      actBtn.className = "toast-action";
-      actBtn.textContent = actionLabel;
-      actBtn.addEventListener("click", () => {
-        onAction();
-        toast.remove();
-      });
-      toast.append(actBtn);
-    }
-
-    document.body.append(toast);
-    clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => {
-      toast.classList.add("toast-leaving");
-      setTimeout(() => toast.remove(), 250);
-    }, durationMs);
-
-    return toast;
-  }
-
-  // Switch between "agents" and "needs" views
-  function switchView(view) {
-    currentView = view === "needs" ? "needs" : "agents";
-    focusedIndex = 0;
-    renderViews();
-  }
-
-  // Build the Header Pills
-  function updateHeader() {
-    if (!headerNav) return;
-    const sessions = getSessions();
-    const n = needsCount(needsText, sessions);
-    const m = workingCount(sessions);
-
-    headerNav.innerHTML = `
-      <button type="button" id="btn-needs-room" class="room-pill room-needs ${n > 0 ? "is-amber" : "is-calm"}" aria-current="${currentView === "needs" ? "page" : "false"}" aria-keyshortcuts="N" title="Needs you (N)">
-        <span class="rt">Needs you</span>
-        <span class="rc-count ${n > 0 ? "count-amber" : "count-calm"}">${n > 0 ? n : (currentLayout === "D" ? "All clear" : "0")}</span>
-        <span class="kbd">N</span>
-      </button>
-      <button type="button" id="btn-agents-room" class="room-pill room-agents" aria-current="${currentView === "agents" ? "page" : "false"}" aria-keyshortcuts="A" title="Agents (A)">
-        <span class="rt">Agents</span>
-        <span class="rc">${m} working</span>
-        <span class="kbd">A</span>
-      </button>
-    `;
-
-    headerNav.querySelector("#btn-needs-room")?.addEventListener("click", () => switchView("needs"));
-    headerNav.querySelector("#btn-agents-room")?.addEventListener("click", () => switchView("agents"));
-
-    // Update phone tabbar
-    if (phoneTabBar) {
-      phoneTabBar.hidden = false;
-      phoneTabBar.innerHTML = `
-        <button type="button" id="ptab-agents" class="ptab-btn" aria-current="${currentView === "agents" ? "page" : "false"}">
-          <span class="pico">◐</span>
-          <span class="plabel">Agents</span>
-        </button>
-        <button type="button" id="ptab-needs" class="ptab-btn" aria-current="${currentView === "needs" ? "page" : "false"}">
-          <span class="pico">✋${n > 0 ? `<span class="pbadge">${n}</span>` : ""}</span>
-          <span class="plabel">Needs you</span>
-        </button>
-      `;
-      phoneTabBar.querySelector("#ptab-agents")?.addEventListener("click", () => switchView("agents"));
-      phoneTabBar.querySelector("#ptab-needs")?.addEventListener("click", () => switchView("needs"));
-    }
-  }
-
-  // Mark an item done with 5s undo
-  function handleMarkDone(lineIndex) {
-    const { newText, removedLine } = markItemDone(needsText, lineIndex);
-    lastUndo = {
-      prevText: needsText,
-      lineIndex,
-      removedLine,
-    };
-    needsText = newText;
-    onSaveNeeds(newText, needsPath);
-
-    updateHeader();
-    renderNeedsRoom();
-
-    showToast("Marked done", "Undo (5s)", () => {
-      if (lastUndo) {
-        needsText = lastUndo.prevText;
-        onSaveNeeds(needsText, needsPath);
-        lastUndo = null;
-        updateHeader();
-        renderNeedsRoom();
-      }
-    }, 5000);
-  }
-
-  // Trigger undo manually (via key U)
-  function handleUndo() {
-    if (lastUndo) {
-      needsText = lastUndo.prevText;
-      onSaveNeeds(needsText, needsPath);
-      lastUndo = null;
-      updateHeader();
-      renderNeedsRoom();
-      showToast("Restored item", null, null, 2000);
-    }
-  }
-
-  // Render the Needs you view
-  function renderNeedsRoom() {
-    if (!needsRoomContainer) return;
-
-    const sessions = getSessions();
-    const blocked = sessions.filter((s) => s.status === "needs_you");
-    const items = parseNeedsItems(needsText);
-    const total = blocked.length + items.length;
-
-    // Adjust focus index
-    if (focusedIndex >= total) focusedIndex = Math.max(0, total - 1);
-
-    // Group items
-    const groups = new Map();
-    for (const it of items) {
-      const g = it.group || "Other";
-      if (!groups.has(g)) groups.set(g, []);
-      groups.get(g).push(it);
-    }
-
-    let html = "";
-
-    // Header of Needs you room
-    html += `
-      <div class="needs-room-header">
-        <h1 class="needs-room-title">Needs you</h1>
-        <p class="needs-room-subtitle">${total > 0 ? `${total} open, soonest first. Done removes a line from needs-you.md.` : "Nothing waits on you."}</p>
-      </div>
-    `;
-
-    if (total === 0) {
-      // Find any future item or first dated item if available
-      const nextItem = items[0];
-      html += `
-        <div class="needs-all-clear">
-          <div class="all-clear-icon">✓</div>
-          <h2>${currentLayout === "D" ? "All clear" : "Nothing waits on you"}</h2>
-          <p class="all-clear-sub">${nextItem ? `Next item: <strong>${nextItem.title}</strong> (${nextItem.group})` : "New asks and sessions waiting on your review land here first."}</p>
-        </div>
-      `;
-    } else {
-      let currentIndex = 0;
-
-      // 1. Blocked sessions group
-      if (blocked.length > 0) {
-        html += `<div class="needs-group-header">Sessions blocked on you <span class="group-count">${blocked.length}</span></div>`;
-        html += `<ul class="needs-list blocked-list">`;
-        for (const s of blocked) {
-          const isFocused = currentIndex === focusedIndex;
-          const who = s.identity?.name || s.name || "Agent";
-          const epithet = s.identity?.epithet || "";
-          const reason = s.reason || s.needs?.tool || s.task || "Waiting on input";
-          const face = s.identity?.face ? `faces/${s.identity.face}-figure.webp` : "";
-
-          html += `
-            <li class="needs-row blocked-row ${isFocused ? "is-focused" : ""}" data-idx="${currentIndex}" data-session-id="${s.id}">
-              <div class="blocked-portrait">
-                ${face ? `<img src="${face}" alt="" class="blocked-fig" />` : `<div class="blocked-disc">!</div>`}
-              </div>
-              <div class="blocked-body">
-                <div class="blocked-name"><strong>${who}</strong> <span class="blocked-epi">${epithet}</span></div>
-                <div class="blocked-task">${reason}</div>
-              </div>
-              <div class="blocked-actions">
-                <button type="button" class="btn btn-answer" data-act="answer" data-session-id="${s.id}">Answer</button>
-                <button type="button" class="btn btn-term" data-act="terminal" data-session-id="${s.id}">Open terminal</button>
-              </div>
-            </li>
-          `;
-          currentIndex++;
-        }
-        html += `</ul>`;
-      }
-
-      // 2. Sections from needs-you.md
-      if (currentLayout === "E" && items.length > 0) {
-        // Layout E Focus Card at top + compact list below
-        const focusItemIndex = Math.min(items.length - 1, Math.max(0, focusedIndex - blocked.length));
-        const curItem = items[focusItemIndex] || items[0];
-        const focusLinksHtml = curItem.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>${l.kind === "file" ? "▤" : l.kind === "folder" ? "▱" : l.kind === "pr" ? "⑂" : "↗"}</i>${l.label}</a>`).join("");
-        const isToday = /today/i.test(curItem.group);
-
-        html += `
-          <div class="focus-card">
-            <div class="focus-card-meta">
-              <span class="focus-due ${isToday ? "due-today" : ""}">${curItem.group}</span>
-              <span class="focus-prog">${focusItemIndex + 1} of ${items.length}</span>
-            </div>
-            <h2 class="focus-title">${curItem.title}</h2>
-            ${curItem.detail ? `<p class="focus-detail">${curItem.detail}</p>` : ""}
-            ${curItem.links.length > 0 ? `<div class="focus-links">${focusLinksHtml}</div>` : ""}
-            <div class="focus-bar">
-              <button type="button" class="done-btn focus-action-done" data-act="done" data-line="${curItem.lineIndex}">Done <span class="kbd">E</span></button>
-              ${curItem.links[0] ? `<a class="btn focus-action-open" href="${curItem.links[0].url}" target="_blank" rel="noopener">Open <span class="kbd">Enter</span></a>` : ""}
-              <button type="button" class="btn focus-action-copy" data-act="copy" data-text="${curItem.links[0]?.url || curItem.title}">Copy <span class="kbd">C</span></button>
-              <span class="focus-sp"></span>
-              <button type="button" class="btn btn-step" data-step="-1" title="Previous (K)">▲</button>
-              <button type="button" class="btn btn-step" data-step="1" title="Next (J)">▼</button>
-            </div>
-          </div>
-          <div class="focus-subhead">All asks</div>
-          <ul class="needs-list focus-sublist">
-            ${items.map((it, idx) => {
-              const itIdx = blocked.length + idx;
-              const isFoc = itIdx === focusedIndex;
-              return `
-                <li class="needs-row focus-row ${isFoc ? "is-focused" : ""}" data-idx="${itIdx}" data-line="${it.lineIndex}">
-                  <span class="focus-row-due">${it.group}</span>
-                  <span class="focus-row-title">${it.title}</span>
-                  <button type="button" class="done-btn tick-only" data-act="done" data-line="${it.lineIndex}" aria-label="Done: ${it.title}"></button>
-                </li>
-              `;
-            }).join("")}
-          </ul>
-        `;
-      } else {
-        // Layout B & D: Render sections
-        for (const [groupName, groupItems] of groups.entries()) {
-          html += `<div class="needs-group-header">${groupName} <span class="group-count">${groupItems.length}</span></div>`;
-          html += `<ul class="needs-list">`;
-          for (const it of groupItems) {
-            const isFocused = currentIndex === focusedIndex;
-            const isToday = /today/i.test(it.group);
-            const linksHtml = it.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener" data-url="${l.url}"><i>${l.kind === "file" ? "▤" : l.kind === "folder" ? "▱" : l.kind === "pr" ? "⑂" : "↗"}</i>${l.label}</a>`).join("");
-
-            html += `
-              <li class="needs-row ${isToday ? "is-today" : ""} ${isFocused ? "is-focused" : ""}" data-idx="${currentIndex}" data-line="${it.lineIndex}">
-                <div class="needs-row-lead">
-                  <span class="row-due ${isToday ? "due-today" : ""}">${isToday ? "Today" : it.group}</span>
-                </div>
-                <div class="needs-row-body">
-                  <h3 class="row-title">${it.title}</h3>
-                  ${it.detail ? `<p class="row-detail">${it.detail}</p>` : ""}
-                  ${it.links.length > 0 ? `<div class="row-links">${linksHtml}</div>` : ""}
-                </div>
-                <div class="needs-row-actions">
-                  <button type="button" class="done-btn" data-act="done" data-line="${it.lineIndex}" aria-label="Mark done: ${it.title}">Done</button>
-                </div>
-              </li>
-            `;
-            currentIndex++;
-          }
-          html += `</ul>`;
-        }
-      }
-    }
-
-    needsRoomContainer.innerHTML = html;
-
-    // Attach event listeners for mouse actions in Needs room
-    needsRoomContainer.querySelectorAll(".done-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const line = Number(btn.dataset.line);
-        handleMarkDone(line);
-      });
-    });
-
-    needsRoomContainer.querySelectorAll("[data-act='terminal']").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        onTerminal(btn.dataset.sessionId);
-      });
-    });
-
-    needsRoomContainer.querySelectorAll("[data-act='answer']").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        onTerminal(btn.dataset.sessionId);
-      });
-    });
-
-    needsRoomContainer.querySelectorAll(".btn-step").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const step = Number(btn.dataset.step) || 0;
-        focusedIndex = Math.max(0, Math.min(total - 1, focusedIndex + step));
-        renderNeedsRoom();
-      });
-    });
-
-    needsRoomContainer.querySelectorAll("[data-act='copy']").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const copyText = btn.dataset.text;
-        if (copyText) {
-          navigator.clipboard.writeText(copyText).then(() => {
-            showToast("Copied to clipboard", null, null, 1500);
-          }).catch(() => {});
-        }
-      });
-    });
-
-    needsRoomContainer.querySelectorAll(".needs-row").forEach((row) => {
-      row.addEventListener("click", () => {
-        const idx = Number(row.dataset.idx);
-        if (!isNaN(idx)) {
-          focusedIndex = idx;
-          needsRoomContainer.querySelectorAll(".needs-row").forEach((r, i) => {
-            r.classList.toggle("is-focused", i === focusedIndex);
-          });
-        }
-      });
-    });
-
-    // Mobile swipe to mark done
-    needsRoomContainer.querySelectorAll(".needs-row[data-line]").forEach((row) => {
-      let touchStartX = 0;
-      row.addEventListener("touchstart", (e) => {
-        touchStartX = e.touches[0].clientX;
-      }, { passive: true });
-      row.addEventListener("touchend", (e) => {
-        const touchEndX = e.changedTouches[0].clientX;
-        if (touchEndX - touchStartX > 80) { // Swiped right
-          const line = Number(row.dataset.line);
-          handleMarkDone(line);
-        }
-      }, { passive: true });
-    });
-  }
-
-  // Render the Agents view (Lanes + Fleet queue)
-  function renderAgentsView() {
-    if (!wallContainer) return;
-
-    const qItems = parseQueueNow(queueText);
-    const existingFq = document.getElementById("fleet-queue-lanes");
-    if (existingFq) existingFq.remove();
-    const existingPhoneAgents = document.getElementById("phone-agents-list");
-    if (existingPhoneAgents) existingPhoneAgents.remove();
-
-    const isPhone = typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
-    const sessions = getSessions();
-
-    if (isPhone) {
-      // Phone: Agents is one row per agent with portrait and status
-      const phoneList = document.createElement("section");
-      phoneList.id = "phone-agents-list";
-      phoneList.className = "phone-agents-list";
-      phoneList.innerHTML = `
-        <div class="phone-agents-head">Agents <span class="group-count">${sessions.length}</span></div>
-        <div class="phone-agents-rows">
-          ${sessions.map((s) => {
-            const who = s.identity?.name || s.name || "Agent";
-            const face = s.identity?.face ? `faces/${s.identity.face}-figure.webp` : "";
-            const status = s.status || "idle";
-            const task = s.task || s.reason || "Active session";
-            return `
-              <div class="phone-agent-row" data-id="${s.id}">
-                <div class="phone-agent-pic">
-                  ${face ? `<img src="${face}" alt="" />` : `<div class="blocked-disc">A</div>`}
-                </div>
-                <div class="phone-agent-info">
-                  <div class="phone-agent-title"><b>${who}</b> <span class="pill ${status}">${status}</span></div>
-                  <div class="phone-agent-task">${task}</div>
-                </div>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      `;
-      wallContainer.after(phoneList);
-    } else if (currentLayout === "B") {
-      // Desktop Layout B: Lanes Live (wall cards), In review, Scheduled/Parked, Done today (collapsed to a count)
-      const inReview = qItems.filter((q) => q.state === "review");
-      const schedParked = qItems.filter((q) => q.state === "scheduled" || q.state === "parked");
-      const doneToday = qItems.filter((q) => q.state === "done");
-
-      const fqSec = document.createElement("section");
-      fqSec.id = "fleet-queue-lanes";
-      fqSec.className = "fq-lanes lanes-b";
-
-      let lanesHtml = "";
-
-      if (inReview.length > 0) {
-        lanesHtml += `
-          <div class="lane-block">
-            <div class="lane-header"><span class="pill review">In review</span> <span class="group-count">${inReview.length}</span></div>
-            <div class="lane-items">
-              ${inReview.map((q) => `
-                <div class="lane-slim-row">
-                  <span class="slim-title"><b>${q.title}</b>${q.note ? ` <span>${q.note}</span>` : ""}</span>
-                  <div class="links">${q.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>⑂</i>${l.label}</a>`).join("")}</div>
-                </div>
-              `).join("")}
-            </div>
-          </div>
-        `;
-      }
-
-      if (schedParked.length > 0) {
-        lanesHtml += `
-          <div class="lane-block">
-            <div class="lane-header"><span class="pill scheduled">Scheduled / Parked</span> <span class="group-count">${schedParked.length}</span></div>
-            <div class="lane-items">
-              ${schedParked.map((q) => `
-                <div class="lane-slim-row">
-                  <span class="slim-title"><b>${q.title}</b>${q.note ? ` <span>${q.note}</span>` : ""}</span>
-                  <div class="links">${q.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>↗</i>${l.label}</a>`).join("")}</div>
-                </div>
-              `).join("")}
-            </div>
-          </div>
-        `;
-      }
-
-      if (doneToday.length > 0) {
-        lanesHtml += `
-          <details class="lane-block done-today-lane">
-            <summary class="lane-header done-summary">
-              <span class="pill done">Done today</span>
-              <span class="group-count">${doneToday.length}</span>
-              <span class="done-hint">collapsed</span>
-            </summary>
-            <div class="lane-items">
-              ${doneToday.map((q) => `
-                <div class="lane-slim-row is-done-row">
-                  <span class="slim-title"><b>${q.title}</b>${q.note ? ` <span>${q.note}</span>` : ""}</span>
-                  <div class="links">${q.links.map((l) => `<a class="chip" href="${l.url}" target="_blank" rel="noopener"><i>✓</i>${l.label}</a>`).join("")}</div>
-                </div>
-              `).join("")}
-            </div>
-          </details>
-        `;
-      }
-
-      if (lanesHtml) {
-        fqSec.innerHTML = `<div class="fq-head">Plan & Queue <em>from queue.md</em></div>${lanesHtml}`;
-        wallContainer.after(fqSec);
-      }
-    } else if (currentLayout === "D") {
-      // Desktop Layout D: The wall itself + "No session" strip below
-      const noSessionItems = qItems.filter((q) => ["review", "scheduled", "parked", "done"].includes(q.state));
-
-      // Style wall cards in Layout D: amber edge on needs_you, dimmed on done
-      if (wallContainer) {
-        wallContainer.querySelectorAll(".card").forEach((c) => {
-          const s = sessions.find((item) => item.id === c.dataset.id);
-          if (s) {
-            c.classList.toggle("card-needs-edge", s.status === "needs_you");
-            c.classList.toggle("card-done-dimmed", s.status === "done");
-          }
-        });
-      }
-
-      if (noSessionItems.length > 0) {
-        const stripSec = document.createElement("section");
-        stripSec.id = "fleet-queue-lanes";
-        stripSec.className = "no-session-strip";
-        stripSec.innerHTML = `
-          <div class="strip-head">No session <em>review, scheduled, parked, done today (links only)</em></div>
-          <div class="strip-chips">
-            ${noSessionItems.map((q) => {
-              const url = q.links[0]?.url || "#";
-              const label = q.links[0]?.label || q.title;
-              const ico = q.state === "review" ? "⑂" : q.state === "done" ? "✓" : "↗";
-              return `<a class="chip strip-chip ${q.state}" href="${url}" target="_blank" rel="noopener" title="${q.title}"><i>${ico}</i>${label}</a>`;
-            }).join("")}
-          </div>
-        `;
-        wallContainer.after(stripSec);
-      }
-    }
-  }
-
-  // Main render coordinator
-  function renderViews() {
-    updateHeader();
-
-    document.body.dataset.layout = currentLayout;
-    document.body.dataset.view = currentView;
-
-    const fqLanes = document.getElementById("fleet-queue-lanes");
-
-    if (currentLayout === "B" || currentLayout === "D") {
-      // Full screen rooms
-      if (currentView === "needs") {
-        if (wallContainer) wallContainer.hidden = true;
-        if (fqLanes) fqLanes.hidden = true;
-        if (needsRoomContainer) needsRoomContainer.hidden = false;
-        renderNeedsRoom();
-      } else {
-        if (wallContainer) wallContainer.hidden = false;
-        if (fqLanes) fqLanes.hidden = false;
-        if (needsRoomContainer) needsRoomContainer.hidden = true;
-        renderAgentsView();
-      }
-    } else if (currentLayout === "E") {
-      // Amber Door: Wall is always visible; Needs you is 1/3 right panel
-      if (wallContainer) wallContainer.hidden = false;
-      if (fqLanes) fqLanes.hidden = false;
-      renderAgentsView();
-
-      if (currentView === "needs") {
-        if (needsRoomContainer) {
-          needsRoomContainer.hidden = false;
-          needsRoomContainer.classList.add("amber-door-open");
-        }
-        renderNeedsRoom();
-      } else {
-        if (needsRoomContainer) {
-          needsRoomContainer.hidden = true;
-          needsRoomContainer.classList.remove("amber-door-open");
-        }
-      }
-    }
-  }
-
-  // Check for status changes to trigger jump toasts
-  function checkStatusChanges(sessions) {
-    const curStatuses = new Map(sessions.map((s) => [s.id, s.status]));
-    if (lastSessionStatuses.size > 0 && currentView === "needs") {
-      for (const [id, status] of curStatuses) {
-        const prev = lastSessionStatuses.get(id);
-        const s = sessions.find((item) => item.id === id);
-        const name = s?.identity?.name || s?.name || "An agent";
-
-        if (status === "needs_you" && prev !== "needs_you") {
-          jumpSessionId = id;
-          if (currentLayout === "E") {
-            switchView("needs");
-          } else {
-            showToast(`${name} needs your answer`, "Enter to jump", () => {
-              switchView("agents");
-            }, 6000);
-          }
-          break;
-        } else if (status === "done" && prev !== "done") {
-          jumpSessionId = id;
-          showToast(`${name} finished`, "Enter to jump", () => {
-            switchView("agents");
-          }, 6000);
-          break;
-        }
-      }
-    }
-    lastSessionStatuses = curStatuses;
-  }
-
-  // Global Keyboard Navigation
-  function handleKeyDown(e) {
-    // If typing in input, ignore shortcuts
-    if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
-
-    if (e.key === "n" || e.key === "N") {
-      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        if (currentLayout === "D" && currentView === "needs") {
-          switchView("agents");
-        } else {
-          switchView("needs");
-        }
-        return;
-      }
-    }
-
-    if (e.key === "a" || e.key === "A") {
-      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        switchView("agents");
-        return;
-      }
-    }
-
-    if (e.key === "Escape") {
-      if (currentView === "needs") {
-        e.preventDefault();
-        switchView("agents");
-        return;
-      }
-    }
-
-    if (e.key === "Enter") {
-      const activeToast = document.querySelector(".room-toast .toast-action");
-      if (activeToast) {
-        e.preventDefault();
-        activeToast.click();
-        return;
-      }
-    }
-
-    if (currentView === "needs") {
-      const sessions = getSessions();
-      const blocked = sessions.filter((s) => s.status === "needs_you");
-      const items = parseNeedsItems(needsText);
-      const total = blocked.length + items.length;
-
-      if (e.key === "j" || e.key === "ArrowDown") {
-        e.preventDefault();
-        focusedIndex = Math.min(focusedIndex + 1, total - 1);
-        renderNeedsRoom();
-      } else if (e.key === "k" || e.key === "ArrowUp") {
-        e.preventDefault();
-        focusedIndex = Math.max(focusedIndex - 1, 0);
-        renderNeedsRoom();
-      } else if (e.key === "e") {
-        e.preventDefault();
-        if (focusedIndex >= blocked.length) {
-          const itemIdx = focusedIndex - blocked.length;
-          const item = items[itemIdx];
-          if (item) handleMarkDone(item.lineIndex);
-        }
-      } else if (e.key === "u") {
-        e.preventDefault();
-        handleUndo();
-      } else if (e.key === "o" || e.key === "Enter") {
-        e.preventDefault();
-        if (focusedIndex < blocked.length) {
-          const s = blocked[focusedIndex];
-          if (s) onTerminal(s.id);
-        } else {
-          const itemIdx = focusedIndex - blocked.length;
-          const item = items[itemIdx];
-          if (item && item.links.length > 0) {
-            window.open(item.links[0].url, "_blank", "noopener");
-          }
-        }
-      } else if (e.key === "c") {
-        e.preventDefault();
-        if (focusedIndex >= blocked.length) {
-          const itemIdx = focusedIndex - blocked.length;
-          const item = items[itemIdx];
-          if (item) {
-            const copyText = item.links[0]?.url || item.title;
-            navigator.clipboard.writeText(copyText).then(() => {
-              showToast("Copied to clipboard", null, null, 1500);
-            }).catch(() => {});
-          }
-        }
-      }
-    }
-  }
-
-  window.addEventListener("keydown", handleKeyDown);
-  updateHeader();
-
+export function createDone(invoke) {
+  let token = null;
+  let busy = false;
   return {
-    updateSessions(sessions) {
-      checkStatusChanges(sessions);
-      updateHeader();
-      if (currentView === "needs") renderNeedsRoom();
-      else renderAgentsView();
+    get busy() {
+      return busy;
     },
-    updateNeeds(view) {
-      needsText = view.text || "";
-      needsPath = view.path || "";
-      updateHeader();
-      if (currentView === "needs") renderNeedsRoom();
+    get undoable() {
+      return token !== null;
     },
-    updateQueue(view) {
-      queueText = view.text || "";
-      if (currentView === "agents") renderAgentsView();
+    async done(item) {
+      if (busy) return { ok: false, why: null };
+      busy = true;
+      try {
+        token = await invoke("needs_done", { block: item.block });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, why: String(err) };
+      } finally {
+        busy = false;
+      }
     },
-    switchView,
-    setLayout,
-    getLayout,
-    getView: () => currentView,
-    destroy() {
-      window.removeEventListener("keydown", handleKeyDown);
+    async undo() {
+      if (busy || token === null) return { ok: false, why: null };
+      const t = token;
+      token = null;
+      busy = true;
+      try {
+        await invoke("needs_undo", { undo: t });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, why: String(err) };
+      } finally {
+        busy = false;
+      }
+    },
+    /** A function that ends this Undo's window, and no later one's. */
+    expiry() {
+      const t = token;
+      return () => {
+        if (token === t) token = null;
+      };
     },
   };
 }
+
+const el = (doc, tag, cls, text) => {
+  const n = doc.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+};
+const button = (doc, cls, text, label) => {
+  const b = el(doc, "button", cls, text);
+  b.type = "button";
+  if (label) b.setAttribute("aria-label", label);
+  return b;
+};
+
+/**
+ * Wire the rooms. `nodes`: the header pills (`needsPill`, `agentsPill`), the
+ * phone tabs, the Needs you room, the toast and the layout picker.
+ * `cards()` is the wall's last painted cards; `makeFace(card)` a portrait
+ * element for a blocked row; `focusCard(id)` shows a card on the wall;
+ * `invoke` the app's command call (null outside the app); `openLink(url)`
+ * opens an https link; `canWrite` whether Done can write the file; `copy`
+ * puts text on the clipboard; `onLayout(layout)` runs after each switch.
+ */
+export function createRooms({
+  doc = document,
+  body = document.body,
+  nodes,
+  cards = () => [],
+  makeFace = () => null,
+  focusCard = () => {},
+  invoke = null,
+  openLink = () => Promise.reject(new Error("Opening links needs the app")),
+  copy = (text) => navigator.clipboard.writeText(text),
+  savedLayout = DEFAULT_LAYOUT,
+  saveLayout = () => Promise.resolve(),
+  onLayout = () => {},
+  now = () => new Date(),
+}) {
+  const { needsPill, agentsPill, tabs, room, toast, picker, note } = nodes;
+  const groupsBox = room.querySelector(".ny-groups");
+  const sub = room.querySelector(".ny-sub");
+  const problemLine = room.querySelector(".ny-problem");
+  const nextLine = room.querySelector(".ny-next");
+  const clear = room.querySelector(".ny-clear");
+  const focusBox = room.querySelector(".ny-focus");
+  const writer = invoke ? createDone(invoke) : null;
+
+  let layout = parseLayout(savedLayout);
+  let view = "agents";
+  let needs = { items: [], count: 0, next: null };
+  let fileState = { text: null, problem: null, calm: false };
+  let hidden = new Set(); // items marked done, gone from the list until the file says so
+  let focusKey = null;
+  let before = null; // statuses at the last look
+  let toastTimer = 0;
+  let toastJump = null; // the session id a jump toast names
+
+  const blocked = () => cards().filter((c) => c.status === "needs_you");
+  const shownItems = () => needs.items.filter((i) => !hidden.has(i.key));
+  const rows = () => [...room.querySelectorAll(".ny-row")];
+
+  /** Every number on screen, from the one model: open asks plus blocked sessions. */
+  function count() {
+    return shownItems().length + blocked().length;
+  }
+
+  function paintPills() {
+    const n = count();
+    const working = cards().filter((c) => c.status === "working").length;
+    needsPill.querySelector(".rp-count").textContent = String(n);
+    needsPill.classList.toggle("is-amber", n > 0);
+    needsPill.setAttribute("aria-label", `Needs you, ${n === 0 ? "all clear" : n}`);
+    agentsPill.querySelector(".rp-count").textContent = `${working} working`;
+    for (const [pill, name] of [
+      [needsPill, "needs"],
+      [agentsPill, "agents"],
+    ]) {
+      pill.setAttribute("aria-pressed", String(view === name));
+    }
+    for (const t of tabs.querySelectorAll("button")) {
+      t.setAttribute("aria-pressed", String(t.dataset.view === view));
+      t.classList.toggle("is-amber", t.dataset.view === "needs" && n > 0);
+      const badge = t.querySelector(".pt-count");
+      if (badge) badge.textContent = t.dataset.view === "needs" ? String(n) : String(working);
+    }
+  }
+
+  function paintBody() {
+    body.dataset.layout = layout;
+    body.dataset.view = view;
+    room.hidden = view !== "needs";
+    if (picker) picker.value = layout;
+  }
+
+  /** A row's due chip, or nothing. */
+  function dueChip(item) {
+    if (!item.due) return null;
+    const d = dueLabel(item.due, now());
+    const chip = el(doc, "span", `ny-due due-${d.tone}`, d.label);
+    return chip;
+  }
+
+  function copyText(text, from) {
+    Promise.resolve()
+      .then(() => copy(text))
+      .then(
+        () => showToast("Copied the link."),
+        () => showToast(`Could not copy. The link is ${text}`),
+      );
+    from?.focus?.();
+  }
+
+  function itemRow(row, item) {
+    row.replaceChildren();
+    row.className = "ny-row ny-item";
+    row.tabIndex = -1;
+    row.dataset.key = item.key;
+    const chip = dueChip(item);
+    const lead = el(doc, "div", "ny-lead");
+    if (chip) lead.append(chip);
+    const main = el(doc, "div", "ny-main");
+    main.append(el(doc, "h3", "ny-title", item.title));
+    if (item.detail.length) {
+      const p = el(doc, "p", "ny-detail");
+      for (const n of build(item.detail, doc, { copy: (t) => copyText(t), linkButtons: false })) p.append(n);
+      main.append(p);
+    }
+    if (item.more.length) {
+      const more = el(doc, "div", "ny-more");
+      for (const n of build(item.more, doc, { copy: (t) => copyText(t), linkButtons: false })) more.append(n);
+      main.append(more);
+    }
+    if (item.links.length) {
+      const links = el(doc, "div", "ny-links");
+      for (const l of item.links) {
+        const b = button(doc, "ny-link", l.label, `Open ${l.label}`);
+        b.title = l.url;
+        b.dataset.url = l.url;
+        links.append(b);
+      }
+      main.append(links);
+    }
+    const acts = el(doc, "div", "ny-acts");
+    if (item.links.length) {
+      const c = button(doc, "ny-copy", "Copy link", `Copy link: ${item.title}`);
+      c.dataset.url = item.links[0].url;
+      acts.append(c);
+    }
+    const done = button(doc, "ny-done", "Done", `Done: ${item.title}`);
+    done.title = writer ? "Remove this item from the Needs you file (E)" : "Marking done writes the file in the app only";
+    if (!writer) setOff(done, true);
+    acts.append(done);
+    row.append(lead, main, acts);
+    row.setAttribute("aria-label", item.title);
+  }
+
+  function blockedRow(row, c) {
+    row.replaceChildren();
+    row.className = "ny-row ny-blocked";
+    row.tabIndex = -1;
+    row.dataset.key = `s:${c.id}`;
+    row.dataset.id = c.id;
+    const lead = el(doc, "div", "ny-lead");
+    const face = makeFace(c);
+    if (face) lead.append(face);
+    const main = el(doc, "div", "ny-main");
+    const who = el(doc, "h3", "ny-title");
+    who.append(el(doc, "strong", null, c.name));
+    if (c.task) who.append(el(doc, "span", "ny-task", ` · ${c.task}`));
+    main.append(who, el(doc, "p", "ny-detail", c.ask ?? c.pill?.label ?? "Waiting on you"));
+    const acts = el(doc, "div", "ny-acts");
+    const answer = button(doc, "ny-answer", "Answer", `Answer ${c.name} in its terminal`);
+    answer.title = c.jump?.why ?? "Open its terminal (Enter)";
+    setOff(answer, !invoke || !c.jump?.enabled);
+    const show = button(doc, "ny-card", "Show card", `Show ${c.name}'s card`);
+    const said = el(doc, "span", "ny-said");
+    said.setAttribute("role", "status");
+    acts.append(answer, show, said);
+    row.append(lead, main, acts);
+    row.setAttribute("aria-label", `${c.name}, blocked: ${c.ask ?? ""}`);
+  }
+
+  /** The groups: Blocked first, then the file's sections in order. */
+  function groups() {
+    const out = [];
+    const b = blocked();
+    if (b.length) out.push({ key: "blocked", title: "Blocked on you", rows: b.map((c) => ({ kind: "blocked", key: `s:${c.id}`, c })) });
+    for (const item of shownItems()) {
+      const title = item.section ?? "Asks";
+      let g = out.find((x) => x.key === `sec:${title}`);
+      if (!g) out.push((g = { key: `sec:${title}`, title, rows: [] }));
+      g.rows.push({ kind: "item", key: item.key, item });
+    }
+    return out;
+  }
+
+  function paintRoom() {
+    const gs = groups();
+    const order = gs.flatMap((g) => g.rows);
+    if (!order.some((r) => r.key === focusKey)) focusKey = order[0]?.key ?? null;
+    const n = order.length;
+    sub.textContent = n === 0 ? "" : `${n} open${blocked().length ? `, ${blocked().length} blocked` : ""}`;
+    problemLine.hidden = !fileState.problem;
+    problemLine.classList.toggle("is-calm", fileState.calm);
+    problemLine.textContent = fileState.problem ?? "";
+    clear.hidden = n > 0;
+    const today = now();
+    const nowItems = shownItems().filter((i) => dueNow(i, today) || isTodaySection(i.section));
+    const next = needs.next && !hidden.has(needs.next.key) ? needs.next : null;
+    const showNext = next && !blocked().length && !nowItems.length;
+    nextLine.hidden = !showNext;
+    nextLine.replaceChildren();
+    if (showNext) {
+      nextLine.append(el(doc, "span", "ny-next-lead", n ? "Nothing due today. Next: " : "Next: "));
+      nextLine.append(el(doc, "strong", null, next.title));
+      nextLine.append(` · ${dueLabel(next.due, today).label}`);
+    }
+    syncChildren(
+      groupsBox,
+      gs,
+      (g) => g.key,
+      () => {
+        const sec = el(doc, "section", "ny-group");
+        const h = el(doc, "h2", "ny-group-head");
+        h.append(el(doc, "span", "ny-group-title"), el(doc, "span", "ny-group-count"));
+        sec.append(h, el(doc, "ul", "ny-list"));
+        return sec;
+      },
+      (sec, g) => {
+        sec.classList.toggle("is-blocked", g.key === "blocked");
+        sec.querySelector(".ny-group-title").textContent = g.title;
+        sec.querySelector(".ny-group-count").textContent = String(g.rows.length);
+        syncChildren(
+          sec.querySelector(".ny-list"),
+          g.rows,
+          (r) => r.key,
+          () => doc.createElement("li"),
+          (row, r) => {
+            // Rebuilt only when what it shows changed: an open detail or focus survives a repaint.
+            const sig = r.kind === "blocked" ? JSON.stringify([r.c.name, r.c.task, r.c.ask, r.c.jump, Boolean(invoke)]) : r.key;
+            if (row.dataset.sig !== sig) {
+              (r.kind === "blocked" ? blockedRow : itemRow)(row, r.kind === "blocked" ? r.c : r.item);
+              row.dataset.sig = sig;
+            }
+            row.classList.toggle("is-focused", r.key === focusKey);
+            row.setAttribute("aria-current", String(r.key === focusKey));
+          },
+        );
+      },
+    );
+    paintFocusCard(order);
+  }
+
+  /** E's focus card: the focused ask, large, with its actions. */
+  function paintFocusCard(order) {
+    if (!focusBox) return;
+    const r = order.find((x) => x.key === focusKey);
+    focusBox.hidden = layout !== "E" || !r || r.kind !== "item";
+    if (focusBox.hidden) {
+      focusBox.replaceChildren();
+      delete focusBox.dataset.key;
+      return;
+    }
+    if (focusBox.dataset.key === r.key) return;
+    focusBox.dataset.key = r.key;
+    const items = order.filter((x) => x.kind === "item");
+    const holder = doc.createElement("div");
+    itemRow(holder, r.item);
+    holder.className = "ny-focus-card";
+    holder.removeAttribute("tabindex");
+    const meta = el(doc, "p", "ny-focus-meta", `${items.indexOf(r) + 1} of ${items.length} · ${r.item.section ?? "Asks"}`);
+    focusBox.replaceChildren(meta, holder);
+  }
+
+  function paint() {
+    paintPills();
+    paintBody();
+    if (view === "needs") paintRoom();
+  }
+
+  function setView(next, { focus = true } = {}) {
+    view = next === "needs" ? "needs" : "agents";
+    paint();
+    if (view === "needs" && focus) focusRow(focusKey) ?? room.focus({ preventScroll: true });
+  }
+
+  function focusRow(key) {
+    const row = rows().find((r) => r.dataset.key === key);
+    if (!row) return null;
+    focusKey = key;
+    for (const r of rows()) {
+      r.classList.toggle("is-focused", r === row);
+      r.setAttribute("aria-current", String(r === row));
+    }
+    paintFocusCard(groups().flatMap((g) => g.rows));
+    row.focus({ preventScroll: true });
+    row.scrollIntoView({ block: "nearest" });
+    return row;
+  }
+
+  function step(by) {
+    const all = rows();
+    const at = all.findIndex((r) => r.dataset.key === focusKey);
+    const to = all[Math.max(0, Math.min(all.length - 1, (at < 0 ? 0 : at) + by))];
+    if (to) focusRow(to.dataset.key);
+  }
+
+  const focusedItem = () => shownItems().find((i) => i.key === focusKey) ?? null;
+  const focusedCard = () => blocked().find((c) => `s:${c.id}` === focusKey) ?? null;
+
+  function answer(c, from) {
+    const row = rows().find((r) => r.dataset.key === `s:${c.id}`);
+    const b = from ?? row?.querySelector(".ny-answer");
+    if (!b || !invoke) return;
+    press(b, row?.querySelector(".ny-said"), () => invoke("jump_to_terminal", { id: c.id, name: c.session ?? "" }));
+  }
+
+  function open(item) {
+    const url = item?.links[0]?.url;
+    if (!url) {
+      showToast("This item has no link to open.");
+      return;
+    }
+    Promise.resolve()
+      .then(() => openLink(url))
+      .catch((err) => showToast(`Not opened: ${err?.message ?? err}`));
+  }
+
+  async function markDone(item) {
+    if (!item) return;
+    if (!writer) {
+      showToast("Marking done writes the Needs you file in the app only.");
+      return;
+    }
+    if (writer.busy) return;
+    const order = rows().map((r) => r.dataset.key);
+    const nextKey = order[order.indexOf(item.key) + 1] ?? order[order.indexOf(item.key) - 1] ?? null;
+    hidden.add(item.key);
+    focusKey = nextKey;
+    paint();
+    if (view === "needs" && nextKey) focusRow(nextKey);
+    const r = await writer.done(item);
+    if (!r.ok) {
+      hidden.delete(item.key);
+      paint();
+      if (r.why) showToast(`Not done: ${r.why}`);
+      return;
+    }
+    showToast(`Done: ${item.title}`, { action: "Undo", onAction: undo, ms: UNDO_MS, onExpire: writer.expiry() });
+  }
+
+  async function undo() {
+    if (!writer?.undoable) return;
+    hideToast();
+    const r = await writer.undo();
+    if (!r.ok && r.why) showToast(`Not undone: ${r.why}`);
+    else if (r.ok) showToast("Put back.");
+  }
+
+  // The toast: one at a time, never taking focus; its timer waits while the pointer or focus is in it.
+  let toastLeft = 0;
+  let toastStarted = 0;
+  let toastExpire = null;
+  const toastHidden = () => toast.hidden;
+  function hideToast() {
+    clearTimeout(toastTimer);
+    toast.hidden = true;
+    toast.replaceChildren();
+    toastJump = null;
+    toastExpire = null;
+  }
+  function arm(ms) {
+    clearTimeout(toastTimer);
+    toastLeft = ms;
+    toastStarted = Date.now();
+    toastTimer = setTimeout(() => {
+      const expire = toastExpire;
+      hideToast();
+      expire?.();
+    }, ms);
+  }
+  const pause = () => {
+    if (toast.hidden) return;
+    clearTimeout(toastTimer);
+    toastLeft = Math.max(1000, toastLeft - (Date.now() - toastStarted));
+  };
+  const resume = () => {
+    if (!toast.hidden && !toast.contains(doc.activeElement)) arm(toastLeft);
+  };
+  toast.addEventListener("pointerenter", pause);
+  toast.addEventListener("pointerleave", resume);
+  toast.addEventListener("focusin", pause);
+  toast.addEventListener("focusout", () => setTimeout(resume, 0));
+
+  function showToast(text, { action = null, onAction = null, ms = 4000, jump = null, onExpire = null } = {}) {
+    // A toast that replaces Undo's leaves Undo its time: U still works until then.
+    const prev = toastExpire;
+    const left = toastHidden() ? 0 : Math.max(0, toastLeft - (Date.now() - toastStarted));
+    hideToast();
+    if (prev && prev !== onExpire) setTimeout(prev, left);
+    toast.append(el(doc, "span", "rt-text", text));
+    if (action) {
+      const b = button(doc, "rt-action", action);
+      b.addEventListener("click", () => {
+        hideToast();
+        onAction();
+      });
+      toast.append(b);
+    }
+    toastJump = jump;
+    toastExpire = onExpire;
+    toast.hidden = false;
+    arm(ms);
+  }
+
+  function jumpTo(id) {
+    hideToast();
+    if (layout !== "E") setView("agents", { focus: false });
+    focusCard(id);
+  }
+
+  // Clicks inside the room.
+  room.addEventListener("click", (e) => {
+    const t = e.target;
+    const row = t.closest(".ny-row, .ny-focus-card");
+    const key = row?.dataset.key;
+    const item = shownItems().find((i) => i.key === key) ?? null;
+    const c = blocked().find((x) => `s:${x.id}` === key) ?? null;
+    if (t.closest(".ny-done")) {
+      if (t.closest(".ny-done").getAttribute("aria-disabled") === "true") showToast("Marking done writes the Needs you file in the app only.");
+      else markDone(item);
+    } else if (t.closest(".ny-link")) {
+      Promise.resolve()
+        .then(() => openLink(t.closest(".ny-link").dataset.url))
+        .catch((err) => showToast(`Not opened: ${err?.message ?? err}`));
+    } else if (t.closest(".ny-copy")) copyText(t.closest(".ny-copy").dataset.url, t.closest(".ny-copy"));
+    else if (t.closest(".ny-answer") && c) answer(c, t.closest(".ny-answer"));
+    else if (t.closest(".ny-card") && c) jumpTo(c.id);
+    else if (row?.classList.contains("ny-row") && !t.closest("button, a")) focusRow(key);
+  });
+
+  // A swipe right on a phone marks an ask done: mostly sideways, never a scroll.
+  let touch = null;
+  room.addEventListener(
+    "touchstart",
+    (e) => {
+      const row = e.target.closest(".ny-item");
+      touch = row && e.touches.length === 1 ? { row, x: e.touches[0].clientX, y: e.touches[0].clientY, off: false } : null;
+    },
+    { passive: true },
+  );
+  room.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!touch) return;
+      const dx = e.touches[0].clientX - touch.x;
+      const dy = e.touches[0].clientY - touch.y;
+      if (Math.abs(dy) > 24 || Math.abs(dy) > Math.abs(dx) / 2) touch.off = true;
+    },
+    { passive: true },
+  );
+  room.addEventListener("touchcancel", () => {
+    touch = null;
+  });
+  room.addEventListener("touchend", (e) => {
+    const t = touch;
+    touch = null;
+    if (!t || t.off) return;
+    const dx = e.changedTouches[0].clientX - t.x;
+    const dy = e.changedTouches[0].clientY - t.y;
+    if (swipeDone(dx, dy)) markDone(shownItems().find((i) => i.key === t.row.dataset.key));
+  });
+
+  needsPill.addEventListener("click", () => setView(layout === "D" && view === "needs" ? "agents" : "needs"));
+  agentsPill.addEventListener("click", () => setView("agents"));
+  for (const t of tabs.querySelectorAll("button")) t.addEventListener("click", () => setView(t.dataset.view));
+  picker?.addEventListener("change", () => setLayout(picker.value, true));
+
+  function setLayout(next, save = false) {
+    const was = layout;
+    layout = parseLayout(next);
+    if (focusBox) delete focusBox.dataset.key;
+    paint();
+    if (save && layout !== was)
+      Promise.resolve()
+        .then(() => saveLayout(layout))
+        .then(
+          () => note && say(note, ""),
+          (err) => note && say(note, `Not saved: ${err}`),
+        );
+    onLayout(layout);
+  }
+
+  const typingIn = (a) => Boolean(a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)));
+  const modalOpen = () => Boolean(doc.querySelector("dialog[open]:modal, :popover-open, [role='menu']:not([hidden]), details.gear[open]"));
+  const onControl = (a) => Boolean(a && a !== room && a.closest?.("button, a, summary, [role='menuitem'], [role='button']"));
+
+  doc.addEventListener("keydown", (e) => {
+    const a = doc.activeElement;
+    const act = keyAction(e, { view, typing: typingIn(a), modal: modalOpen(), control: onControl(a), jump: Boolean(toastJump) });
+    if (!act) return;
+    e.preventDefault();
+    if (act === "needs") setView(layout === "D" && view === "needs" ? "agents" : "needs");
+    else if (act === "agents" || act === "back") setView("agents");
+    else if (act === "jump") jumpTo(toastJump);
+    else if (act === "down") step(1);
+    else if (act === "up") step(-1);
+    else if (act === "undo") undo();
+    else if (act === "open") {
+      const c = focusedCard();
+      if (c) answer(c);
+      else open(focusedItem());
+    } else if (act === "done") markDone(focusedItem());
+    else if (act === "copy") {
+      const item = focusedItem();
+      if (item?.links[0]) copyText(item.links[0].url);
+      else if (item) showToast("This item has no link to copy.");
+    }
+  });
+
+  paint();
+
+  return {
+    /** A new read of the Needs you file: `{path, text, problem, missing}`; `calm` shows the problem as a note. */
+    updateNeeds(view_) {
+      fileState = { text: view_.text ?? null, problem: view_.missing ? null : view_.problem ?? null, calm: view_.calm === true };
+      needs = needsModel(fileState.text ?? "", now());
+      // An item marked done stays hidden only while the file still holds it.
+      hidden = new Set([...hidden].filter((k) => needs.items.some((i) => i.key === k)));
+      paint();
+    },
+    /** A new snapshot: its sessions, after the wall painted their cards. */
+    updateSessions(sessions, { snapshot = true, typing = typingIn(doc.activeElement), modal = modalOpen() } = {}) {
+      paint();
+      // Only a snapshot moves the baseline: a tick or the paint before the first snapshot is no event.
+      if (!snapshot) return;
+      const events = transitions(before, sessions);
+      before = new Map(sessions.map((s) => [s.session_id, s.status]));
+      const first = events[0];
+      if (!first) return;
+      const c = cards().find((x) => x.id === first.id);
+      const name = c?.name ?? "A session";
+      if (first.kind === "blocked" && autoOpens({ layout, typing, modal })) {
+        setView("needs", { focus: false });
+        focusRow(`s:${first.id}`);
+        return;
+      }
+      if (view === "needs" || layout === "E")
+        showToast(first.kind === "blocked" ? `${name} needs you.` : `${name} finished.`, {
+          action: "Show card",
+          onAction: () => jumpTo(first.id),
+          jump: first.id,
+          ms: JUMP_MS,
+        });
+    },
+    setLayout,
+    setView,
+    /** Open Needs you on session `id`'s blocked row. */
+    showBlocked(id) {
+      setView("needs", { focus: false });
+      if (!focusRow(`s:${id}`)) room.focus({ preventScroll: true });
+    },
+    get layout() {
+      return layout;
+    },
+    get view() {
+      return view;
+    },
+    /** The header's count, as the pills show it. */
+    count,
+  };
+}
+
+/** A touch that moved `dx`, `dy` is a Done swipe: rightward, far enough, and mostly sideways. */
+export const swipeDone = (dx, dy) => dx > 80 && Math.abs(dy) <= 24 && Math.abs(dy) <= dx / 2;

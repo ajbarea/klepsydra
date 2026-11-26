@@ -10,6 +10,7 @@ use std::time::Instant;
 use klepsydra_fleet::cue::Cues;
 use klepsydra_fleet::hub::{Hub, Sink};
 use klepsydra_fleet::ledger::{Ledger, Receiver, Shared, TodayView};
+use klepsydra_fleet::needs;
 use klepsydra_fleet::queue;
 use klepsydra_fleet::receiver;
 use klepsydra_fleet::scan::Problem;
@@ -466,26 +467,45 @@ pub async fn open_wall(app: AppHandle, focus: String) -> Result<(), String> {
 /// `wall_density`; the first is the default (wall `density.js` DENSITIES).
 const DENSITIES: [&str; 3] = ["auto", "comfortable", "compact"];
 const DENSITY_KEY: &str = "wall_density";
+/// The Needs you layouts (wall `rooms.js` LAYOUTS) under `needs_layout`:
+/// two rooms, inbox and floor, amber door; the first is the default.
+const LAYOUTS: [&str; 3] = ["B", "D", "E"];
+const LAYOUT_KEY: &str = "needs_layout";
+
+/// The saved choice under `key`, or the first of `choices` for a missing or unknown value.
+fn choice_of(
+    prefs: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+    choices: &[&'static str],
+) -> &'static str {
+    let saved = prefs.and_then(|p| p.get(key)?.as_str());
+    choices
+        .iter()
+        .copied()
+        .find(|d| Some(*d) == saved)
+        .unwrap_or(choices[0])
+}
+
+/// The value to save for `choice`, or an error naming the choices.
+fn choice_value(what: &str, choice: &str, choices: &[&str]) -> Result<Value, String> {
+    if choices.contains(&choice) {
+        Ok(Value::from(choice))
+    } else {
+        Err(format!(
+            "unknown {what} {choice:?}; one of {}",
+            choices.join(", ")
+        ))
+    }
+}
 
 /// The saved density, or the default for a missing or unknown value.
 fn density_of(prefs: Option<&serde_json::Map<String, Value>>) -> &'static str {
-    let saved = prefs.and_then(|p| p.get(DENSITY_KEY)?.as_str());
-    DENSITIES
-        .into_iter()
-        .find(|d| Some(*d) == saved)
-        .unwrap_or(DENSITIES[0])
+    choice_of(prefs, DENSITY_KEY, &DENSITIES)
 }
 
 /// The value to save for `density`, or an error naming the choices.
 fn density_value(density: &str) -> Result<Value, String> {
-    if DENSITIES.contains(&density) {
-        Ok(Value::from(density))
-    } else {
-        Err(format!(
-            "unknown density {density:?}; one of {}",
-            DENSITIES.join(", ")
-        ))
-    }
+    choice_value("density", density, &DENSITIES)
 }
 
 /// The wall's saved card density, read like the other prefs.
@@ -501,6 +521,61 @@ pub fn set_wall_density(app: AppHandle, density: String) -> Result<(), String> {
         return Err("prefs.json could not be saved, so the density is not kept.".to_string());
     }
     Ok(())
+}
+
+/// The wall's saved Needs you layout.
+#[tauri::command]
+pub fn get_needs_layout(app: AppHandle) -> String {
+    choice_of(crate::read_prefs(&app).as_ref(), LAYOUT_KEY, &LAYOUTS).to_owned()
+}
+
+/// Save the Needs you layout chosen in the wall's settings.
+#[tauri::command]
+pub fn set_needs_layout(app: AppHandle, layout: String) -> Result<(), String> {
+    if !crate::write_pref(&app, LAYOUT_KEY, choice_value("layout", &layout, &LAYOUTS)?) {
+        return Err("prefs.json could not be saved, so the layout is not kept.".to_string());
+    }
+    Ok(())
+}
+
+/// The Needs you file's path, as its panel follows it.
+fn needs_file(app: &AppHandle) -> Result<PathBuf, String> {
+    needs_source(app).0
+}
+
+/// Mark a Needs you item done from the wall: `block` is the item's lines as
+/// the wall read them; they leave the file. Returns what Undo needs.
+#[tauri::command]
+pub async fn needs_done(app: AppHandle, block: String) -> Result<needs::Undo, String> {
+    let path = needs_file(&app)?;
+    tauri::async_runtime::spawn_blocking(move || needs::mark_done(&path, &block))
+        .await
+        .map_err(|e| format!("Could not save the Needs you file: {e}"))?
+}
+
+/// Put back an item marked done from the wall.
+#[tauri::command]
+pub async fn needs_undo(app: AppHandle, undo: needs::Undo) -> Result<(), String> {
+    let path = needs_file(&app)?;
+    tauri::async_runtime::spawn_blocking(move || needs::undo_done(&path, &undo))
+        .await
+        .map_err(|e| format!("Could not save the Needs you file: {e}"))?
+}
+
+/// Open `url`, a link written in the Needs you file, in the default browser:
+/// only an https address of plain URL characters that the file holds now.
+#[tauri::command]
+pub async fn needs_open(app: AppHandle, url: String) -> Result<(), String> {
+    let path = needs_file(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let text = klepsydra_fleet::bounded::read_text(&path, queue::MAX_BYTES).map_err(|_| {
+            "The Needs you file could not be read, so no link is opened.".to_string()
+        })?;
+        needs::link_in(&text, &url)?;
+        crate::launch::open_link(&url)
+    })
+    .await
+    .map_err(|e| format!("Could not open the link: {e}"))?
 }
 
 #[cfg(test)]
@@ -576,6 +651,24 @@ mod tests {
             let p = prefs(serde_json::json!({ "zoom": 2, "wall_density": saved }));
             assert_eq!(density_of(Some(&p)), d);
         }
+    }
+
+    #[test]
+    fn the_needs_layout_defaults_to_b_and_reads_back() {
+        assert_eq!(choice_of(None, LAYOUT_KEY, &LAYOUTS), "B");
+        for bad in [serde_json::json!("b"), serde_json::json!("A"), Value::Null] {
+            let p = prefs(serde_json::json!({ "needs_layout": bad }));
+            assert_eq!(choice_of(Some(&p), LAYOUT_KEY, &LAYOUTS), "B");
+        }
+        for l in LAYOUTS {
+            let p = prefs(
+                serde_json::json!({ "needs_layout": choice_value("layout", l, &LAYOUTS).unwrap() }),
+            );
+            assert_eq!(choice_of(Some(&p), LAYOUT_KEY, &LAYOUTS), l);
+        }
+        assert!(choice_value("layout", "C", &LAYOUTS)
+            .unwrap_err()
+            .contains("B, D, E"));
     }
 
     #[test]

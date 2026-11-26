@@ -1,158 +1,291 @@
+// Needs you and Agents (#386): the model behind every number, the keys, Done
+// and Undo, the toasts' events, the lanes and the layout pref.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import {
-  parseNeedsItems,
-  parseQueueNow,
-  markItemDone,
-  undoItemDone,
-  needsCount,
-  workingCount,
-  parseLayout,
-  extractLinks,
-  cleanItemText,
-  DEFAULT_LAYOUT,
-  LAYOUTS,
-} from "./fleet/rooms.js";
+import { execFileSync } from "node:child_process";
 
-test("parseLayout: valid layouts and fallback default", () => {
+globalThis.window ??= {};
+const { needsModel, dueOf, dueLabel, itemParts, dueNow } = await import("./fleet/needs.js");
+const { asksCount, parse, sections, toTree } = await import("./fleet/queue.js");
+const rooms = await import("./fleet/rooms.js");
+const { LAYOUTS, DEFAULT_LAYOUT, parseLayout, keyAction, transitions, lanes, createDone, autoOpens, swipeDone } = rooms;
+
+const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+const TODAY = new Date(2026, 10, 25, 9, 30); // Wed 11-25
+
+// The real file's shape, its words made up: a title line, sections, nested
+// steps, links, done items and dates written as the agents write them.
+const FILE = `# Needs you
+
+Your list, soonest first.
+
+## Today (Wed 11-25)
+
+- 📋 **Alpha review (Wed 11-25):** read the brief, then [the PR](https://example.com/pr/1).
+- ✅ **Bravo:** done already.
+
+## Coming up
+
+- 📋 **Thu 11-27, 9:30 am: cedar meeting.** Bring the notes [doc](https://example.com/doc?id=2&x=1).
+  - 📋 nested step one [inner](https://example.com/inner)
+  - ✅ nested done
+- 📋 **Delta 12-06: ember deadline** (two pages).
+- 📋 Plain item with no bold and no date
+- ✅ **Echo:** old.
+
+## When convenient
+
+- 📋 **Fable:** [notes/plan.md](notes/plan.md) and \`code\`.
+`;
+
+test("one parse drives every number: the room lists exactly what the header counts", () => {
+  const m = needsModel(FILE, TODAY);
+  assert.equal(m.count, m.items.length);
+  assert.equal(m.count, asksCount(sections(toTree(parse(FILE)))));
+  assert.equal(m.count, 5, "done items and nested steps never count");
+  assert.deepEqual(
+    m.items.map((i) => i.title),
+    ["Alpha review (Wed 11-25)", "Thu 11-27, 9:30 am: cedar meeting", "Delta 12-06: ember deadline", "Plain item with no bold and no date", "Fable"],
+  );
+  assert.deepEqual(
+    m.items.map((i) => i.section),
+    ["Today (Wed 11-25)", "Coming up", "Coming up", "Coming up", "When convenient"],
+  );
+  for (const shape of ["scripts/fixtures/needs-you-shape.md", "scripts/fixtures/needs-demo.md"]) {
+    const text = read(shape);
+    const n = needsModel(text, TODAY);
+    assert.equal(n.count, asksCount(sections(toTree(parse(text)))) ?? 0, shape);
+  }
+});
+
+test("an item's block is its exact source lines, nested lines too, which Done sends to the app", () => {
+  const m = needsModel(FILE, TODAY);
+  const cedar = m.items[1];
+  assert.equal(
+    cedar.block,
+    "- 📋 **Thu 11-27, 9:30 am: cedar meeting.** Bring the notes [doc](https://example.com/doc?id=2&x=1).\n  - 📋 nested step one [inner](https://example.com/inner)\n  - ✅ nested done",
+  );
+  for (const item of m.items) assert.ok(FILE.includes(item.block), item.title);
+  assert.deepEqual(
+    cedar.links.map((l) => l.url),
+    ["https://example.com/doc?id=2&x=1", "https://example.com/inner"],
+  );
+  assert.deepEqual(m.items[4].links, [], "a relative link is not offered");
+  const crlf = needsModel(FILE.replace(/\n/g, "\r\n"), TODAY);
+  assert.equal(crlf.items[1].block, cedar.block, "CRLF files give the same block");
+});
+
+test("two identical items keep distinct keys", () => {
+  const m = needsModel("- 📋 same\n- 📋 same\n", TODAY);
+  assert.equal(m.count, 2);
+  assert.notEqual(m.items[0].key, m.items[1].key);
+  assert.equal(m.items[0].block, m.items[1].block);
+});
+
+test("details render the item's markdown, never its raw link syntax", () => {
+  const li = toTree(parse("- 📋 **T:** see [x](https://example.com/a)"))[0].kids[0];
+  const { title, detail } = itemParts(li);
+  assert.equal(title, "T");
+  const flat = JSON.stringify(detail);
+  assert.ok(!flat.includes("](https://"), flat);
+  assert.ok(flat.includes('"link":"https://example.com/a"'), flat);
+});
+
+test("due dates: the first date the item names, nearest today, shown as a date", () => {
+  assert.equal(dueOf("Wed 11-25 review", TODAY)?.toDateString(), new Date(2026, 10, 25).toDateString());
+  assert.equal(dueOf("by 12-06", TODAY)?.toDateString(), new Date(2026, 11, 6).toDateString());
+  assert.equal(dueOf("Jan 3 kickoff", TODAY)?.getFullYear(), 2027, "a date past New Year is next year's");
+  assert.equal(dueOf("2026-12-10 due", TODAY)?.getDate(), 10);
+  assert.equal(dueOf("Dec 6", TODAY)?.getMonth(), 11);
+  assert.equal(dueOf("Delta 12-06: deadline", TODAY)?.getDate(), 6, "a colon after the date");
+  assert.equal(dueOf("Thu 11-27, 9:30-10:00 am", TODAY)?.getDate(), 27, "the date, not the time range");
+  for (const none of ["9:30-10:00 slot", "#12-3", "55-03", "1.5-2 hours", "no date at all", "13-40"]) assert.equal(dueOf(none, TODAY), null, none);
+  assert.deepEqual(dueLabel(new Date(2026, 10, 25), TODAY), { label: "Today", tone: "today", days: 0 });
+  assert.equal(dueLabel(new Date(2026, 10, 26), TODAY).label, "Tomorrow, Thu 11-26");
+  assert.equal(dueLabel(new Date(2026, 10, 27), TODAY).tone, "soon");
+  assert.equal(dueLabel(new Date(2026, 11, 6), TODAY).label, "Sun 12-06");
+  assert.equal(dueLabel(new Date(2026, 11, 6), TODAY).tone, "later");
+  assert.equal(dueLabel(new Date(2026, 10, 20), TODAY).tone, "past");
+});
+
+test("the next dated item is the soonest from today on; past dates are not next", () => {
+  const m = needsModel(FILE, TODAY);
+  assert.equal(m.next.title, "Alpha review (Wed 11-25)");
+  const later = needsModel(FILE, new Date(2026, 10, 28));
+  assert.equal(later.next.title, "Delta 12-06: ember deadline");
+  assert.ok(dueNow(m.items[0], TODAY) && !dueNow(m.items[2], TODAY));
+  assert.equal(needsModel("", TODAY).next, null);
+});
+
+test("Done sends the item's block to the app and Undo puts back that block alone, once", async () => {
+  const calls = [];
+  const invoke = async (cmd, args) => {
+    calls.push([cmd, args]);
+    if (cmd === "needs_done") return { block: args.block, after: "above", at: 3 };
+    return null;
+  };
+  const writer = createDone(invoke);
+  const item = needsModel(FILE, TODAY).items[1];
+  assert.deepEqual(await writer.done(item), { ok: true });
+  assert.ok(writer.undoable);
+  assert.deepEqual(await writer.undo(), { ok: true });
+  assert.deepEqual(await writer.undo(), { ok: false, why: null }, "a second Undo does nothing");
+  assert.deepEqual(calls, [
+    ["needs_done", { block: item.block }],
+    ["needs_undo", { undo: { block: item.block, after: "above", at: 3 } }],
+  ]);
+});
+
+test("an Undo window ends only its own Done, never a later one's", async () => {
+  let n = 0;
+  const writer = createDone(async (cmd) => (cmd === "needs_done" ? { block: "- x", after: null, at: n++ } : null));
+  const [a, b] = needsModel(FILE, TODAY).items;
+  await writer.done(a);
+  const endsA = writer.expiry();
+  await writer.done(b);
+  endsA();
+  assert.equal(writer.undoable, true, "the second Done can still be undone");
+  writer.expiry()();
+  assert.equal(writer.undoable, false);
+});
+
+test("Done runs one at a time, so a held key cannot remove several rows", async () => {
+  let release;
+  const calls = [];
+  const writer = createDone((cmd, args) => {
+    calls.push(cmd);
+    return new Promise((r) => {
+      release = () => r({ block: args.block, after: null, at: 0 });
+    });
+  });
+  const [a, b] = needsModel(FILE, TODAY).items;
+  const first = writer.done(a);
+  assert.deepEqual(await writer.done(b), { ok: false, why: null });
+  release();
+  await first;
+  assert.deepEqual(calls, ["needs_done"]);
+});
+
+test("a refused Done says why and leaves nothing to undo", async () => {
+  const writer = createDone(async () => {
+    throw "That item is no longer in the Needs you file";
+  });
+  const r = await writer.done(needsModel(FILE, TODAY).items[0]);
+  assert.equal(r.ok, false);
+  assert.match(r.why, /no longer/);
+  assert.equal(writer.undoable, false);
+});
+
+test("every command the pages invoke is one the app registers", () => {
+  const handler = read("src-tauri/src/main.rs").match(/generate_handler!\[([\s\S]*?)\]/)[1];
+  const registered = new Set(handler.split(",").map((h) => h.trim().split("::").at(-1)).filter(Boolean));
+  const pages = ["src/fleet/wall.js", "src/fleet/rooms.js", "src/fleet/queuepanel.js", "src/fleet/drawer.js", "src/fleet/replay.js", "src/fleet/split.js", "src/main.js"];
+  const used = new Set();
+  for (const f of pages) {
+    for (const m of read(f).matchAll(/\b(?:invoke|tauri|follow)\(\s*"([a-z_]+)"/g)) used.add(m[1]);
+  }
+  assert.ok(used.has("needs_done") && used.has("needs_undo") && used.has("needs_open") && used.has("set_needs_layout"));
+  assert.deepEqual([...used].filter((c) => !registered.has(c)), []);
+});
+
+test("a blocked row answers through the wall's jump, with the card's id and session name", () => {
+  const src = read("src/fleet/rooms.js");
+  assert.match(src, /invoke\("jump_to_terminal", \{ id: c\.id, name: c\.session \?\? "" \}\)/);
+  assert.doesNotMatch(read("src/fleet/wall.js"), /\brequest\(/, "the wrap-up request is a value, not a function");
+});
+
+test("block and finish events are keyed by session_id, blocks first, none on the first look", () => {
+  const s = (session_id, status) => ({ session_id, status });
+  assert.deepEqual(transitions(null, [s("a", "needs_you")]), []);
+  const before = new Map([
+    ["a", "working"],
+    ["b", "working"],
+    ["c", "needs_you"],
+  ]);
+  assert.deepEqual(transitions(before, [s("a", "done"), s("b", "needs_you"), s("c", "needs_you")]), [
+    { id: "b", kind: "blocked" },
+    { id: "a", kind: "finished" },
+  ]);
+  assert.deepEqual(transitions(new Map([["a", "needs_you?"]]), [s("a", "needs_you")]), [], "a quiet needs-you is not a new block");
+});
+
+test("E opens its panel on a block only when nobody is typing and no dialog is open", () => {
+  assert.equal(autoOpens({ layout: "E", typing: false, modal: false }), true);
+  assert.equal(autoOpens({ layout: "E", typing: true, modal: false }), false);
+  assert.equal(autoOpens({ layout: "E", typing: false, modal: true }), false);
+  for (const l of ["B", "D"]) assert.equal(autoOpens({ layout: l, typing: false, modal: false }), false);
+});
+
+test("keys: N, A, Esc and the room's letters; never with a modifier, a repeat, a dialog, typing, or Enter on a control", () => {
+  const k = (key, more = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, repeat: false, defaultPrevented: false, ...more });
+  const needs = { view: "needs", typing: false, modal: false, control: false, jump: false };
+  const agents = { ...needs, view: "agents" };
+  assert.equal(keyAction(k("n"), agents), "needs");
+  assert.equal(keyAction(k("N"), agents), "needs");
+  assert.equal(keyAction(k("a"), needs), "agents");
+  assert.equal(keyAction(k("Escape"), needs), "back");
+  assert.equal(keyAction(k("Escape"), agents), null);
+  for (const [key, act] of [["j", "down"], ["ArrowDown", "down"], ["k", "up"], ["o", "open"], ["Enter", "open"], ["e", "done"], ["u", "undo"], ["c", "copy"]])
+    assert.equal(keyAction(k(key), needs), act, key);
+  for (const key of ["j", "o", "e", "u", "c"]) assert.equal(keyAction(k(key), agents), null, `${key} outside the room`);
+  for (const mod of ["ctrlKey", "metaKey", "altKey"]) {
+    assert.equal(keyAction(k("c", { [mod]: true }), needs), null, `${mod}+C copies the selection`);
+    assert.equal(keyAction(k("n", { [mod]: true }), agents), null);
+  }
+  for (const key of ["e", "n", "a", "u", "c", "o", "Enter", "Escape"]) assert.equal(keyAction(k(key, { repeat: true }), needs), null, `held ${key}`);
+  assert.equal(keyAction(k("j", { repeat: true }), needs), "down", "holding j moves on");
+  for (const key of ["n", "a", "Escape", "e"]) {
+    assert.equal(keyAction(k(key), { ...needs, modal: true }), null, `${key} behind a dialog`);
+    assert.equal(keyAction(k(key), { ...needs, typing: true }), null, `${key} while typing`);
+  }
+  assert.equal(keyAction(k("Enter"), { ...needs, control: true }), null, "Enter on a focused button is the button's");
+  assert.equal(keyAction(k("Enter"), { ...needs, control: true, jump: true }), null);
+  assert.equal(keyAction(k("Enter"), { ...agents, jump: true }), "jump");
+  assert.equal(keyAction(k("Enter"), agents), null, "no Undo by Enter: Enter after E is not Undo");
+  assert.equal(keyAction(k("e", { defaultPrevented: true }), needs), null);
+});
+
+test("a Done swipe is rightward, long and level; a diagonal scroll is not one", () => {
+  assert.equal(swipeDone(120, 4), true);
+  assert.equal(swipeDone(120, 30), false);
+  assert.equal(swipeDone(90, 50), false, "diagonal");
+  assert.equal(swipeDone(60, 0), false, "short");
+  assert.equal(swipeDone(-120, 0), false, "leftward");
+});
+
+test("lanes: B is blocked, working, finished, idle; D puts Working first; E keeps the wall", () => {
+  const c = (id, status) => ({ id, status });
+  const cards = [c("w1", "working"), c("n1", "needs_you"), c("d1", "done"), c("e1", "error"), c("i1", "ended"), c("w2", "working"), c("s1", "silent")];
+  const shape = (out) => out.map((x) => (x.lane ? `[${x.label} ${x.count}]` : x.id)).join(" ");
+  assert.equal(shape(lanes(cards, "B")), "[Blocked 2] n1 e1 [Working 2] w1 w2 [Finished 1] d1 [Idle 2] i1 s1");
+  assert.equal(shape(lanes(cards, "D")), "[Working 2] w1 w2 [Needs you 2] n1 e1 [Finished 1] d1 [Idle 2] i1 s1");
+  assert.equal(lanes(cards, "E"), cards);
+  assert.deepEqual(lanes([], "B"), []);
+});
+
+test("the layout pref: B by default, D and E kept, anything else B; the app keeps it in prefs.json", () => {
   assert.equal(DEFAULT_LAYOUT, "B");
   assert.deepEqual(LAYOUTS, ["B", "D", "E"]);
-  assert.equal(parseLayout("B"), "B");
-  assert.equal(parseLayout("D"), "D");
-  assert.equal(parseLayout("E"), "E");
-  assert.equal(parseLayout("invalid"), "B");
-  assert.equal(parseLayout(null), "B");
-  assert.equal(parseLayout(undefined), "B");
+  for (const v of ["B", "D", "E"]) assert.equal(parseLayout(v), v);
+  for (const v of ["b", "A", "", null, undefined, "C"]) assert.equal(parseLayout(v), "B");
+  const fleet = read("src-tauri/src/fleet.rs");
+  assert.match(fleet, /const LAYOUTS: \[&str; 3\] = \["B", "D", "E"\];/, "the app's list matches rooms.js");
+  const wall = read("src/fleet/wall.js");
+  assert.match(wall, /tauri\("get_needs_layout"\)\.then\(\(l\) => rooms\.setLayout\(l\)/);
+  assert.match(wall, /tauri\("set_needs_layout", \{ layout \}\)/);
 });
 
-test("extractLinks: finds markdown links and classifies them", () => {
-  const text = "See [bravo#601](https://example.com/item) and [spec.md](docs/spec.md) and [folder/](dir/)";
-  const links = extractLinks(text);
-  assert.equal(links.length, 3);
-  assert.equal(links[0].label, "bravo#601");
-  assert.equal(links[0].kind, "pr");
-  assert.equal(links[1].label, "spec.md");
-  assert.equal(links[1].kind, "file");
-  assert.equal(links[2].label, "folder/");
-  assert.equal(links[2].kind, "folder");
+test("the old stacked drawer is gone: no Queue button, edge tab or Ctrl+Alt+B", () => {
+  const html = read("src/wall.html");
+  for (const gone of ['id="queue-open"', 'id="queue-tab"', '<dialog id="queue"', "Control+Alt+B"]) assert.ok(!html.includes(gone), gone);
+  assert.doesNotMatch(read("src/fleet/queuepanel.js"), /toggleKey|createQueuePanel/);
+  assert.match(html, /id="needs-pill"[^>]*aria-keyshortcuts="N"/);
+  assert.match(html, /id="agents-pill"[^>]*aria-keyshortcuts="A"/);
 });
 
-test("cleanItemText: parses bold title and detail", () => {
-  const { title, detail } = cleanItemText("- 📋 **Alpha: bravo cedar:** North → Orbit");
-  assert.equal(title, "Alpha: bravo cedar");
-  assert.equal(detail, "North → Orbit");
-
-  const unbold = cleanItemText("- 📋 Review PR #42 (5 min): approve or drop");
-  assert.equal(unbold.title, "Review PR #42 (5 min)");
-  assert.equal(unbold.detail, "approve or drop");
+test("no worker's private spec file is tracked", () => {
+  const tracked = execFileSync("git", ["ls-files"], { cwd: new URL("..", import.meta.url), encoding: "utf8" }).split("\n");
+  assert.deepEqual(tracked.filter((f) => /(^|\/)IMPL-[^/]*\.md$/.test(f)), []);
+  assert.match(read(".gitignore"), /^IMPL-agy\.md$/m);
 });
-
-test("parseNeedsItems with real fixture needs-you-shape.md", () => {
-  const fixture = readFileSync(new URL("../scripts/fixtures/needs-you-shape.md", import.meta.url), "utf8");
-  const items = parseNeedsItems(fixture);
-  assert.equal(items.length, 18, "counts all 18 open steps in fixture");
-
-  // Groups
-  const todayItems = items.filter((it) => it.group === "Today");
-  assert.equal(todayItems.length, 1);
-  assert.equal(todayItems[0].title.startsWith("Alpha: bravo"), true);
-
-  const comingUpItems = items.filter((it) => it.group === "Coming up");
-  assert.equal(comingUpItems.length, 13);
-
-  const convenientItems = items.filter((it) => it.group === "When convenient");
-  assert.equal(convenientItems.length, 4);
-
-  // Completed items are ignored
-  const withDone = fixture + "\n- ✅ **Done item:** completed task\n";
-  const itemsWithDone = parseNeedsItems(withDone);
-  assert.equal(itemsWithDone.length, 18, "done items are never shown");
-});
-
-test("parseQueueNow with fixture queue-demo.md", () => {
-  const fixture = readFileSync(new URL("../scripts/fixtures/queue-demo.md", import.meta.url), "utf8");
-  const items = parseQueueNow(fixture);
-  assert.ok(items.length >= 2, "extracts items from Running now");
-  const tools = items.find((it) => it.title.includes("tools"));
-  assert.ok(tools);
-});
-
-test("markItemDone and undoItemDone", () => {
-  const text = `# Needs you
-
-## Today
-- 📋 **Item 1:** detail 1
-- 📋 **Item 2:** detail 2
-- 📋 **Item 3:** detail 3
-`;
-  const itemsBefore = parseNeedsItems(text);
-  assert.equal(itemsBefore.length, 3);
-
-  const { newText, removedLine } = markItemDone(text, itemsBefore[1].lineIndex);
-  assert.ok(removedLine.includes("Item 2"));
-  const itemsAfter = parseNeedsItems(newText);
-  assert.equal(itemsAfter.length, 2);
-  assert.equal(itemsAfter[0].title, "Item 1");
-  assert.equal(itemsAfter[1].title, "Item 3");
-
-  const restoredText = undoItemDone(newText, itemsBefore[1].lineIndex, removedLine);
-  const itemsRestored = parseNeedsItems(restoredText);
-  assert.equal(itemsRestored.length, 3);
-  assert.equal(itemsRestored[1].title, "Item 2");
-});
-
-test("needsCount: open asks + sessions blocked on AJ", () => {
-  const fixture = readFileSync(new URL("../scripts/fixtures/needs-you-shape.md", import.meta.url), "utf8");
-  const sessions = [
-    { id: "1", status: "working" },
-    { id: "2", status: "needs_you" },
-    { id: "3", status: "needs_you" },
-    { id: "4", status: "done" },
-  ];
-  const count = needsCount(fixture, sessions);
-  assert.equal(count, 18 + 2, "18 asks + 2 blocked sessions");
-});
-
-test("workingCount: counts working sessions", () => {
-  const sessions = [
-    { id: "1", status: "working" },
-    { id: "2", status: "working" },
-    { id: "3", status: "needs_you" },
-    { id: "4", status: "done" },
-  ];
-  assert.equal(workingCount(sessions), 2);
-});
-
-test("Layout B: two rooms with dedicated titles, blocked sessions first, lanes", () => {
-  assert.equal(DEFAULT_LAYOUT, "B");
-  const fixture = readFileSync(new URL("../scripts/fixtures/needs-you-shape.md", import.meta.url), "utf8");
-  const items = parseNeedsItems(fixture);
-  assert.ok(items.length > 0);
-
-  // Group order: Blocked, Today, Coming up, When convenient
-  const groups = new Set(items.map((it) => it.group));
-  assert.ok(groups.has("Today"));
-  assert.ok(groups.has("Coming up"));
-  assert.ok(groups.has("When convenient"));
-});
-
-test("Layout D: Inbox and Floor triage layout, All clear at 0, N/Esc toggle", () => {
-  assert.equal(parseLayout("D"), "D");
-  // At zero count in D, header shows "All clear"
-  const emptyCount = needsCount("", []);
-  assert.equal(emptyCount, 0);
-});
-
-test("Layout E: Amber Door right panel layout, focus card at top", () => {
-  assert.equal(parseLayout("E"), "E");
-  const fixture = readFileSync(new URL("../scripts/fixtures/needs-you-shape.md", import.meta.url), "utf8");
-  const items = parseNeedsItems(fixture);
-  assert.equal(items.length, 18);
-  const first = items[0];
-  assert.ok(first.title);
-  assert.ok(first.group);
-});
-
-
-

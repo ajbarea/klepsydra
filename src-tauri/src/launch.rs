@@ -777,6 +777,50 @@ pub async fn open_github(
     .into())
 }
 
+/// Open `url`, an https link already checked by `needs::link_in`, in the
+/// default browser: on Windows through the shell's URL association (an
+/// in-process call, as the jump's UI Automation is); on Linux through the
+/// launcher's `link`.
+pub fn open_link(url: &str) -> Result<(), String> {
+    if !klepsydra_fleet::needs::safe_url(url) {
+        return Err("Only an https link is opened.".into());
+    }
+    #[cfg(windows)]
+    {
+        use windows::core::{w, HSTRING, PCWSTR};
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let file = HSTRING::from(url);
+        // SAFETY: both strings outlive the call; no window, parameters or folder.
+        let code = unsafe {
+            ShellExecuteW(
+                None,
+                w!("open"),
+                &file,
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        // ShellExecute reports success as a value above 32.
+        if code.0 as isize > 32 {
+            Ok(())
+        } else {
+            Err(format!(
+                "Windows could not open the link (code {}).",
+                code.0 as isize
+            ))
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        logged("open link", None, || {
+            run_open("link", url, &[], JUMP_TIMEOUT, jump_timed_out)
+        })
+        .map(drop)
+    }
+}
+
 /// End session `id` as if /exit were typed in its terminal. The wall asks
 /// first and waits out its undo window before calling this.
 #[tauri::command]

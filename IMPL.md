@@ -1,30 +1,28 @@
-# IMPL: #517 launch lock before /run/user exists (PR #518, review r2, r3 & r4 fixes)
+# IMPL: Needs you and Agents as two experiences, three layouts (#386, PR #571)
 
-## Task
-PR #518 review r3 & r4 (PR #551 into `fix/launch-lock-runtime-dir-517`):
-S1 (vacuous guard on trace-age in doctor / test), N1-N3, plus r4 fixes (in-place `lock_trace`, single Linux `tab-pending` path, docs & PR #518 body, O1 & F6 tests).
-Design from r1/r2 stands: one lock folder per host and boot under ~/.local/state/klepsydra.
+Branch feat/needs-you-rooms-386, worktree .claude/worktrees/agy-386. Fix round after the
+11-25 review (PR #571 comment 7177426430): Opus authors. IMPL-agy.md beside this file is a
+private spec (gitignored): never commit it or copy its text.
 
-## Shape
-- `lock_dir` + `lock_why` (identical block in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh,
-  statusline/klepsydra-statusline.sh, test-checked): LOCK_DIR = `run-<host>-<boot>` (seams
-  KLEPSYDRA_STATE, KLEPSYDRA_BOOT_ID, KLEPSYDRA_HOSTNAME); on refusal LOCK_WHY names the
-  reason (symlink, missing, not a folder, another user's, not writable / read-only, group or
-  other writable, mkdir's own error text). Prune touches only this host's `run-<host>-<uuid>`
-  while hostnames differ (an unusable hostname locks in `run-_-<boot>` and prunes nothing).
-- Hook: `lock_trace` writes `<epoch> <why>` in-place (`{ printf ...; } 2>/dev/null >"$file"`) to
-  `$KLEPSYDRA_DIR/lock-refused` only when `own_data_dir` (`dev.ajsoftworks.klepsydra`) holds and
-  the target is a regular file or absent (never a symlink or FIFO), at most every 600 s, builtins
-  only; also when the lock file will not open.
-- Launcher: the message carries LOCK_WHY; jump says the window changed and no tab opened.
-- `fleet doctor` "lock folder": runs the installed hook's block (else the checkout's): FAIL with
-  the reason, warn on a trace from this boot in the last hour (`t >= btime && t <= now`), else
-  ok with the folder.
-- recover's wait: deadline on /proc/uptime (FLEET_UPTIME seam); tick count if unreadable.
+## Slice: the review's Blocking and Should-fix
+1. Done writes the file: Rust `needs_done` / `needs_undo` (klepsydra-fleet `needs.rs`): remove
+   the item's exact block (nested lines too) by text, atomic replace, re-read before the rename;
+   undo reinserts that block only, after its old neighbour line.
+2. Blocked rows built from `card()`; Answer jumps with `jump_to_terminal`.
+3. Block/finish toast keyed by `session_id`; Enter on it focuses the card; E opens its panel once.
+4. Text nodes only in rooms.js / needs.js; both in the queue-render guard.
+5. Phone: the needs view hides the wall and the queue.
+6. Shared: one parse drives pill, list and subtitle; tally says "blocked"; old drawer, edge tab
+   and Ctrl+Alt+B gone (the queue file folds under the wall); keys skip modifiers, repeats,
+   dialogs and focused controls; swipe must be horizontal; keyed repaint.
+7. Layout pref in prefs.json (`needs_layout`), applied at load.
 
-## State
-- r3/r4 (agy, #551) merged into this branch; r5 review clean (all r4 findings mutation-checked).
-- main merged in (conflicts in launch.sh, test_launch.sh, IMPL.md came from #551's squash dropping its main-merge parent; branch side kept).
-- PR body rewritten from the final state (status, mutation table F2-F7, O1, T1).
-- Next: CI green on the merged head, whole-PR review against main (review-batch3), merge, `fleet install`.
-- Last step before merge: reread the #518 body against the final diff.
+## Done
+- (fill as steps land)
+
+## Next
+- Rust module + tests, then JS model + tests, then the DOM, then browser test and shots.
+
+## Verify
+- `cargo test -p klepsydra-fleet needs`, `node --test src/fleet-rooms.test.js src/guards.test.js`,
+  browser test `scripts/test_rooms_browser.py` under the heavy lock, `build-windows.sh --check`.

@@ -314,7 +314,7 @@ test("the wall, the strip and the drawer read the theme now worn, not a fixed ca
   assert.match(read("src/main.js"), /cast: \(\) => theme,/, "and draws the theme now worn");
   const html = read("src/wall.html");
   assert.match(html, /<label class="theme-pick"[^>]*><span>Characters<\/span><select id="theme"><\/select><\/label>/);
-  assert.match(wall, /refillPortrait\(\);\n  drawer\.repaint\(\);\n  queue\.retheme\(\);/, "a switch refills an open portrait, the Ledger and the Queue's keeper, reading nothing");
+  assert.match(wall, /refillPortrait\(\);\n  drawer\.repaint\(\);\n  queueFile\?\.\(\);/, "a switch refills an open portrait, the Ledger and the queue file's keeper, reading nothing");
   const drawer = read("src/fleet/drawer.js");
   assert.match(drawer, /const key = JSON\.stringify\(\[view, filter, \[\.\.\.names\], cast\(\)\.label\]\);/, "the Ledger repaints for a new theme");
   assert.match(drawer, /repaint: \(\) => paint\(\),/);

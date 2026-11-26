@@ -7,8 +7,9 @@ import { askedNote, asking, isReady, readiness, wrapupAnnouncements, wrapupCopy,
 import { inTauri, served, subscribe, subscribeTheme, todayLedger } from "./feed.js";
 import { DEFAULT_THEME, THEME_LABELS, THEME_SAVE_MS, THEME_WAIT_MS, keeperOf, loadTheme, loadedTheme, themeFile, themeId } from "./theme.js";
 import { createDrawer } from "./drawer.js";
-import { createQueuePanel, followNeeds, followQueue } from "./queuepanel.js";
-import { createRooms } from "./rooms.js";
+import { createQueueFile, followNeeds } from "./queuepanel.js";
+import { DEFAULT_LAYOUT, createRooms, lanes } from "./rooms.js";
+import { safeHref } from "./queue.js";
 import { createEdge } from "./sidepanel.js";
 import { showFace } from "./face.js";
 import { MAKER_ICONS } from "./icons.js";
@@ -46,7 +47,7 @@ const ACCOUNT_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 14c.6-2.8 2.6-4.2 5-4.2s4.4 1.4 5 4.2"/></svg><span class="visually-hidden">account </span><span></span>';
 
 const TALLY = [
-  ["needs", "needs you"],
+  ["needs", "blocked"],
   ["working", "working"],
   ["done", "done"],
   ["error", "error"],
@@ -451,40 +452,59 @@ const drawer = createDrawer({
   fetchToday: todayLedger,
   onResized: () => showDensity(),
 });
-const queue = createQueuePanel({
-  dialog: document.getElementById("queue"),
-  button: document.getElementById("queue-open"),
-  tab: document.getElementById("queue-tab"),
-  edge,
-  cast: () => cast,
-  onResized: () => showDensity(),
-});
+let latest = { state: "empty", cards: [] }; // the last render's, which a deferred sync reads
+// The queue file folds under the Agents wall (#386); the phone has no queue file to show.
+const queueFile = served ? null : createQueueFile({ section: document.getElementById("queue-file"), cast: () => cast });
+// Needs you and Agents (#386): one room each, laid out as the settings pick.
 const rooms = createRooms({
-  wallContainer: wall,
-  headerNav: document.querySelector(".rooms-nav"),
-  needsRoomContainer: document.getElementById("needs-room"),
-  phoneTabBar: document.getElementById("phone-tabbar"),
-  getSessions: () => sessions,
-  getCast: () => cast,
-  onTerminal: (id) => request("terminal", id),
-  onSaveNeeds: (text) => {
-    if (inTauri && window.__TAURI__?.core?.invoke) {
-      window.__TAURI__.core.invoke("write_needs_file", { text }).catch(() => {});
-    }
+  nodes: {
+    needsPill: document.getElementById("needs-pill"),
+    agentsPill: document.getElementById("agents-pill"),
+    tabs: document.getElementById("phone-tabs"),
+    room: document.getElementById("needs-room"),
+    toast: document.getElementById("room-toast"),
+    picker: document.getElementById("needs-layout"),
+    note: document.getElementById("layout-note"),
   },
-  onLayoutChanged: () => {
+  cards: () => latest.cards,
+  makeFace: (c) => {
+    if (!c.face) return null;
+    const img = Object.assign(document.createElement("img"), { className: "ny-face", alt: "", decoding: "async" });
+    showFace(img, c.face, c.face2x, 40);
+    return img;
+  },
+  focusCard: (id) => focusCard(id),
+  invoke: inTauri ? (command, args) => tauri(command, args) : null,
+  // The desktop webview opens no new window: the app opens a link the Needs you file holds.
+  openLink: (url) => {
+    if (inTauri) return tauri("needs_open", { url });
+    if (!safeHref(url)?.startsWith("https:")) return Promise.reject(new Error("only an https link opens here"));
+    window.open(url, "_blank", "noopener,noreferrer");
+    return Promise.resolve();
+  },
+  savedLayout: (() => {
+    try {
+      return localStorage.getItem("klepsydra.needs.layout") ?? DEFAULT_LAYOUT;
+    } catch {
+      return DEFAULT_LAYOUT;
+    }
+  })(),
+  saveLayout: (layout) => {
+    try {
+      localStorage.setItem("klepsydra.needs.layout", layout);
+    } catch {
+      // A viewer's convenience only; the app keeps it in prefs.json.
+    }
+    return inTauri ? tauri("set_needs_layout", { layout }) : Promise.resolve();
+  },
+  onLayout: () => {
+    render();
     showDensity();
   },
 });
-followNeeds((view) => rooms.updateNeeds(view));
-followQueue((view) => rooms.updateQueue(view));
-const needsLayoutPicker = document.getElementById("needs-layout");
-if (needsLayoutPicker) {
-  needsLayoutPicker.value = rooms.getLayout();
-  needsLayoutPicker.addEventListener("change", (e) => {
-    rooms.setLayout(e.target.value);
-  });
-}
+// The phone wall serves no file: its Needs you lists the sessions blocked on you.
+if (served) rooms.updateNeeds({ text: null, calm: true, problem: "Your to-do list stays in the app on the PC; sessions blocked on you show here." });
+else followNeeds((view) => rooms.updateNeeds(view));
 let before;
 let wrapupBefore; // each card's wrap-up line at the last render
 let wasSafe = false;
@@ -497,7 +517,6 @@ let wasState = null;
 let revealed = false; // a focus request named an ended card, so the ended cards show
 let launchDir = null;
 let dirAsk = 0; // the latest get_launch_dir request; an older answer is dropped
-let latest = { state: "empty", cards: [] }; // the last render's, which a deferred sync reads
 
 // The empty state stands in for the wall while nothing runs. With only ended
 // cards it still does, and offers to clear them, until a focus request asks
@@ -590,6 +609,10 @@ function paint(el, c) {
   setText(ask.querySelector(".ask-lead"), c.askParts?.[0]);
   setText(ask.querySelector(".ask-keep"), c.askParts?.[1]);
   ask.title = c.ask ?? "";
+  // Inbox and Floor (#386): a blocked card links to its row in Needs you.
+  const toNeeds = ask.querySelector(".to-needs");
+  toNeeds.hidden = served || rooms.layout !== "D" || c.status !== "needs_you";
+  toNeeds.setAttribute("aria-label", `${c.name} in Needs you`);
 
   const repo = el.querySelector(".repo");
   const worktree = c.place?.worktree ? [Object.assign(document.createElement("span"), { className: "wt", textContent: ` / ${c.place.worktree}` })] : [];
@@ -877,6 +900,19 @@ const heldArrivals = new Set();
 const canSlide = () =>
   typeof document.startViewTransition === "function" && !reducedMotion();
 
+/** A status lane's head on the wall: its name and how many cards it holds. */
+function laneHead() {
+  const h = document.createElement("h2");
+  h.className = "lane-head";
+  h.append(Object.assign(document.createElement("span"), { className: "lane-name" }), Object.assign(document.createElement("span"), { className: "lane-count" }));
+  return h;
+}
+function paintLane(el, x) {
+  el.dataset.lane = x.lane;
+  setText(el.querySelector(".lane-name"), x.label);
+  setText(el.querySelector(".lane-count"), String(x.count));
+}
+
 // A snapshot (`snapshot` = ids that started needing) may slide and pulse; the 15 s tick passes nothing and does neither.
 // Returns what the live region should say about the wrap-up since the last render.
 function render(snapshot) {
@@ -896,7 +932,7 @@ function render(snapshot) {
   latest = { state, cards };
   cleared = new Set([...cleared].filter((id) => cardOf.has(id)));
   openText = new Set([...openText].filter((id) => cardOf.has(id)));
-  rooms.updateSessions(sessions);
+  rooms.updateSessions(sessions, { snapshot: Boolean(snapshot) });
   const said = wrapupAnnouncements(wrapupBefore, cards);
   wrapupBefore = wrapupLines(cards);
   const r = readiness(sessions, request);
@@ -923,7 +959,16 @@ function render(snapshot) {
       return el;
     };
     paintEmpty(!showsCards());
-    syncChildren(wall, visible, (c) => c.id, make, paint);
+    // Status lanes (#386): a head before each lane's cards, as the layout groups them.
+    const laid = lanes(visible, served ? "B" : rooms.layout);
+    wall.toggleAttribute("data-lanes", laid.length !== visible.length);
+    syncChildren(
+      wall,
+      laid,
+      (x) => (x.lane ? `lane:${x.lane}` : x.id),
+      (x) => (x.lane ? laneHead() : make(x)),
+      (el, x) => (x.lane ? paintLane(el, x) : paint(el, x)),
+    );
     for (const id of arriving) if (!cardOf.has(id)) arriving.delete(id); // left before it was ever shown
     const shown = new Set([...wall.children].map((el) => el.dataset.key));
     for (const id of heldArrivals) if (!shown.has(id)) heldArrivals.delete(id); // its card left while the window was hidden
@@ -943,8 +988,9 @@ function render(snapshot) {
       showDensity();
     }
   };
-  const was = [...wall.children].map((el) => el.dataset.key);
-  if (shouldSlide(was, visibleCards().map((c) => c.id), snapshot) && canSlide()) document.startViewTransition(() => sync());
+  const was = [...wall.children].map((el) => el.dataset.key).filter((k) => !k.startsWith("lane:"));
+  const next = lanes(visibleCards(), served ? "B" : rooms.layout).filter((x) => !x.lane).map((c) => c.id);
+  if (shouldSlide(was, next, snapshot) && canSlide()) document.startViewTransition(() => sync());
   else sync();
   paintWrapup(cards, now);
   return said;
@@ -1215,6 +1261,11 @@ wall.addEventListener("click", (e) => {
   const undo = e.target.closest(".undo");
   if (undo) {
     undoEnd(undo.closest(".card").dataset.key);
+    return;
+  }
+  const toNeeds = e.target.closest(".to-needs");
+  if (toNeeds) {
+    rooms.showBlocked(toNeeds.closest(".card").dataset.key);
     return;
   }
   const chip = e.target.closest(".chip");
@@ -1729,6 +1780,7 @@ new ResizeObserver(() => {
   densityFrame = requestAnimationFrame(showDensity);
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
+if (inTauri) tauri("get_needs_layout").then((l) => rooms.setLayout(l), () => {});
 
 // The floating gauge's background opacity (#438), in the app only.
 if (inTauri) {
@@ -1850,7 +1902,7 @@ function repaintTheme() {
   }
   refillPortrait();
   drawer.repaint();
-  queue.retheme();
+  queueFile?.();
 }
 put(DEFAULT_THEME, loadedTheme(DEFAULT_THEME), false);
 // The picker wears each step once its file is in, and only then is the step
