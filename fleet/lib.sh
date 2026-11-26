@@ -732,6 +732,48 @@ fleet_sessions_tsv() {
 # looking at, so a replacement never moves him off the agent he is watching.
 in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) == 1 ]]; }
 
+# Why PANE is open with no agent in it (#288): its process ended and tmux kept
+# the pane (remain-on-exit failed keeps a crash on screen), or a shell is in
+# front where claude ran, or the pane-died hook (#290) marked it. Prints the
+# reason; fails while the pane looks alive or is gone. A shell in front is also
+# what a pane shows for a moment while its command starts, so callers confirm
+# that one on a second look.
+SHELLS=" sh bash dash zsh fish ksh "
+# The fields pane_dead_reason reads, tab-separated (tmux prints other control
+# characters as octal) with "-" for a field that can be empty (tab is IFS
+# whitespace, so an empty field would shift the rest; tmux 3.8 prints no pid
+# for a dead pane), @klepsydra_dead last since it holds spaces.
+PANE_DEAD_FMT=$'#{pane_dead}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{?pane_pid,#{pane_pid},-}\t#{pane_current_command}\t#{@klepsydra_dead}'
+# Sets DEAD_WHY and returns 0 when the fields read from tmux say the pane's
+# agent is dead (pane_dead, @klepsydra_dead, or a shell in front); 1 otherwise.
+pane_dead_reason() { # DEAD ST SIG PID CMD MARK
+  local dead=$1 st=$2 sig=$3 pid=$4 cmd=$5 mark=$6
+  [[ $st == - ]] && st=""
+  [[ $sig == - ]] && sig=""
+  DEAD_WHY=""
+  # Started again on its saved screen by the pane-died hook (#290), which marks
+  # it "<viewer pid> <reason>". Only that viewer's own mark counts: one left
+  # behind after the pane was started again by hand is the hook's to clear.
+  if [[ -n $mark && ${mark%% *} == "$pid" ]]; then
+    DEAD_WHY=${mark#* }
+    return 0
+  fi
+  if [[ $dead == 1 ]]; then
+    if [[ -n $sig ]]; then DEAD_WHY="its process ended on signal $sig"
+    else DEAD_WHY="its process exited with status ${st:-unknown}"; fi
+    return 0
+  fi
+  [[ -n $cmd && $SHELLS == *" ${cmd#-} "* ]] || return 1
+  DEAD_WHY="a ${cmd#-} prompt is in front where its claude ran"
+}
+
+pane_dead_why() { # PANE
+  local dead st sig pid cmd mark
+  IFS=$'\t' read -r dead st sig pid cmd mark < <(t display-message -p -t "$1" "$PANE_DEAD_FMT" 2>/dev/null) || return 1
+  pane_dead_reason "$dead" "$st" "$sig" "$pid" "$cmd" "$mark" || return 1
+  printf '%s' "$DEAD_WHY"
+}
+
 # Whether the session live in PANE is one finished.tsv names (`fleet done`,
 # or a finish the doctor or recover recorded; the registry's columns, pane
 # first, session fourth). The resume service asks it of panes with no row.
