@@ -4,6 +4,9 @@ set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
+# No case may reach the real stage or real Windows, even one that forgets its
+# own settings: every run of the build script defaults to these.
+export KLEPSYDRA_STAGE_ROOT="$work/stage_root" PATH="$work/bin:$PATH"
 finished=0
 # An exit before the summary names the command that failed, so CI never ends
 # on a bare exit code (the build script it sources runs under set -e).
