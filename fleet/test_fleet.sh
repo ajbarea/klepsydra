@@ -501,13 +501,25 @@ state agybeat '{"above":["⣟ Running command... (1000s)","agy task running...",
 aresume "$((noon + 220))"
 check "#416: ... and so does a 1000 s timer" "$(beat "$AGY_SID")" "agy-worker"$'\t'"$(((noon + 60) / 10))"
 
-# A Claude pane the service already knows costs no process a pass (#563 r1 S2):
-# the forks of update_heartbeat over a baseline that only sources the script.
+# A pane seen to hold Claude costs no process a pass while that Claude process
+# runs (#563 r1 S2), and is looked up again once it is gone (r2 S1): a Claude
+# that exited may leave its pane to agy. A fake /proc holds the Claude process.
+claproc=$work/claproc
+mkdir -p "$claproc/78920"
+printf '78920 (claude) S 1 %s\n' "$(seq -s ' ' 2 18) 4343 $(seq -s ' ' 20 48)" >"$claproc/78920/stat"
+# shellcheck disable=SC2016 # expanded by the inner bash
+hbreach() { # PROC_ROOT: "looked up" when update_heartbeat went past its Claude cache
+  FLEET_PROC=$1 bash -c '. "$1/resume-at-reset.sh"; NOW=$2
+    pane_sid() { echo "looked up"; return 1; }
+    pane_claude[$3]="78920 4343"; update_heartbeat "$3" x' _ "$here" "$noon" "$p_cla" 2>/dev/null
+}
+check "#416: a pane whose Claude still runs is not looked up again" "$(hbreach "$claproc")" ""
+check "#416 r2: once that Claude process is gone, the pane is looked up again" "$(hbreach "$work/noproc")" "looked up"
 if command -v strace >/dev/null; then
   # shellcheck disable=SC2016 # expanded by the inner bash
   hbforks() { # COMMAND
-    strace -f -qq -e trace=clone,clone3,fork,vfork -o "$work/hb.st" bash -c \
-      '. "$1/resume-at-reset.sh"; NOW=$2; pane_session[$3]=$4; '"$1" _ "$here" "$noon" "$p_cla" "$CLA_SID" 2>/dev/null
+    FLEET_PROC=$claproc strace -f -qq -e trace=clone,clone3,fork,vfork -o "$work/hb.st" bash -c \
+      '. "$1/resume-at-reset.sh"; NOW=$2; pane_claude[$3]="78920 4343"; '"$1" _ "$here" "$noon" "$p_cla" 2>/dev/null
     grep -cE '^[0-9]+ +(clone|clone3|fork|vfork)\(' "$work/hb.st"
   }
   # shellcheck disable=SC2016 # expanded by the inner bash

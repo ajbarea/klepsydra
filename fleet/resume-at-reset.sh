@@ -51,7 +51,7 @@ FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a work
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said checkpointed screen_seen pane_session
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said checkpointed screen_seen pane_session pane_claude
 declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
@@ -641,22 +641,28 @@ pane_sid() { # PANE
 # progress, never because a process is alive, so a hung agent still goes
 # silent. A Claude session beats from its status line and is left alone.
 update_heartbeat() { # PANE SCREEN
-  local p=$1 s=$2 sid sjson="" engine pid start live st
-  # A pane known to hold a live Claude session costs no process: its file
-  # names the engine, and ends with the session (`ended` set).
-  sid=${pane_session[$p]:-}
-  if [[ -n $sid ]]; then
-    { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null
-    [[ $sjson =~ \"engine\":[[:space:]]*\"claude\" && ! $sjson =~ \"ended\":[[:space:]]*[0-9\"] ]] && return 0
+  local p=$1 s=$2 sid sjson="" engine pid="" start="" live st
+  # A pane seen to hold Claude costs no process while that same Claude process
+  # runs (its pid and start time, read from /proc): /clear keeps the process
+  # and the engine, and an exit or a crash ends the process, so the pane is
+  # looked up again and an engine started there next is seen.
+  if [[ -n ${pane_claude[$p]:-} ]]; then
+    proc_is "${pane_claude[$p]% *}" "${pane_claude[$p]#* }" && return 0
+    unset "pane_claude[$p]"
   fi
   pane_sid "$p" || return 0
-  sid=$PANE_SID sjson=""
+  sid=$PANE_SID
   { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null
   [[ $sjson =~ \"engine\":[[:space:]]*\"([A-Za-z0-9._-]+)\" ]] && engine=${BASH_REMATCH[1]} || return 0
-  [[ $engine == claude ]] && return 0
-  screen_progress "$s"
-  if [[ $engine == agy && $sjson =~ \"claude\":[[:space:]]*\{[[:space:]]*\"pid\":[[:space:]]*([0-9]+)(,[[:space:]]*\"start\":[[:space:]]*([0-9]+))? ]]; then
+  if [[ $sjson =~ \"claude\":[[:space:]]*\{[[:space:]]*\"pid\":[[:space:]]*([0-9]+)(,[[:space:]]*\"start\":[[:space:]]*([0-9]+))? ]]; then
     pid=${BASH_REMATCH[1]} start=${BASH_REMATCH[3]}
+  fi
+  if [[ $engine == claude ]]; then
+    [[ -n $start ]] && proc_is "$pid" "$start" && pane_claude[$p]="$pid $start"
+    return 0
+  fi
+  screen_progress "$s"
+  if [[ $engine == agy && -n $pid ]]; then
     if [[ -z $start ]] || proc_is "$pid" "$start"; then
       live=$(live_shells "$pid" "$$")
       if [[ $live =~ ^[0-9]+$ ]]; then
