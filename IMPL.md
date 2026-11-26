@@ -28,14 +28,23 @@ pane's live child shells. Claude's readings stay as on main.
 - S9: idle comes from `eng_state agy`.
 - The last progress per pane persists in `$FLEET_STATE/screens/` (a restart
   never beats a frozen screen); closed panes' files are pruned.
+- Review r1 (fresh Opus, on 6d7a81c): 1 Blocking, 2 Should-fix, fixed:
+  `eng_state agy` reads agy 1.5.17's status-line footer (spinner or running
+  task line = busy), fed the plain screen; a known Claude pane forks nothing
+  (strace test); calls recounted under the lock; empty pane list prunes
+  nothing; statusline name fallback dropped, hook registry read builtin;
+  `live_shells` array renamed (`callers`); resume-at-reset.sh finds its
+  folder from BASH_SOURCE so sourcing it never runs a pass. Mutants: no fast
+  path, no status-line footer: each red.
 
 ## Verify
+- `make test-delegate` (takes the heavy lock)
 - `bash fleet/test_forks_screen.sh`
 - `make test-fleet FLEET_SHARD=resume` (takes the heavy lock)
 - `flock -o /tmp/fleet-heavy.lock timeout 1500 bash hooks/test_fleet.sh`
 - `cd src-tauri && cargo test -p klepsydra-fleet view`
 
 ## Next
-1. 📋 Fresh Opus review rounds (elenchus medium) to clean, CI green, merge,
+1. 📋 Review r2 (fresh Opus) on the r1 fixes, CI green, merge,
    then `fleet install` (touches hooks and fleet scripts).
 2. Follow-up: one shared copy of `live_shells` with the hooks-common work.

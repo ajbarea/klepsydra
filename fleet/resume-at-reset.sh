@@ -36,7 +36,9 @@
 # Each pass also closes Playwright MCP browsers left without their server (#379).
 set -u
 FLEET_TARGET=fleet::resume
-here=$(dirname "$(readlink -f "$0")")
+# The script's own folder, from its own path: a test that sources it for its
+# functions gets them, and the guard before load_state keeps the loop off.
+here=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 # shellcheck source=fleet/engines.sh
@@ -93,7 +95,9 @@ save_state() {
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
-  # A closed pane's last screen goes with it.
+  # A closed pane's last screen goes with it; an empty pane list (tmux did
+  # not answer) prunes nothing.
+  (( ${#panes[@]} )) || return 0
   for f in "$FLEET_STATE/screens/"_*; do
     [[ -f $f && ! -L $f ]] || continue
     p=${f##*/}
@@ -582,11 +586,13 @@ done_move() { # PANE KIND RC NEW CTX
 # again there, so no hook write in between is lost; state_at moves with the
 # state, as the hook moves it. A call that ended while the turn still runs
 # leaves the turn its own. `live` is live_shells' count; `st` is eng_state's word.
-agy_state() { # SID LIVE ST
+# The calls are counted again under the lock: a count that changed while the
+# service waited (a call ended, a hook wrote) leaves this pass to the next.
+agy_state() { # SID LIVE ST PID
   local f=$KLEPSYDRA_DIR/fleet/$1.json lk new tmp
   [[ -n ${LOCK_DIR:-} ]] || lock_dir || return 0
   { exec {lk}>>"$LOCK_DIR/klepsydra-fleet-$UID.lock"; } 2>/dev/null || return 0
-  if flock -w 5 "$lk" && [[ -f $f && ! -L $f ]]; then
+  if flock -w 5 "$lk" && [[ -f $f && ! -L $f && $(live_shells "$4" "$$") == "$2" ]]; then
     new=$(jq -c --argjson now "$NOW" --argjson live "$2" --arg st "$3" '
       select(.engine == "agy" and (.state == "working" or .state == "done"))
       | if $live > 0 then
@@ -636,23 +642,30 @@ pane_sid() { # PANE
 # silent. A Claude session beats from its status line and is left alone.
 update_heartbeat() { # PANE SCREEN
   local p=$1 s=$2 sid sjson="" engine pid start live st
+  # A pane known to hold a live Claude session costs no process: its file
+  # names the engine, and ends with the session (`ended` set).
+  sid=${pane_session[$p]:-}
+  if [[ -n $sid ]]; then
+    { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null
+    [[ $sjson =~ \"engine\":[[:space:]]*\"claude\" && ! $sjson =~ \"ended\":[[:space:]]*[0-9\"] ]] && return 0
+  fi
   pane_sid "$p" || return 0
-  sid=$PANE_SID
+  sid=$PANE_SID sjson=""
   { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null
   [[ $sjson =~ \"engine\":[[:space:]]*\"([A-Za-z0-9._-]+)\" ]] && engine=${BASH_REMATCH[1]} || return 0
   [[ $engine == claude ]] && return 0
+  screen_progress "$s"
   if [[ $engine == agy && $sjson =~ \"claude\":[[:space:]]*\{[[:space:]]*\"pid\":[[:space:]]*([0-9]+)(,[[:space:]]*\"start\":[[:space:]]*([0-9]+))? ]]; then
     pid=${BASH_REMATCH[1]} start=${BASH_REMATCH[3]}
     if [[ -z $start ]] || proc_is "$pid" "$start"; then
       live=$(live_shells "$pid" "$$")
       if [[ $live =~ ^[0-9]+$ ]]; then
         st=busy
-        (( live > 0 )) || st=$(eng_state agy "$s")
-        agy_state "$sid" "$live" "$st"
+        (( live > 0 )) || st=$(eng_state agy "$SCR_PLAIN")
+        agy_state "$sid" "$live" "$st" "$pid"
       fi
     fi
   fi
-  screen_progress "$s"
   # The last progress seen survives a restart of the service (screens/<pane>),
   # so a frozen screen never beats because the service started again.
   local seen=$FLEET_STATE/screens/${p//%/_}

@@ -501,6 +501,21 @@ state agybeat '{"above":["⣟ Running command... (1000s)","agy task running...",
 aresume "$((noon + 220))"
 check "#416: ... and so does a 1000 s timer" "$(beat "$AGY_SID")" "agy-worker"$'\t'"$(((noon + 60) / 10))"
 
+# A Claude pane the service already knows costs no process a pass (#563 r1 S2):
+# the forks of update_heartbeat over a baseline that only sources the script.
+if command -v strace >/dev/null; then
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  hbforks() { # COMMAND
+    strace -f -qq -e trace=clone,clone3,fork,vfork -o "$work/hb.st" bash -c \
+      '. "$1/resume-at-reset.sh"; NOW=$2; pane_session[$3]=$4; '"$1" _ "$here" "$noon" "$p_cla" "$CLA_SID" 2>/dev/null
+    grep -cE '^[0-9]+ +(clone|clone3|fork|vfork)\(' "$work/hb.st"
+  }
+  # shellcheck disable=SC2016 # expanded by the inner bash
+  check "#416: update_heartbeat on a known Claude pane forks nothing" \
+    "$(( $(hbforks 'update_heartbeat "$3" x') - $(hbforks ':') ))" 0
+else
+  echo "  skip #416 fork budget: no strace"
+fi
 # A Claude session beats from its own status line: a stale one is still left alone.
 printf 'claude-tab\t%s\n' "$((noon / 10))" >"$KLEPSYDRA_DIR/fleet/$CLA_SID.beat"
 state clabeat '{"above":["claude working...","new output"]}'
@@ -535,6 +550,17 @@ check "#416: idle, no live call: done, its listed task cleared, state_at moved" 
   "$(afield '[.state, .reason, .shells_live, (.background | length), .state_at]')" "[\"done\",null,0,0,$((noon + 260))]"
 check "#416 review 1: and turn_done frees the pane" \
   "$(bash -c '. "$1/lib.sh"; turn_done "$2" >/dev/null && echo free || echo held' _ "$here" "$p_agy")" free
+# agy 1.5.17 with a status line: that line is the footer, and with no spinner
+# or running task above it the prompt is idle (#563 r1 B1).
+agyfile '.state = "working" | .reason = "background" | .shells_live = 1'
+agytree
+state agybeat '{"above":["● Bash(sleep 40 && echo finished)","  done"],"below":["Gemini 4 Hydrogen (High) · ctx 3% · 5h 6% · 7d 95%"]}'
+aresume "$((noon + 262))"
+check "#416: agy 1.5.17 idle under its status line, no live call: done" "$(afield '[.state, .shells_live]')" '["done",0]'
+state agybeat '{"above":["\u001b[33m● [18:58:51] sleep 40 && echo finished running\u001b[0m"],"below":["Gemini 4 Hydrogen (High) · ctx 3% · 5h 6% · 7d 95%"]}'
+agyfile '.state = "working" | .reason = "background" | .shells_live = 1'
+aresume "$((noon + 264))"
+check "#416: ... but a coloured running-task line above it is a turn at work" "$(afield '[.state, .reason]')" '["working",null]'
 # An agy asking AJ keeps its ask though a call runs.
 agyfile '.state = "needs_you" | .reason = "approve Bash"'
 agytree 78911:bash:S

@@ -361,13 +361,13 @@ nested_claude() { # pid
 # hides the shell.
 live_shells() { # pid me
   local pid=$1 p=$2 f child comm n=0 listed=0 i own=${CLAUDE_CODE_SHELL:-}
-  local -a stat=() mine=()
+  local -a stat=() callers=()
   [[ -n ${CLAUDE_CODE_SHELL_PREFIX:-} ]] && return 0
   own=${own##*/}
   [[ $own == sh || $own == dash ]] && own=""
   for ((i = 0; i < 32; i++)); do
     [[ $p == "$pid" ]] && break
-    mine+=("$p")
+    callers+=("$p")
     proc_stat "$p" || break
     p=${stat[1]}
     (( p >= 1 )) || break
@@ -377,7 +377,7 @@ live_shells() { # pid me
     listed=1
     for child in $(<"$f"); do
       [[ $child =~ ^[0-9]+$ ]] || continue
-      [[ " ${mine[*]} " == *" $child "* ]] && continue
+      [[ " ${callers[*]} " == *" $child "* ]] && continue
       proc_stat "$child" && [[ ${stat[0]} == Z ]] && continue
       comm=""
       { IFS= read -r comm <"$PROC_ROOT/$child/comm"; } 2>/dev/null
@@ -1409,12 +1409,19 @@ main() {
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
   [[ -n $old_git && ! -e $old_git ]] && where_gone=true
-  local brief_title="" brief_file=""
-  if [[ $prompt =~ Read\ your\ brief\ at\ ([^[:space:]]+) ]]; then
+  # A session with no name yet is named after its brief's first line (or,
+  # in jq below, its worktree's branch), never a number (#416).
+  local brief_title="" brief_file="" reg reg_p
+  reg=${REGISTRY:-${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/panes.tsv}
+  if [[ $old == *'"name":"'* ]]; then :
+  elif [[ $prompt =~ Read\ your\ brief\ at\ ([^[:space:]]+) ]]; then
     brief_file=${BASH_REMATCH[1]}
     [[ $brief_file == ~* ]] && brief_file="${HOME:-}${brief_file#\~}"
-  elif [[ -n $tmux_pane && -r ${REGISTRY:-${FLEET_STATE:-}/panes.tsv} ]]; then
-    brief_file=$(awk -F'\t' -v p="$tmux_pane" '$1 == p { print $3 }' "${REGISTRY:-${FLEET_STATE:-}/panes.tsv}" 2>/dev/null)
+  elif [[ -n $tmux_pane && -r $reg ]]; then
+    while IFS=$'\t' read -r reg_p _ brief_file _; do
+      [[ $reg_p == "$tmux_pane" ]] && break
+      brief_file=""
+    done <"$reg" 2>/dev/null
   fi
   if [[ -n $brief_file && -f $brief_file ]]; then
     { IFS= read -r brief_title <"$brief_file"; } 2>/dev/null

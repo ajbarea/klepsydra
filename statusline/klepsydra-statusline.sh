@@ -358,12 +358,6 @@ parsed=$(printf '%s' "$input" | jq -r \
 } <<<"$parsed"
 [[ $id == agy-* ]] && torn=false
 
-if [[ -z "$name" ]]; then
-  if [[ -n "$KLEPSYDRA_DIR" && -f "$KLEPSYDRA_DIR/fleet/$session.json" ]]; then
-    name=$(jq -r '.name // empty' "$KLEPSYDRA_DIR/fleet/$session.json" 2>/dev/null || true)
-  fi
-fi
-
 # The fleet strip's heartbeat: the session's name (its terminal tab title) and
 # the 10 s bucket it was written in. Rewritten only when either changes, so a
 # render costs a read and at most one write per 10 s.
