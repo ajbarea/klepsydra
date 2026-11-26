@@ -530,7 +530,10 @@ if command -v strace >/dev/null; then
       _ "$here" "$noon" "$p_cla" "$1" 2>/dev/null
     grep -cE '^[0-9]+ +(clone|clone3|fork|vfork)\(' "$work/hb.st"
   }
-  check "#416: after its first pass, a Claude pane forks nothing a pass" "$(( $(hbforks 3) - $(hbforks 1) ))" 0
+  hb1=$(hbforks 1) hb3=$(hbforks 3)
+  # A strace that cannot trace (ptrace blocked) writes nothing: both counts 0.
+  check "#416: strace saw the first pass fork" "$(( hb1 > 0 ))" 1
+  check "#416: after its first pass, a Claude pane forks nothing a pass" "$(( hb3 - hb1 ))" 0
 else
   echo "  skip #416 fork budget: no strace"
 fi

@@ -53,6 +53,6 @@ pane's live child shells. Claude's readings stay as on main.
 - `cd src-tauri && cargo test -p klepsydra-fleet view`
 
 ## Next
-1. 📋 Verify pass on the r3 test fix, CI green, merge,
+1. 📋 Verify pass clean (its strace guard added: a no-trace strace now fails), CI green, merge,
    then `fleet install` (touches hooks and fleet scripts).
 2. Follow-up: one shared copy of `live_shells` with the hooks-common work.
