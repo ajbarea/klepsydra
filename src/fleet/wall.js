@@ -454,7 +454,9 @@ const drawer = createDrawer({
 });
 let latest = { state: "empty", cards: [] }; // the last render's, which a deferred sync reads
 // The queue file folds under the Agents wall (#386); the phone has no queue file to show.
-const queueFile = served ? null : createQueueFile({ section: document.getElementById("queue-file"), cast: () => cast });
+const queueSection = document.getElementById("queue-file");
+// Its height counts in Auto's fit, so opening or showing it re-measures.
+const queueFile = served ? null : createQueueFile({ section: queueSection, cast: () => cast, onToggle: () => showDensity() });
 // Needs you and Agents (#386): one room each, laid out as the settings pick.
 const rooms = createRooms({
   nodes: {
@@ -483,6 +485,9 @@ const rooms = createRooms({
     return Promise.resolve();
   },
   savedLayout: (() => {
+    // A browser page (not the app or the phone) may name one: ?layout=E, as ?theme= names a cast.
+    const asked = !inTauri && !served ? new URLSearchParams(location.search).get("layout") : null;
+    if (asked) return asked;
     try {
       return localStorage.getItem("klepsydra.needs.layout") ?? DEFAULT_LAYOUT;
     } catch {
@@ -1715,6 +1720,8 @@ function comfortableFits(extra) {
   // judges every card shut, so opening Full text never turns the wall compact.
   grid.removeAttribute("id");
   probe.append(copy(bar), grid);
+  // The queue file under the cards, as it shows: Auto keeps the whole Agents room in one screen.
+  if (!queueSection.hidden && getComputedStyle(queueSection).display !== "none") probe.append(queueSection.cloneNode(true));
   document.body.append(probe);
   const cards = [...grid.children];
   const tallest = cards.reduce((a, b) => (b.offsetHeight > (a?.offsetHeight ?? -1) ? b : a), null);

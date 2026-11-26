@@ -18,10 +18,15 @@ private spec (gitignored): never commit it or copy its text.
 7. Layout pref in prefs.json (`needs_layout`), applied at load.
 
 ## Done
-- (fill as steps land)
+- 6444528: all 6 Blocking and the Should-fix list (see commit body). Rust needs.rs 16 tests;
+  fleet-rooms.test.js 20; units 604/0; rooms browser test 73/0; build-windows --check exit 0.
+- Fail-first on 05bee10: write_needs_file / set_needs_layout unregistered, toast keyed by s.id,
+  Answer called request(), rooms.js innerHTML failed the guard.
 
 ## Next
-- Rust module + tests, then JS model + tests, then the DOM, then browser test and shots.
+- Full wall + phone browser suites green (they now count `#wall > .card`; lanes add heads).
+- Shots per layout at 1920/390 from the real file scrubbed (`--needs`), README line.
+- Push, PR body, elenchus rounds, CI, merge, fleet install, Windows build, live shot.
 
 ## Verify
 - `cargo test -p klepsydra-fleet needs`, `node --test src/fleet-rooms.test.js src/guards.test.js`,

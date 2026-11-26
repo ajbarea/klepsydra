@@ -106,13 +106,15 @@
     <span id="clear-note" role="status"></span>
   </section>
   <section id="queue-file" class="queue-file" aria-labelledby="queue-file-title" hidden>
-    <header class="qf-head">
-      <h2 id="queue-file-title">Fleet queue</h2>
-      <p class="list-path"></p>
-      <p class="list-kept" hidden></p>
-    </header>
-    <p class="list-problem" role="status" hidden></p>
-    <div class="queue-content"></div>
+    <details class="qf-fold">
+      <summary class="qf-head">
+        <h2 id="queue-file-title">Fleet queue</h2>
+        <span class="list-path"></span>
+        <span class="list-kept" hidden></span>
+      </summary>
+      <p class="list-problem" role="status" hidden></p>
+      <div class="queue-content"></div>
+    </details>
     <p class="queue-live visually-hidden" role="status"></p>
   </section>
   </main>

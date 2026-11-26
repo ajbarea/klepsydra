@@ -130,10 +130,15 @@ body[data-layout="E"] .ny-focus-card .ny-more { display: block; }
 .wall[data-lanes][data-density="compact"] { grid-auto-rows: auto; }
 
 /* The queue file, folded under the Agents wall. */
-.queue-file { position: relative; z-index: 1; margin: var(--space-9) var(--wall-pad) var(--wall-pad); padding-top: var(--space-7); border-top: 1px solid var(--card-line); max-width: 1400px; }
+.queue-file { position: relative; z-index: 1; margin: var(--space-5) var(--wall-pad) var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--card-line); }
 .queue-file[hidden] { display: none; }
-.qf-head { display: flex; align-items: baseline; gap: var(--space-5); flex-wrap: wrap; margin-bottom: var(--space-5); }
-.qf-head h2 { font: 650 20px/1.2 var(--display); }
+.qf-head { display: flex; align-items: baseline; gap: var(--space-5); flex-wrap: wrap; cursor: pointer; list-style: none; min-height: 32px; }
+.qf-head::-webkit-details-marker { display: none; }
+.qf-head::before { content: "▸"; color: var(--text-dim); width: 1em; }
+.qf-fold[open] > .qf-head { margin-bottom: var(--space-5); }
+.qf-fold[open] > .qf-head::before { content: "▾"; }
+.qf-head h2 { font: 650 17px/1.2 var(--display); }
+.qf-head .list-path { color: var(--text-faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 0; }
 
 /* The toast: bottom centre, one at a time; it never takes focus. */
 .room-toast {

@@ -133,7 +133,7 @@ def busy(fleet):
 
 
 # Each card's Full text: whether it shows, and what the card cuts short.
-FULL_TEXT = """() => [...document.getElementById('wall').children].map((c) => {
+FULL_TEXT = """() => [...document.querySelectorAll('#wall > .card')].map((c) => {
   const shown = (el) => el.checkVisibility();
   const cut = [...c.querySelectorAll('.task, .repo, .branch span, .ask .ask-lead, .ask .ask-keep, .said p, .wrapup')]
     .filter((el) => shown(el) && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight))

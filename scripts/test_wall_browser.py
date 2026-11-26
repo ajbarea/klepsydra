@@ -53,7 +53,7 @@ FIT = [  # (width, height, cards, columns)
 STATE = """() => {
   const wall = document.getElementById('wall');
   return {
-    cards: wall.children.length,
+    cards: wall.querySelectorAll(':scope > .card').length,
     density: wall.dataset.density,
     columns: getComputedStyle(wall).gridTemplateColumns.split(' ').length,
     scrolls: document.documentElement.scrollHeight > innerHeight,
@@ -1191,6 +1191,7 @@ window.__TAURI__ = { core: {
       return Promise.resolve();
     }
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
+    if (cmd === 'get_needs_layout') return Promise.resolve(window.__layout ?? 'E');
     // The front end's log lines, apart from the actions.
     if (cmd === 'plugin:log|log') { (window.__logs ??= []).push(args); return Promise.resolve(); }
     if (cmd === 'agy_models') { window.__calls.push([cmd, args]); return window.__agy ? Promise.resolve(window.__agy) : Promise.reject(window.__agyError ?? 'agy (Antigravity CLI) was not found on PATH.'); }
@@ -1595,7 +1596,7 @@ def landmarks(wall):
 NARROW = """() => {
   const cw = document.documentElement.clientWidth;
   const r = (e) => e.getBoundingClientRect();
-  const cards = [...document.getElementById('wall').children].filter((c) => c.checkVisibility());
+  const cards = [...document.querySelectorAll('#wall > .card')].filter((c) => c.checkVisibility());
   // Every control inside its own card (the portrait's look button breaks the frame by
   // design, #247: inside the window is its bound), and every card inside the window.
   const out = cards.flatMap((c) => [...c.querySelectorAll('button, a')]
@@ -1654,7 +1655,7 @@ def narrow_window_keeps_cards_inside(wall):
     page.evaluate("document.documentElement.classList.add('served')")
     page.wait_for_timeout(1500)
     phone = page.evaluate("""() => {
-      const c = [...document.getElementById('wall').children].find((e) => e.checkVisibility() && e.querySelector('.pill'));
+      const c = [...document.querySelectorAll('#wall > .card')].find((e) => e.checkVisibility() && e.querySelector('.pill'));
       const p = c.querySelector('.pill'), n = c.querySelector('.name');
       const mid = (e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; };
       return { margin: getComputedStyle(p).marginLeft, sameLine: Math.abs(mid(p) - mid(n)) < 12 };
@@ -4592,6 +4593,17 @@ def main() -> int:
         browser = p.chromium.launch(
             executable_path=os.environ.get("KLEPSYDRA_CHROME") or None
         )
+        # These cases measure the wall itself, so every page wears Amber Door,
+        # the layout without status lanes (#386); scripts/test_rooms_browser.py
+        # checks the lanes of the other two.
+        plain_page = browser.new_page
+
+        def new_page(*args, **kwargs):
+            page = plain_page(*args, **kwargs)
+            page.add_init_script("window.__layout ??= 'E'; try { localStorage.getItem('klepsydra.needs.layout') ?? localStorage.setItem('klepsydra.needs.layout', 'E'); } catch {}")
+            return page
+
+        browser.new_page = new_page
         wall = Wall(browser, server.server_address[1])
         only = sys.argv[1:]
         cases = (

@@ -94,32 +94,36 @@ DATE = re.compile(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b|\b\d{1,2}-\d{1,2}\b|\b\d
 
 
 def scrub(text, seed=386):
-    """`text` with every word swapped and every link pointed at example.com;
-    markdown, dates, weekdays and times stay, so the shape and the due chips
-    are the real file's and no word of it is."""
+    """`text` with every word and digit swapped and every link pointed at
+    example.com; markdown, dates, weekdays and times stay, so the shape and
+    the due chips are the real file's and no word of it is."""
     rng = random.Random(seed)
-    text = re.sub(r"\]\([^)]*\)", "](https://example.com/item)", text)
-    text = re.sub(r"https?://(?!example\.com/item)\S+", "https://example.com/item", text)
+    kept = []
+
+    def hold(m):
+        kept.append(m.group())
+        return chr(0xE000 + len(kept) - 1)  # a private-use mark: no letter or digit to swap
+
+    text = re.sub(r"\]\([^)]*\)", lambda m: "](" + hold(re.match(r".*", "https://example.com/item")) + ")", text)
+    text = re.sub(r"https?://\S+", lambda m: hold(re.match(r".*", "https://example.com/item")), text)
+    text = DATE.sub(hold, text)
+    text = re.sub(r"^#+ .*$", lambda m: hold(m), text, flags=re.M)
+    word = lambda m: (lambda w: w.capitalize() if m.group()[0].isupper() else w)(rng.choice(WORDS))
+    text = re.sub(r"[A-Za-z]+", word, text)
+    text = re.sub(r"\d", lambda _: str(rng.randrange(10)), text)
+    for _ in range(2):  # a held heading holds its held dates
+        text = re.sub("[\ue000-\uf8ff]", lambda m: kept[ord(m.group()) - 0xE000], text)
+    # Section titles are the file's own words: placeholders keep the order, dates stay.
+    titles = iter(["## Today", "## Coming up", "## When convenient", "## Later"])
     out = []
     for line in text.split("\n"):
-        keep = {m.span(): m.group() for m in DATE.finditer(line)}
-        pieces, at = [], 0
-        for (a, b), g in sorted(keep.items()):
-            pieces.append((line[at:a], True))
-            pieces.append((g, False))
-            at = b
-        pieces.append((line[at:], True))
-        done = []
-        for chunk, swap in pieces:
-            if swap and not chunk.startswith("#"):
-                chunk = re.sub(r"(?<!example\.com/)(?<!https://)\b[A-Za-z][A-Za-z']*\b", lambda m: (lambda w: w.capitalize() if m.group()[0].isupper() else w)(rng.choice(WORDS)), chunk)
-                chunk = re.sub(r"\d", lambda _: str(rng.randrange(10)), chunk)
-            done.append(chunk)
-        line = "".join(done)
-        out.append(line.replace("https://Example.com/Item", "https://example.com/item"))
-    # Section titles are the file's own words: placeholders keep Today first.
-    titles = iter(["## Today", "## Coming up", "## When convenient", "## Later"])
-    return "\n".join(next(titles, "## More") + (re.search(r" \(.*\)$", l).group() if re.search(r" \(.*\)$", l) else "") if l.startswith("## ") else ("# Needs you" if l.startswith("# ") else l) for l in out)
+        if line.startswith("## "):
+            date = re.search(r" \(.*\)$", line)
+            line = next(titles, "## More") + (" (" + " ".join(DATE.findall(date.group())) + ")" if date and DATE.search(date.group()) else "")
+        elif line.startswith("# "):
+            line = "# Needs you"
+        out.append(line)
+    return "\n".join(out)
 
 
 class Run:
@@ -212,6 +216,8 @@ def checks(run, browser, port, needs, shots):
                 run.check([x for x in s["lanes"] if x in want] == want, f"{tag}: the wall's status lanes, in the layout's order", s["lanes"])
             if layout == "E":
                 run.check(s["lanes"] == [], f"{tag}: Amber Door keeps the wall without lanes", s["lanes"])
+            fit = page.evaluate("[document.getElementById('wall').dataset.density, document.documentElement.scrollHeight > innerHeight]")
+            run.check(not (fit[0] == "comfortable" and fit[1]), f"{tag}: Auto never leaves comfortable cards scrolling, lanes and queue file counted", fit)
             # Open Needs you: N on a desktop, the tab on a phone.
             if width > 640:
                 page.keyboard.press("n")

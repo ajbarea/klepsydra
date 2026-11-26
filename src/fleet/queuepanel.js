@@ -7,6 +7,8 @@ import { inTauri } from "./feed.js";
 import { EMPTY, present, render } from "./queue.js";
 
 const COPIED_MS = 2000;
+/** Where a viewer's open or folded queue file is kept. */
+export const FOLD_KEY = "klepsydra.queuefile.open";
 
 /** The browser's sample queue file, only with ?demo and never inside the app. */
 export function demoQueueUrl(app, search) {
@@ -54,16 +56,33 @@ export const followNeeds = (onMessage) => followList(LISTS.needs, onMessage);
 export const openByDefault = (title) => /^running now\b/i.test(String(title).trim());
 
 /**
- * Show the queue file in `section` under the Agents wall, its sections folded
- * but Running now, each as the viewer left it across repaints. `cast()` is the
- * character theme worn, which names the file's keeper. Returns `retheme`.
+ * Show the queue file in `section` under the Agents wall: one line until
+ * opened, then its sections folded but Running now, each as the viewer left
+ * it across repaints. `cast()` is the character theme worn, which names the
+ * file's keeper; `onToggle()` runs when the viewer opens or folds it.
+ * Returns `retheme`.
  */
-export function createQueueFile({ section, cast = () => null }) {
+export function createQueueFile({ section, cast = () => null, onToggle = () => {} }) {
   const content = section.querySelector(".queue-content");
   const pathLine = section.querySelector(".list-path");
   const keeper = section.querySelector(".list-kept");
   const problem = section.querySelector(".list-problem");
   const live = section.querySelector(".queue-live");
+  // Folded to one line unless the viewer opened it: the wall stays one screen (#386).
+  const fold = section.querySelector(".qf-fold");
+  try {
+    fold.open = localStorage.getItem(FOLD_KEY) === "open";
+  } catch {
+    // Blocked storage: it starts folded.
+  }
+  fold.addEventListener("toggle", () => {
+    try {
+      localStorage.setItem(FOLD_KEY, fold.open ? "open" : "shut");
+    } catch {
+      // A viewer's convenience only.
+    }
+    onToggle();
+  });
   const opened = new Map(); // section title -> open, as the viewer left it
   const relabel = new WeakMap();
   let keptBy = null;
@@ -99,7 +118,9 @@ export function createQueueFile({ section, cast = () => null }) {
   function paint(view) {
     for (const d of content.querySelectorAll("details")) opened.set(d.dataset.key, d.open);
     const shown = present(view, (t) => opened.get(t) ?? openByDefault(t), document, copy, render, { empty: EMPTY, what: LISTS.queue.what });
+    const was = section.hidden;
     section.hidden = view.text === null && !shown.problem;
+    if (was !== section.hidden) onToggle();
     pathLine.textContent = view.path ?? "";
     pathLine.title = view.path ?? "";
     keptBy = view.kept_by ?? null;

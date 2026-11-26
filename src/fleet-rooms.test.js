@@ -76,6 +76,14 @@ test("an item's block is its exact source lines, nested lines too, which Done se
   assert.equal(crlf.items[1].block, cedar.block, "CRLF files give the same block");
 });
 
+test("a loose list's item ends at its last text line, not the blank line after it", () => {
+  const m = needsModel("- 📋 a\n\n  more of a\n\n- 📋 b\n\n## Later\n", TODAY);
+  assert.deepEqual(
+    m.items.map((i) => i.block),
+    ["- 📋 a\n\n  more of a", "- 📋 b"],
+  );
+});
+
 test("two identical items keep distinct keys", () => {
   const m = needsModel("- 📋 same\n- 📋 same\n", TODAY);
   assert.equal(m.count, 2);
@@ -150,7 +158,7 @@ test("an Undo window ends only its own Done, never a later one's", async () => {
   assert.equal(writer.undoable, false);
 });
 
-test("Done runs one at a time, so a held key cannot remove several rows", async () => {
+test("Done runs one at a time, so a held key cannot remove several rows", { timeout: 5000 }, async () => {
   let release;
   const calls = [];
   const writer = createDone((cmd, args) => {
