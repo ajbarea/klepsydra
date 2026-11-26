@@ -1,37 +1,30 @@
-# IMPL: fleet close refuses at-rest panes, the /exit menu wraps (#483)
+# IMPL: #517 launch lock before /run/user exists (PR #518, review r2, r3 & r4 fixes)
 
-Brief: fleet worker close-menu (task-close-menu.src). Branch fix/close-slash-menu, worktree
-.claude/worktrees/close-menu. Push only `git push -u origin HEAD:refs/heads/fix/close-slash-menu`.
-Do not merge: Heph reviews and merges. PR #496.
+## Task
+PR #518 review r3 & r4 (PR #551 into `fix/launch-lock-runtime-dir-517`):
+S1 (vacuous guard on trace-age in doctor / test), N1-N3, plus r4 fixes (in-place `lock_trace`, single Linux `tab-pending` path, docs & PR #518 body, O1 & F6 tests).
+Design from r1/r2 stands: one lock folder per host and boot under ~/.local/state/klepsydra.
 
-## Cause
-- Typing /exit opens Claude Code 2.1.316's command menu over the transcript's last rows. At 84
-  columns two descriptions wrap and main's filter refused every close; at 160 nothing wraps.
+## Shape
+- `lock_dir` + `lock_why` (identical block in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh,
+  statusline/klepsydra-statusline.sh, test-checked): LOCK_DIR = `run-<host>-<boot>` (seams
+  KLEPSYDRA_STATE, KLEPSYDRA_BOOT_ID, KLEPSYDRA_HOSTNAME); on refusal LOCK_WHY names the
+  reason (symlink, missing, not a folder, another user's, not writable / read-only, group or
+  other writable, mkdir's own error text). Prune touches only this host's `run-<host>-<uuid>`
+  while hostnames differ (an unusable hostname locks in `run-_-<boot>` and prunes nothing).
+- Hook: `lock_trace` writes `<epoch> <why>` in-place (`{ printf ...; } 2>/dev/null >"$file"`) to
+  `$KLEPSYDRA_DIR/lock-refused` only when `own_data_dir` (`dev.ajsoftworks.klepsydra`) holds and
+  the target is a regular file or absent (never a symlink or FIFO), at most every 600 s, builtins
+  only; also when the lock file will not open.
+- Launcher: the message carries LOCK_WHY; jump says the window changed and no tab opened.
+- `fleet doctor` "lock folder": runs the installed hook's block (else the checkout's): FAIL with
+  the reason, warn on a trace from this boot in the last hour (`t >= btime && t <= now`), else
+  ok with the folder.
+- recover's wait: deadline on /proc/uptime (FLEET_UPTIME seam); tick count if unreadable.
 
-## Design
-- close types `/exit ` (trailing space: no menu; Enter still exits, submit trims). The screen above
-  the box must equal the pre-quiet-window screen byte for byte, after typing, after the settle and
-  at the last look. If the menu opens anyway: check `menu`. back_out erases our /exit only.
-
-## Done (11-20)
-- Merged main (#500 screen_parse in lib.sh) at 3065376: CI green; suite 1018/0.
-- Round 5 (fresh Opus): 0 Blocking; Should-fix = stale PR body (rewritten); minors fixed in
-  95b1edc (menu check replayed on 16 real menu screens + 6 "/exit " screens; comment rename).
-- Live proof (private socket, haiku, 2.1.316), branch: rest and 60-line reply closed at 84 and
-  160; busy refused `busy`; background shell and wrap-up refused `session_file`. main: rest
-  refused at 84, closed at 160. A close within seconds of a turn can refuse at quiet_screen when
-  a usage notice vanishes (safe).
-- ns477 (%48) and tech-labels (%4) panes were gone before a real close could be run.
-- Suite on 95b1edc: one run failed only the keryx isolation check (keryx turned off mid-run,
-  filed #516); rerun 1018/0.
-
-- Review-batch3 (11-25): main merged twice (5774651, then after #497). Round 6 (fresh Opus):
-  1 Should-fix: a refusal after AJ typed past our "/exit " kept "/exit " at the box's head
-  without saying so; 1320a64 adds a note to the refusal and the #483 review 2 case checks it.
-  Verify pass clean (551/0 to the end of the close section; the case fails without the note).
-  Deferred Minors: type_exactly's and back_out's blind backspaces (sub-second race), no test
-  that the note stays silent on a backed-out refusal.
-
-## Next
-1. 📋 CI on the final head green, then merge (review-batch3).
-2. After merge (Heph): HEPH.md lines 14 and 19 still describe the pre-fix close (kill-pane advice).
+## State
+- r3/r4 (agy, #551) merged into this branch; r5 review clean (all r4 findings mutation-checked).
+- main merged in (conflicts in launch.sh, test_launch.sh, IMPL.md came from #551's squash dropping its main-merge parent; branch side kept).
+- PR body rewritten from the final state (status, mutation table F2-F7, O1, T1).
+- Next: CI green on the merged head, whole-PR review against main (review-batch3), merge, `fleet install`.
+- Last step before merge: reread the #518 body against the final diff.

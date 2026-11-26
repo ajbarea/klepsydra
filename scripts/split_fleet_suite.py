@@ -149,6 +149,7 @@ TABLE = [
             r"^an agent's own IMPL\.md",
             r"^finished agents: one verdict per row",
             r"^recover:",
+            r"^wait_runtime_dir",
             r"^resume: Heph's session is recorded",
             r"^the orchestrator's identity across",
             r"^a pane open with its agent dead",  # #314, on recover's fake /proc

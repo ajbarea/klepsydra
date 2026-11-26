@@ -8,10 +8,14 @@ fixtures="$here/fixtures"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # A fixed clock before the fixtures' resets, so their windows are live, and a
-# runtime dir of the suite's own for the hourly prune stamp.
+# state folder of the suite's own for the hourly prune stamp and its lock, on a
+# boot of its own; the runtime folder is one a WSL boot has not made yet (#517).
 export KLEPSYDRA_NOW=1788990000
-export XDG_RUNTIME_DIR="$work/run"
-mkdir -p "$XDG_RUNTIME_DIR"
+export KLEPSYDRA_STATE="$work/state" KLEPSYDRA_BOOT_ID="$work/boot_id" XDG_RUNTIME_DIR="$work/no-runtime"
+printf '%s\n' 5170b001-1111-4222-8333-444455556666 >"$KLEPSYDRA_BOOT_ID"
+printf 'testhost\n' >"$work/hostname"
+export KLEPSYDRA_HOSTNAME="$work/hostname"
+rd="$KLEPSYDRA_STATE/run-testhost-5170b001-1111-4222-8333-444455556666"
 
 pass=0 fail=0
 
@@ -340,13 +344,13 @@ there() { [[ -e $pa/$1 ]] && echo kept || echo gone; } # path under accounts
 live=$(jq -c --argjson r "$((P + 3600))" '.session_id = "'"$(u 99)"'"
   | .rate_limits.five_hour.resets_at = $r | .rate_limits.seven_day.resets_at = ($r + 86400)' <<<"$full")
 # The prune runs detached; its lock is free once it is done.
-settle() { flock "$XDG_RUNTIME_DIR/klepsydra-readings-$UID.lock" true; }
+settle() { [[ ! -e $rd ]] || flock "$rd/klepsydra-readings-$UID.lock" true; }
 prune_run() { # epoch-seconds [json]
   CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW="$1" bash "$script" <<<"${2:-$live}"
   settle
 }
 layout() {
-  rm -rf "$work/p" "${XDG_RUNTIME_DIR:?}"/*
+  rm -rf "$work/p" "${rd:?}"/*
   reading uuid-team 1 $((P - 3 * day)) $((P - 2 * day))              # newest, ended
   reading uuid-team 2 $((P - 5 * day)) $((P - 4 * day))              # older, ended
   reading uuid-team 3 $((P - 5 * day)) $((P - day / 2))              # ended only 12 h ago
@@ -488,7 +492,7 @@ mv "$pa" "$pd/accounts-real"
 ln -s accounts-real "$pa"
 prune_run $P >/dev/null
 check "prune: nothing through a linked accounts folder" "$([[ -e $pd/accounts-real/uuid-team/$(u 2).json ]] && echo kept || echo gone)" "kept"
-check "prune: and an hour passes before it looks again" "$(find "$XDG_RUNTIME_DIR" -name '*.pruned' | wc -l)" "1"
+check "prune: and an hour passes before it looks again" "$(find "$rd" -name '*.pruned' | wc -l)" "1"
 
 # A slow prune keeps no render waiting, and a reading a writer renames into
 # place while the prune decides is not the one deleted. The shim stands in for
@@ -529,7 +533,7 @@ check "prune: a reading rewritten twice while it decides stays" "$(there "uuid-t
 
 # A stamp with a leading zero is still a time.
 layout
-printf '089\n' >"$XDG_RUNTIME_DIR/klepsydra-readings-$UID.pruned"
+printf '089\n' >"$rd/klepsydra-readings-$UID.pruned"
 prune_run $P >/dev/null
 check "prune: a stamp with a leading zero does not stop it" "$(there "uuid-team/$(u 2).json")" "gone"
 
@@ -538,13 +542,34 @@ layout
 mv "$work/p/dev.ajsoftworks.klepsydra" "$work/p/klepsydra-copy"
 CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="$work/p/klepsydra-copy" KLEPSYDRA_NOW=$P bash "$script" <<<"$live" >/dev/null
 check "prune: nothing in another folder" "$([[ -e $work/p/klepsydra-copy/accounts/uuid-gone ]] && echo kept || echo gone)" "kept"
-check "prune: and no stamp for it" "$(find "$XDG_RUNTIME_DIR" -name '*.pruned' | wc -l)" "0"
-check "prune: nor a lock, so a render starts nothing" "$(find "$XDG_RUNTIME_DIR" -name '*.lock' | wc -l)" "0"
+check "prune: and no stamp for it" "$(find "$rd" -name '*.pruned' | wc -l)" "0"
+check "prune: nor a lock, so a render starts nothing" "$(find "$rd" -name '*.lock' | wc -l)" "0"
+# #517: the prune's lock and stamp are this boot's in the state folder, never
+# the runtime folder's; a render never waits for that folder; and with no lock
+# folder of its own a render still echoes but prunes nothing.
+layout
+s=$EPOCHREALTIME
+display=$(CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW=$P bash "$script" <<<"$live" 2>&1)
+e=$EPOCHREALTIME
+settle
+check "#517 B1: a runtime folder not made yet: the render echoes at once" \
+  "$display|$(( (${e/./} - ${s/./}) < 3000000 ))" "Opus 5 · ctx 21% · 5h 73% · 7d 12%|1"
+check "#517: and prunes, stamped in this boot's folder" \
+  "$(there "uuid-team/$(u 2).json") $(find "$rd" -name '*.pruned' | wc -l) $(stat -c %a -- "$rd")" "gone 1 700"
+layout
+ln -s "$work/state" "$work/state-link"
+mkdir -p "$work/cwd"
+display=$(cd "$work/cwd" && CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_STATE="$work/state-link" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW=$P bash "$script" <<<"$live" 2>&1)
+sleep 0.3
+check "#517: no lock folder of its own: echoes, prunes nothing, leaves no stamp or lock" \
+  "$display|$(there "uuid-team/$(u 2).json")|$(find -L "$work/state-link" "$work/cwd" \( -name '*.pruned' -o -name '*.lock' \) | wc -l)" \
+  "Opus 5 · ctx 21% · 5h 73% · 7d 12%|kept|0"
+rm -f -- "$work/state-link"
 
 # A render does not wait for the prune, and a prune already running is left to
 # finish alone.
 layout
-exec {held}>>"$XDG_RUNTIME_DIR/klepsydra-readings-$UID.lock"; flock "$held"
+exec {held}>>"$rd/klepsydra-readings-$UID.lock"; flock "$held"
 start=$(date +%s%N)
 display=$(prune_run_nowait() { CLAUDE_CONFIG_DIR="$work/team" KLEPSYDRA_DIR="$pd" KLEPSYDRA_NOW=$P bash "$script" <<<"$live"; }; prune_run_nowait)
 took=$(( ($(date +%s%N) - start) / 1000000 ))

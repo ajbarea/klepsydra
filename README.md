@@ -327,8 +327,9 @@ in `fleet/` need it whenever your Windows user is not `ajbar`. These want a WSL
 path (`/mnt/c/...`); the overlay
 reads the same setting as a Windows path (`C:\...`), so exporting one value
 to both sides gives the overlay a path it cannot resolve. The hooks prune
-their old files only when the last folder of that path is
-`dev.ajsoftworks.klepsydra`; any other name leaves them in place.
+their old files and trace refused locks only when the last folder of that path
+is `dev.ajsoftworks.klepsydra`; any other name writes no trace and leaves old
+files in place.
 
 A second copy of the overlay, run to test a build beside the installed one,
 takes its own `KLEPSYDRA_DIR` and `KLEPSYDRA_NO_AUTOSTART` set to any
@@ -858,9 +859,18 @@ Enter closes it, since tmux 3.4 crashes on a focus event to a dead pane (#290);
 once. The `fleet-tmux-watch.timer` runs `fleet recover` when the fleet's server
 dies with a crash record (WSL's crash dump or journal line), also on the next
 boot when WSL shut down after the crash (the watchdog is a systemd timer, not
-the overlay). The overlay itself starts a process only as `wsl.exe`: one launch at a
-time, and one Jump, End or Interrupt per card at a time. Each comes from a
-click, except one call that lists agy's models when the wall first opens.
+the overlay). At a boot, `fleet recover` first waits up to `FLEET_RUNTIME_WAIT` seconds (180)
+for `XDG_RUNTIME_DIR` and, where systemd booted, the user manager's socket,
+which WSL names before logind makes them, timed by `/proc/uptime`, which a WSL
+clock step does not move.
+The overlay itself starts a process only as `wsl.exe`: one launch at a time,
+and one Jump, End or Interrupt per card at a time. Each comes from a click,
+except one call that lists agy's models when the wall first opens. Those locks,
+and the hooks' and status line's, live in `~/.local/state/klepsydra/run-<host>-<boot id>`
+(mode 0700), a folder no caller waits for. When it cannot be used (a symlink,
+another user's, writable by others, a read-only or full disk), the launcher says
+why, the fleet hook records no session and writes the reason to
+`lock-refused` in the overlay's data folder, and `fleet doctor` names it.
 
 Each kourai character's canon colour marks its session twice: its window in
 the tmux status bar and a 4 px left marker on its card's **Open terminal**
