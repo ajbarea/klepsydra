@@ -18,7 +18,7 @@ A test steers it through a JSON state file, re-read on every tick:
              and queue_box, when set, is what the box holds after)
   rc         "off" (default) or "on": Remote Control already connected
   rc_delay   seconds before /remote-control's answer shows
-  limit_delay  seconds after a "limit" submit before its banner shows
+  limit_delay  seconds a "limit" submit spins before its synthetic error record and banner
   busy_delay seconds before a submitted turn's spinner shows
   menu       "limit" shows Claude Code's limit menu
   paste_prefix  text typed into the box just before the next paste (AJ
@@ -137,7 +137,10 @@ class Pane:
         self.rc_at = None  # when /remote-control's answer shows
         self.rc_was_on = False
         self.busy_at = None
-        self.limit_at = None  # when a limit submit's banner shows (limit_delay)
+        self.limit_at = (
+            None  # when a limit submit's error record is written (limit_delay)
+        )
+        self.banner_at = None  # and when its banner follows
         self.last_submit = ""
         self.buf = b""
         self.shown = None
@@ -250,12 +253,14 @@ class Pane:
             self.state["above"].append("  Press up to edit queued messages")
             self.input = self.state.get("queue_box", "")
         elif then == "limit":
-            # Claude Code writes the prompt record first; the banner follows the API's refusal.
+            # As Claude Code does: the prompt record, a spinner while the API refuses, then a
+            # synthetic assistant record (isApiErrorMessage) and the banner.
             delay = float(self.state.get("limit_delay", 0))
             if delay:
                 self.limit_at = time.time() + delay
+                self.state["busy"] = True
             else:
-                self.state["above"].append(LIMIT_BANNER)
+                self.limited()
         self.save()
 
     def key(self, data):
@@ -346,10 +351,27 @@ class Pane:
                 if self.state.get("log_typed"):
                     self.log("TYPED " + rest)
 
+    def limited(self, banner=True):
+        self.record(
+            {
+                "type": "assistant",
+                "isApiErrorMessage": True,
+                "message": {"role": "assistant", "model": "<synthetic>", "content": []},
+            }
+        )
+        if banner:
+            self.state.setdefault("above", []).append(LIMIT_BANNER)
+
     def tick(self):
         if self.limit_at is not None and time.time() >= self.limit_at:
             self.limit_at = None
-            self.state["above"].append(LIMIT_BANNER)
+            self.state["busy"] = False
+            self.limited(banner=False)
+            self.banner_at = time.time() + 0.5  # the banner trails the record
+            self.save()
+        if self.banner_at is not None and time.time() >= self.banner_at:
+            self.banner_at = None
+            self.state.setdefault("above", []).append(LIMIT_BANNER)
             self.save()
         if self.busy_at is not None and time.time() >= self.busy_at:
             self.busy_at = None

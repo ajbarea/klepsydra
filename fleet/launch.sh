@@ -24,7 +24,8 @@ refuse() { err "$1"; flog ERROR "launch refused: $1" name="$name"; exit 2; }
 name=$1 txt=$2
 shift 2
 # The pane's shell reads the brief from the session's folder, not this one.
-txt=$(readlink -f -- "$txt") || refuse "no brief at $2"
+src=$txt
+txt=$(readlink -f -- "$src") || refuse "no brief at $src"
 { [[ -r $txt ]] && grep -q '[^[:space:]]' -- "$txt"; } || refuse "no brief at $txt"
 # claude would read a brief that starts with "-" as an option.
 [[ $(head -c1 -- "$txt") != - ]] || refuse "a brief cannot start with -: $txt"
@@ -128,7 +129,7 @@ if [[ ${FLEET_SCOPE:-1} != 0 ]]; then
   # name in the journal, and systemd 258 expands ${VAR} in a scope's arguments
   # unless told not to (the flag is new in 254).
   sdrun=${FLEET_SYSTEMD_RUN:-systemd-run} noexpand=""
-    v=$($sdrun --version 2>/dev/null | awk 'NR == 1 { print $2 + 0 }')
+  v=$($sdrun --version 2>/dev/null | awk 'NR == 1 { print $2 + 0 }')
   (( ${v:-0} >= 254 )) && noexpand="--expand-environment=no "
   cmd="$sdrun --user --scope --collect --unit=fleet-$name-$(date +%s) --description=$(printf '%q' "fleet $name") ${noexpand}$(fleet_slice_opts "$role") -p MemoryMax=${MEM_MAX:-5G} -p MemorySwapMax=${MEM_SWAP:-1G} ${tasks}$cmd"
 fi
@@ -175,16 +176,23 @@ tp=""
 found() { [[ -n $tp ]] || tp=$(FLEET_PROJECTS="$account/projects" transcript "$sid"); [[ -n $tp ]]; }
 taken() { limit_line "$1" >/dev/null || { found && grep '"type":"user"' "$tp" | grep -vq '"isMeta":true'; }; }
 turned() { started "$1" || { found && grep -q '"type":"assistant"' "$tp"; }; }
+# At a limit Claude Code spins, then writes a synthetic assistant record
+# (isApiErrorMessage, 0.2-1.7 s after the prompt on AJ's transcripts) and shows the
+# banner. So a turn counts once it settles: a banner or its first assistant record.
+answered() { limit_line "$1" >/dev/null || { found && grep -q '"type":"assistant"' "$tp"; }; }
+refused() {
+  limit_line "$(screen "$pane")" >/dev/null ||
+    { found && grep -m1 '"type":"assistant"' "$tp" | grep -q '"isApiErrorMessage":true'; }
+}
 # Started only once a turn shows: a brief taken but never answered is not delivered.
-# A limit counts as the turn's end (started reads it), shown at once or a moment later.
 if ! wait_for "$pane" "$(capped "${FLEET_READY_WAIT:-60}")" taken; then
   brief=NOT-DELIVERED
 elif ! wait_for "$pane" "$(capped "${FLEET_TURN_WAIT:-60}")" turned; then
   brief=NOT-DELIVERED
-elif limit_line "$(screen "$pane")" >/dev/null; then
-  brief=blocked-by-limit
 else
-  brief=started
+  # A turn still thinking past FLEET_LIMIT_WAIT is no limit: those answer within 2 s.
+  wait_for "$pane" "$(capped "${FLEET_LIMIT_WAIT:-3}")" answered || :
+  if refused; then brief=blocked-by-limit; else brief=started; fi
 fi
 if found && grep -q '"subtype":"bridge_status"' "$tp"; then
   flog INFO "remote control on" name="$name" pane="$pane" took_s="$(took)"

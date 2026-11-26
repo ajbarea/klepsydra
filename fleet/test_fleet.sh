@@ -926,7 +926,9 @@ rm -f "$KLEPSYDRA_DIR/picks.json"
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
 out=$(launch agent2b '{"above":["Claude Code"],"on_submit":"limit","limit_delay":1.5}')
-check "#316 review 2: a limit shown a moment after the prompt record is still a limit" "${out##* }" "brief=blocked-by-limit"
+check "#316 review 2: a limit that spins first, then writes its error record and banner, is still a limit" "${out##* }" "brief=blocked-by-limit"
+out=$(launch agent2c '{"above":["Claude Code"],"on_submit":"limit","limit_delay":0.4}')
+check "#316 review 3: and so is one that settles in 0.4 s, the usual time" "${out##* }" "brief=blocked-by-limit"
 
 out=$(FLEET_READY_WAIT=4 launch agent3 '{"above":["Claude Code"],"on_submit":"none","meta_first":true}')
 check "not delivered when no turn ever starts (a meta prompt record is not the brief)" "${out##* }" "brief=NOT-DELIVERED"
@@ -947,6 +949,9 @@ check "#315: a brief claude would read as an option is refused" \
 check "#315: so is an empty one" \
   "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" empty "$work/empty.src" >/dev/null 2>&1; echo $?)" "2"
 printf ' \n\t\n' >"$work/blank.src"
+check "#316 review 3: a brief whose folder is missing is refused by its own name, logged, exit 2" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" nodir "$work/no/such/b.src" --model x 2>&1 >/dev/null | grep -c "^error: no brief at $work/no/such/b.src$"; echo $?) $(jq -r 'select(.message | startswith("launch refused: no brief")) | .name' "$FLEET_LOG" | tail -1)" "1
+2 nodir"
 check "#316 review 2: a refused brief is in the fleet log too" "$(jq -r 'select(.message | startswith("launch refused: a brief cannot start with -")) | .name' "$FLEET_LOG" | tail -1)" "dash"
 check "#316 review: and one of whitespace alone" \
   "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" blank "$work/blank.src" >/dev/null 2>&1; echo $?)" "2"
