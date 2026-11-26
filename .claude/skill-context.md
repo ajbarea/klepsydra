@@ -79,7 +79,7 @@ files belong to: the JS guards scan hooks and scripts too.
 - `bash hooks/test_fleet.sh`: the fleet hook's states, where, identity,
   pruning (every refusal first) and the README settings block.
 - `bash scripts/test_measure_memory.sh`: the release memory rule.
-- `make test-fleet` (it takes the heavy lock; `FLEET_SHARD=<area>` runs one shard, as CI does on a pull request): the fleet engine against fake Claude Code panes
+- `make test-fleet` (it takes the heavy lock; `make test-fleet FLEET_SHARD=<area>` runs one shard, as CI does on a pull request, and a `FLEET_SHARD` exported in the shell is ignored): the fleet engine against fake Claude Code panes
   on a private tmux socket (limits, reset parsing, typed lines, launch
   delivery, doctor, install). The shards a change reaches:
   `git diff --name-only main... | bash scripts/split-fleet-suite.sh --select`.

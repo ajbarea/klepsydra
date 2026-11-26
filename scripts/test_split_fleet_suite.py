@@ -337,7 +337,7 @@ def main() -> None:
         )
 
         # Only FLEET_SHARD= given to make picks a shard; one exported in the shell runs it all.
-        def make_n(*args: str, **env: str) -> str:
+        def make_n(*args: str, **env: str) -> subprocess.CompletedProcess[str]:
             clean = {
                 k: v
                 for k, v in os.environ.items()
@@ -357,18 +357,22 @@ def main() -> None:
                 capture_output=True,
                 text=True,
                 env={**clean, **env},
-            ).stdout.strip()
+            )
 
+        exported = make_n(FLEET_SHARD="misc")
         check(
-            "an exported FLEET_SHARD runs the whole suite",
-            make_n(FLEET_SHARD="misc"),
-            "bash fleet/test_fleet.sh",
+            "an exported FLEET_SHARD runs the whole suite, and make says it ignored it",
+            (
+                exported.stdout.strip(),
+                "FLEET_SHARD from the environment is ignored" in exported.stderr,
+            ),
+            ("bash fleet/test_fleet.sh", True),
         )
         check(
             "make test-fleet FLEET_SHARD=misc runs the misc shard",
-            make_n("FLEET_SHARD=misc").endswith(
-                "exec bash fleet/tests/shards/misc.sh'"
-            ),
+            make_n("FLEET_SHARD=misc")
+            .stdout.strip()
+            .endswith("exec bash fleet/tests/shards/misc.sh'"),
             True,
         )
 

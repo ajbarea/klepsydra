@@ -25,6 +25,11 @@ SHELL_FILES = hooks/*.sh statusline/*.sh scripts/*.sh fleet/*.sh fleet/fleet
 # a FLEET_SHARD exported in the shell runs the whole suite. The shards a change reaches:
 # git diff --name-only main... | bash scripts/split-fleet-suite.sh --select
 FLEET_PICK = $(if $(filter command line,$(origin FLEET_SHARD)),$(FLEET_SHARD))
+ifneq ($(filter environment%,$(origin FLEET_SHARD)),)
+ifneq ($(filter test-fleet,$(MAKECMDGOALS)),)
+$(warning FLEET_SHARD from the environment is ignored, so the whole suite runs; for one shard run make test-fleet FLEET_SHARD=$(FLEET_SHARD))
+endif
+endif
 test-fleet:
 	$(HEAVY) bash $(if $(FLEET_PICK),-c 'bash scripts/split-fleet-suite.sh && exec bash fleet/tests/shards/$(FLEET_PICK).sh',fleet/test_fleet.sh)
 
