@@ -1619,64 +1619,113 @@ NARROW = """() => {
   const jumps = cards.map((c) => c.querySelector('.jump')).filter((b) => b && b.checkVisibility())
     .map((b) => b.textContent.trim());
   // A pill's time cut short or to nothing; checkVisibility() is true for a 0 px span.
-  const whenCut = cards.flatMap((c) => [...c.querySelectorAll('.pill .when')])
-    .filter((w) => w.checkVisibility() && w.textContent.trim() && w.scrollWidth > w.clientWidth + 1)
+  const isCut = (e) => e.checkVisibility() && e.textContent.trim() && e.scrollWidth > e.clientWidth + 1;
+  const whenCut = cards.flatMap((c) => [...c.querySelectorAll('.pill .when')]).filter(isCut)
     .map((w) => `${w.closest('.card').querySelector('.name')?.textContent} ${w.clientWidth}px`);
-  // A slim comfortable card's pill on the name's row (#535): moving it under the name cuts the task.
-  const mid = (e) => { const b = e.getBoundingClientRect(); return b.top + b.height / 2; };
-  const pillMoved = cards.filter((c) => c.matches('.tone-done, .dim')).filter((c) => {
-    const p = c.querySelector('.pill'), n = c.querySelector('.name');
-    return p && n && p.checkVisibility() && Math.abs(mid(p) - mid(n)) > 12;
+  // Who gives way first (#535): a time is cut only once its name is down to its floor,
+  // its own text width or 90 px, and a label only once its time is gone.
+  const range = document.createRange();
+  const textW = (e) => { range.selectNodeContents(e); return range.getBoundingClientRect().width; };
+  // Only where name and pill share a line: a stacked card (#505) gives the name a line of its own.
+  const mid = (e) => { const b = r(e); return b.top + b.height / 2; };
+  const nameAboveFloor = cards.filter((c) => {
+    const w = c.querySelector('.pill .when'), n = c.querySelector('.name');
+    return w && n && isCut(w) && Math.abs(mid(n) - mid(w.closest('.pill'))) < 12
+      && n.clientWidth > Math.ceil(Math.min(textW(n), 90)) + 1;
+  }).map((c) => `${c.querySelector('.name').textContent} ${c.querySelector('.name').clientWidth}px`);
+  const labelFirst = cards.filter((c) => {
+    const l = c.querySelector('.pill .label'), w = c.querySelector('.pill .when');
+    if (!l || !isCut(l)) return false;
+    // A cut label runs to the pill's padding: no space is left standing beside it.
+    const p = l.closest('.pill'), edge = r(p).right - parseFloat(getComputedStyle(p).paddingRight);
+    return (w && w.checkVisibility() && w.textContent.trim() && r(w).width > 0.5) || edge - r(l).right > 1;
   }).map((c) => c.querySelector('.name').textContent);
-  return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut, squeezed, overlap, pillMoved,
-           calcSize: CSS.supports('min-width: calc-size(max-content, size)'),
-           density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)], whenCut };
+  // A pill's content stays inside its box: no label running on under Open terminal.
+  const pillSpill = cards.map((c) => c.querySelector('.pill')).filter((p) => p && p.checkVisibility()
+      && [...p.children].some((k) => k.checkVisibility() && r(k).width > 0 && (r(k).right > r(p).right + 0.5 || r(k).left < r(p).left - 0.5)))
+    .map((p) => p.closest('.card').querySelector('.name').textContent);
+  const calcRules = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules]; } catch { return []; } })
+    .filter((rule) => rule.cssText.includes('calc-size(')).length;
+  return { cards: cards.length, wide: document.documentElement.scrollWidth > cw, out, cut, squeezed, overlap,
+           calcSize: CSS.supports('min-width: calc-size(max-content, size)'), calcRules,
+           density: document.getElementById('wall').dataset.density, jumps: [...new Set(jumps)], whenCut,
+           nameAboveFloor, labelFirst, pillSpill };
 }"""
+
+
+NO_CALC_SIZE = """(() => {
+  const supports = CSS.supports.bind(CSS);
+  CSS.supports = (...a) => !a.join(' ').includes('calc-size(') && supports(...a);
+})();"""
+
+
+def without_calc_size(page):
+    """An engine without calc-size() (WebKit, Gecko), in Chromium, whose
+    runtime flag for it is gone: every stylesheet loses calc-size(), so a
+    declaration using it drops and an @supports on it fails, and
+    CSS.supports() denies it."""
+
+    def rewrite(route):
+        got = route.fetch()
+        route.fulfill(response=got, body=got.text().replace("calc-size(", "calc-size-unsupported("))
+
+    page.route("**/*.css", rewrite)
+    page.add_init_script(NO_CALC_SIZE)
 
 
 def narrow_window_keeps_cards_inside(wall):
     """#505/#535: a desktop wall window narrower than a card's 420 px minimum keeps
     every card inside the window and every button and link inside its card,
     with no sideways scroll, in both densities and with a queue tab's padding;
-    no name is squeezed in either density and Open terminal reads whole; at
-    full width the columns are as before."""
-    for density in ("compact", "comfortable"):
-        for width, tabbed in ((360, False), (390, False), (390, True), (420, True), (450, False), (470, False), (520, False), (530, False), (880, False), (945, False), (1280, False), (1920, False)):
-            page = open_app(wall, width=width, height=900 if width < 1000 else 1000)
-            pick(page, f".density label:has([value={density}])")
-            if tabbed:
-                page.evaluate("document.body.classList.add('queue-tabbed')")
-            page.wait_for_timeout(1500)  # past an arrival's spring over the frame
-            got = page.evaluate(NARROW)
-            tab = " with a queue tab" if tabbed else ""
-            # Where main shows every compact pill's time whole, the name's floor cuts none (#535).
-            whens_ok = not (density == "compact" and width in (945, 1280, 1920)) or not got["whenCut"]
-            # Where calc-size() sizes the name's floor, a comfortable slim card's pill never leaves the name's row.
-            pills_ok = density == "compact" or not got["calcSize"] or not got["pillMoved"]
-            wall.check(got["density"] == density and got["cards"] > 0 and not got["wide"] and not got["out"]
-                       and not got["cut"] and not got["overlap"] and not got["squeezed"] and got["jumps"] in ([], ["Open terminal"])
-                       and whens_ok and pills_ok,
-                       f"{density} at {width} px{tab}: cards in the window, controls in their card and apart, no name squeezed, Open terminal whole", got)
-            page.close()
+    no name is squeezed and Open terminal reads whole; a compact pill's time
+    is cut only once its name is at its floor, its label only once the time is
+    gone, and its content stays in its box. All of it holds with calc-size()
+    and without it (#535: one floor for every engine). At full width the
+    columns are as before."""
+    widths = ((360, False), (390, False), (390, True), (420, True), (450, False), (470, False), (520, False), (530, False),
+              (880, False), (900, False), (945, False), (1280, False), (1920, False))
+    for engine, before in (("", None), (" without calc-size()", without_calc_size)):
+        for density in ("compact", "comfortable"):
+            for width, tabbed in widths:
+                page = open_app(wall, width=width, height=900 if width < 1000 else 1000, before=before)
+                pick(page, f".density label:has([value={density}])")
+                if tabbed:
+                    page.evaluate("document.body.classList.add('queue-tabbed')")
+                page.wait_for_timeout(1500)  # past an arrival's spring over the frame
+                got = page.evaluate(NARROW)
+                tab = " with a queue tab" if tabbed else ""
+                # The app never shows a comfortable wall under 420 px: its window's minimum, and the phone wall is compact.
+                names_ok = (density == "comfortable" and width < 420) or not got["squeezed"]
+                # Where main shows every compact pill's time whole, the name's floor cuts none.
+                whens_ok = not (density == "compact" and width in (945, 1280, 1920)) or not got["whenCut"]
+                forced = not before or (not got["calcSize"] and got["calcRules"] == 0)
+                wall.check(got["density"] == density and got["cards"] > 0 and not got["wide"] and not got["out"]
+                           and not got["cut"] and not got["overlap"] and names_ok and got["jumps"] in ([], ["Open terminal"])
+                           and whens_ok and not got["nameAboveFloor"] and not got["labelFirst"] and not got["pillSpill"] and forced,
+                           f"{density} at {width} px{tab}{engine}: cards in the window, controls in their card and apart, no name squeezed,"
+                           " Open terminal whole, a time cut only with its name at the floor, every pill's content in its box", got)
+                page.close()
     page = open_app(wall, width=1920, height=1000)
     cols = page.evaluate("getComputedStyle(document.getElementById('wall')).gridTemplateColumns.split(' ').length")
     wall.check(cols == 4, "at 1920 px the wall still has four columns", cols)
     page.close()
     # The phone wall (.served) keeps its own one-line compact header: none of the stacking reaches it.
-    page = open_app(wall, width=390, height=900)
-    pick(page, ".density label:has([value=compact])")
-    page.evaluate("document.documentElement.classList.add('served')")
-    page.wait_for_timeout(1500)
-    phone = page.evaluate("""() => {
-      const c = [...document.getElementById('wall').children].find((e) => e.checkVisibility() && e.querySelector('.pill'));
-      const p = c.querySelector('.pill'), n = c.querySelector('.name');
-      const mid = (e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; };
-      return { margin: getComputedStyle(p).marginLeft, sameLine: Math.abs(mid(p) - mid(n)) < 12 };
-    }""")
-    wall.check(phone["margin"] == "8px" and phone["sameLine"], "the phone wall at 390 px keeps the pill beside the name, as before", phone)
-    got = page.evaluate(NARROW)
-    wall.check(not got["whenCut"] and not got["squeezed"], "the phone wall at 390 px cuts no pill's time and squeezes no name (#535)", got)
-    page.close()
+    for engine, before in (("", None), (" without calc-size()", without_calc_size)):
+        page = open_app(wall, width=390, height=900, before=before)
+        pick(page, ".density label:has([value=compact])")
+        page.evaluate("document.documentElement.classList.add('served')")
+        page.wait_for_timeout(1500)
+        phone = page.evaluate("""() => {
+          const c = [...document.getElementById('wall').children].find((e) => e.checkVisibility() && e.querySelector('.pill'));
+          const p = c.querySelector('.pill'), n = c.querySelector('.name');
+          const mid = (e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; };
+          return { margin: getComputedStyle(p).marginLeft, sameLine: Math.abs(mid(p) - mid(n)) < 12 };
+        }""")
+        wall.check(phone["margin"] == "8px" and phone["sameLine"], f"the phone wall at 390 px{engine} keeps the pill beside the name, as before", phone)
+        got = page.evaluate(NARROW)
+        wall.check(not got["whenCut"] and not got["squeezed"] and not got["pillSpill"],
+                   f"the phone wall at 390 px{engine} cuts no pill's time and squeezes no name (#535)", got)
+        page.close()
 
 
 def ended_only(wall):
