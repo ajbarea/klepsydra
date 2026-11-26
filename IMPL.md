@@ -20,7 +20,7 @@ no comfortable block (the app never shows comfortable under 420 px).
   360-1920 px incl. 880/900; asserts a time is cut only with its name at the
   floor (one-line headers), a label only once the time is gone and with no
   space left beside it, and no pill content outside its box. 57/57.
-- Mutants, each red: no shrink weight (12), rigid label (2), no floor (4),
+- Mutants, each red: no shrink weight (12), rigid label (6, 880 px among them), no floor (4),
   no measuring (4), the flex gap back (12).
 - Review round 1 (fresh Opus reader, 11-26): clean, all 4 earlier findings
   closed. Its two Minors fixed: `pillSpill` compares to the pill's padding
@@ -33,4 +33,4 @@ no comfortable block (the app never shows comfortable under 420 px).
 - `flock -o /tmp/fleet-heavy.lock timeout 1500 uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py narrow_window_keeps_cards_inside`
 
 ## Next
-1. 📋 One verify pass on the Minor fixes, CI green, merge.
+1. 📋 Verify pass clean (11-26); merge once CI is green.
