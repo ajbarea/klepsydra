@@ -626,6 +626,53 @@ check "an end for an unknown session writes nothing" "$([[ -e $file ]] && echo w
 fire session-start.json '.session_title = "fleet-plan"'
 check "a custom title names it" "$(field .name)" '"fleet-plan"'
 
+# Session name fallback: engine title > worktree branch > brief first line (Claude and agy)
+rm -f "$file"
+fire session-start.json
+check "worktree branch fallback names it" "$(field .name)" '"feat/fleet-visualizer"'
+
+mkdir -p "$work/briefs"
+printf '# Fix agy cards\nDo something\n' >"$work/briefs/brief.md"
+rm -f "$file"
+fire session-start.json ".cwd = \"$repos/klepsydra\""
+now=1792353510 fire user-prompt.json ".cwd = \"$repos/klepsydra\" | .prompt = \"Read your brief at $work/briefs/brief.md\""
+check "brief first line fallback names it" "$(field .name)" '"Fix agy cards"'
+
+rm -f "$file"
+fire session-start.json '.engine = "agy" | .session_title = "custom-agy"'
+check "agy engine title names it" "$(field .name)" '"custom-agy"'
+
+rm -f "$file"
+fire session-start.json '.engine = "agy"'
+check "agy worktree fallback names it" "$(field .name)" '"feat/fleet-visualizer"'
+
+rm -f "$file"
+fire session-start.json ".engine = \"agy\" | .cwd = \"$repos/klepsydra\""
+now=1792353520 fire user-prompt.json ".engine = \"agy\" | .cwd = \"$repos/klepsydra\" | .prompt = \"Read your brief at $work/briefs/brief.md\""
+check "agy brief first line fallback names it" "$(field .name)" '"Fix agy cards"'
+
+# agy's tasks are its child shells (#416). The tree as agy 1.5.17 draws it
+# (11-25): MCP servers as npm and uv, never a shell; each tool call as
+# `bash -c CMD`, whatever its command line says (an "mcp" or ".server" in it
+# is no server). The hook runs as a child too and never counts.
+mkproc 680 1 agy 8717628 S agy
+mkproc 681 680 klepsydra-fleet 8717701 S bash "$hook"
+mkproc 682 680 npm 8717630 S npm exec @playwright/mcp@latest --browser chrome
+mkproc 684 680 uv 8717632 S uv run --quiet --directory /home/user/.gemini/config/plugins/epistole python -m epistole.server
+mkproc 683 680 bash 8717631 S bash -c "make test-mcp"
+mkproc 685 680 bash 8717633 S bash -c "python3 -m http.server"
+mkdir -p "$work/proc/680/task/680"
+printf '%s ' 681 682 683 684 685 >"$work/proc/680/task/680/children"
+rm -f "$file"
+fire session-start.json '.engine = "agy"' KLEPSYDRA_PID=681
+fire user-prompt.json '.engine = "agy"' KLEPSYDRA_PID=681
+fire stop.json '.engine = "agy" | del(.background_tasks)' KLEPSYDRA_PID=681
+check "#416: agy's two live calls count, its MCP servers and the hook do not; the turn stays working" "$(field '[.state, .reason, .shells_live]')" '["working","background",2]'
+printf '%s ' 681 682 684 >"$work/proc/680/task/680/children"
+fire stop.json '.engine = "agy" | del(.background_tasks)' KLEPSYDRA_PID=681
+check "#416: no call left, only servers: the turn is done" "$(field '[.state, .reason, .shells_live]')" '["done",null,0]'
+rm -rf -- "${work:?}/proc/680" "${work:?}/proc/681" "${work:?}/proc/682" "${work:?}/proc/683" "${work:?}/proc/684" "${work:?}/proc/685"
+
 echo "lock folder (#517)"
 # One folder per host and boot in the state folder, whatever XDG_RUNTIME_DIR
 # says, so a launch before logind made the runtime folder and one after share one lock.
@@ -1278,6 +1325,22 @@ fire post-tool-task-stop.json '.tool_input = {task_id: "abd38d40cac785715"} | .t
 rm -rf -- "${work:?}/proc/500/task"
 fire post-tool-bash.json
 check "#167: without the children list no live count is kept" "$(field 'has("shells_live")')" "false"
+# #416: agy's "no live child, no task" rule is agy's alone. A Claude Stop that
+# lists a running workflow, then the idle prompt with no shell alive, keeps
+# the workflow and the turn working, as before.
+kids 550
+fire user-prompt.json
+now=1792356500 fire stop.json '.background_tasks = [{id: "wf1", type: "workflow", status: "running", description: "review"}]'
+now=1792356540 fire notification-idle.json
+check "#416: a Claude workflow with no shell alive still runs: working, its task kept" "$(field '[.state, .reason, ([.background[] | .kind] | join(","))]')" '["working","background","task"]'
+# A live shell keeps a turn working only for agy, which lists no work of its
+# own: a Claude Stop with no task list and a Bash call alive reads done, as before.
+kids 901
+now=1792356550 fire stop.json '.background_tasks = []' # Stop's empty list ends the workflow
+fire user-prompt.json
+now=1792356560 fire stop.json 'del(.background_tasks)'
+check "#416: a Claude Stop with a live shell but no work listed is done" "$(field '[.state, .shells_live]')" '["done",1]'
+rm -rf -- "${work:?}/proc/500/task" # as before it: no children list
 # Stop's own list of running tasks is the truth.
 fire user-prompt.json
 now=1792356450 fire subagent-start.json
@@ -1646,12 +1709,17 @@ lblock() { sed -n '/^# --- lock dir/,/^# --- end lock dir ---$/p' "$1"; }
 check "lock dir block present" "$([[ -n "$(lblock "$hook")" ]] && echo yes)" "yes"
 check "lock dir block identical in the launcher" "$(lblock "$hook")" "$(lblock "$here/klepsydra-launch.sh")"
 check "lock dir block identical in the statusline" "$(lblock "$hook")" "$(lblock "$here/../statusline/klepsydra-statusline.sh")"
+check "lock dir block identical in the fleet scripts (#416)" "$(lblock "$hook")" "$(lblock "$here/../fleet/lib.sh")"
 # shellcheck disable=SC2016 # literal names, as the scripts spell them
 check "#517 B3, N3, N5: the hooks and statusline source nothing, read no XDG_RUNTIME_DIR and name no /tmp path" \
   "$(cat "$hook" "$here/klepsydra-launch.sh" "$here/../statusline/klepsydra-statusline.sh" | grep -v '^[[:space:]]*#' | grep -cE '^[[:space:]]*(\.|source)[[:space:]]+["$/~]|XDG_RUNTIME_DIR|runtime_dir|/tmp')" "0"
 pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
 check "proc stat block present" "$([[ -n "$(pblock "$hook")" ]] && echo yes)" "yes"
 check "proc stat block identical in the launcher" "$(pblock "$hook")" "$(pblock "$here/klepsydra-launch.sh")"
+check "proc stat block identical in the fleet scripts (#416)" "$(pblock "$hook")" "$(pblock "$here/../fleet/lib.sh")"
+sblock() { sed -n '/^# --- live shells/,/^# --- end live shells ---$/p' "$1"; }
+check "live shells block present" "$([[ -n "$(sblock "$hook")" ]] && echo yes)" "yes"
+check "live shells block identical in the fleet scripts (#416)" "$(sblock "$hook")" "$(sblock "$here/../fleet/lib.sh")"
 # shellcheck disable=SC2016 # a literal $PROC_ROOT, as the scripts spell it
 check "the launcher parses /proc only in the block (and the lock dir block's boot id and btime)" \
   "$(sed -e '/^# --- proc stat/,/^# --- end proc stat ---$/d' -e '/^# --- lock dir/,/^# --- end lock dir ---$/d' "$here/klepsydra-launch.sh" | grep -cE 'read -r -a stat|<"?(/proc|\$PROC_ROOT)/')" "0"
@@ -1920,7 +1988,8 @@ C5=aaaaaaaa-2222-4333-8444-555555555555
 C6=aaaaaaaa-2222-4333-8444-555555555556
 ( cfire session-start.json $C5 >/dev/null ) &
 hung=$!
-until [[ -s $tlog ]]; do read -r -t 0.05 <> <(:) || true; done # the first hook is inside tmux
+t_end=$(( SECONDS + 5 ))
+until [[ -s $tlog ]] || (( SECONDS >= t_end )); do read -r -t 0.05 <> <(:) || true; done # the first hook is inside tmux
 t0=$SECONDS
 fire session-start.json ".session_id = \"$C6\"" >/dev/null
 check "a hung tmux does not hold the lock: another session is written at once" \

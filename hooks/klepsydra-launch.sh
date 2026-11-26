@@ -51,7 +51,7 @@ COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .git
 AGY_ASK=${KLEPSYDRA_AGY_ASK:-30} # seconds for one agy listing; a launch asks with less
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
-# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
 # The folder for the locks and stamps every caller must share: one per host and
 # boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
 # used only while it and the folder above it are ours, not symlinks and the
@@ -615,7 +615,7 @@ new() { # dir [agy model | claude account [model] | copilot [model]]
   fi
 }
 
-# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and hooks/klepsydra-browser.sh ---
+# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, hooks/klepsydra-browser.sh and fleet/lib.sh ---
 # Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
 # `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
 # The name sits in parentheses and may itself contain spaces or ")".

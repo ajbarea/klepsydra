@@ -276,6 +276,60 @@ check "cache: a failed parse is not kept" "${SCR_RAW+set}" ""
 screen_parse "${corpus[0]}"
 check "cache: the next call reads the screen" "$SCR_PLAIN" "$(old_plain <<<"${corpus[0]}")"
 
+# What the resume service reads as progress (#416): the plain screen less the
+# lines an engine redraws while nothing moves. Real agy 1.5.17 captures (email
+# and folder replaced) first, then a property test, then a timing budget.
+fx=$root/fleet/fixtures/progress-agy-1.5.17
+progress_of() { unset SCR_RAW; screen_progress "$(<"$1")"; printf '%s' "$PROGRESS"; }
+check "progress: agy's spinner and timer alone (3s, then 9s) are no progress" \
+  "$(progress_of "$fx-busy-3s.txt")" "$(progress_of "$fx-busy-9s.txt")"
+check "progress: a task waited on 20 s longer, nothing redrawn but the clock, is none" \
+  "$(progress_of "$fx-task-wait.txt")" "$(progress_of "$fx-task-wait-later.txt")"
+check "progress: the call launching its task is progress" \
+  "$([[ $(progress_of "$fx-busy-9s.txt") != "$(progress_of "$fx-task-wait.txt")" ]] && echo yes)" yes
+check "progress: the reply is progress" \
+  "$([[ $(progress_of "$fx-task-wait-later.txt") != "$(progress_of "$fx-done.txt")" ]] && echo yes)" yes
+
+# Property: on any screen, a redraw that changes only the spinner glyph, its
+# timer, an "esc to" cue, the usage line or colour reads the same; a change to
+# one content character does not. Seeded, so a failure replays.
+RANDOM=416
+spin=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ ⡿ ⣟ ⣯ ⣷ ⣾ ⣽ ⣻ ⢿ ✢ ✳ ✶ ✻ ✽)
+timer() { case $((RANDOM % 5)) in 0) echo "$((RANDOM % 60))s" ;; 1) echo "($((RANDOM % 1200))s)" ;; 2) echo "($((RANDOM % 90))m $((RANDOM % 60))s)" ;; 3) echo "(1h $((RANDOM % 60))m · ↓ $((RANDOM % 9)).$((RANDOM % 9))k tokens)" ;; *) echo "($((RANDOM % 99)).$((RANDOM % 9))s)" ;; esac; }
+frame() { # BODY: the body under a random spinner line, cue, usage line and colours
+  local c=$((31 + RANDOM % 7))
+  printf '%s\n\e[%sm%s  Working… %s\e[0m\n  esc to interrupt\n%s\n────\n> \n────\nGemini 4 Hydrogen (High) · ctx %s%% · 5h %s%% · 7d %s%%\n' \
+    "$1" "$c" "${spin[RANDOM % ${#spin[@]}]}" "$(timer)" "$2" $((RANDOM % 100)) $((RANDOM % 100)) $((RANDOM % 100))
+}
+same=0 moved=0 tries=60
+for ((i = 0; i < tries; i++)); do
+  body=$(printf '● Bash(make test-%s)\n  ⎿ %s passed, %s failed\nReading slides %s to %s.' $RANDOM $((RANDOM % 900)) $((RANDOM % 9)) $((RANDOM % 9)) $((RANDOM % 30)))
+  tail="  ● [1$((RANDOM % 9)):0$((RANDOM % 9)):00] sleep 40 running"
+  unset SCR_RAW; screen_progress "$(frame "$body" "$tail")"; a=$PROGRESS
+  unset SCR_RAW; screen_progress "$(frame "$body" "$tail")"; b=$PROGRESS
+  [[ $a == "$b" ]] && same=$((same + 1))
+  k=$((RANDOM % ${#body}))
+  [[ ${body:k:1} == x ]] && n=y || n=x
+  unset SCR_RAW; screen_progress "$(frame "${body:0:k}$n${body:k+1}" "$tail")"
+  [[ $PROGRESS != "$a" ]] && moved=$((moved + 1))
+done
+check "progress property: $tries redraws of spinner, timer, cue, usage and colour read the same" "$same" "$tries"
+check "progress property: $tries one-character content changes each read as progress" "$moved" "$tries"
+
+# Time: the cleaner runs on every pane every pass, so a full-size screen
+# (300 x 80, coloured on every line) stays far under the pass. The extglob
+# squeeze it replaced took 15 to 154 s on 2.5 to 5 KB captures.
+big=""
+for ((i = 0; i < 80; i++)); do
+  big+=$(printf '\e[3%sm%s\e[0m%*s%s' $((i % 7)) "line $i ⠋ (12m 3s)" 200 "" "$(printf 'w %.0s' {1..40})")$'\n'
+done
+unset SCR_RAW
+t0=$EPOCHREALTIME
+screen_progress "$big"
+t1=$EPOCHREALTIME
+ms=$(( (${t1/./} - ${t0/./}) / 1000 ))
+check "progress: a full-size screen (${#big} bytes) cleans in under 500 ms (took ${ms} ms)" "$((ms < 500))" 1
+
 # Fork budget: every helper on one capture, one process (strace).
 STRACE=${STRACE:-strace}
 if command -v "$STRACE" >/dev/null; then

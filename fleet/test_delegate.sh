@@ -211,6 +211,14 @@ check "agy: a running turn is busy even with a limit phrase in view" "$(eng_stat
 check "an exit-0 answer over 400 bytes that mentions a 429 is an answer" "$(eng_classify 0 "429 $(head -c 450 /dev/zero | tr '\0' x)" '')" "ok"
 check "agy: an old quota word far above the box is not" "$(eng_state agy "$(printf 'quota\n%.0s' 1; printf 'x\n%.0s' $(seq 20); echo "$idle")")" "idle"
 cidle=$' ● hello\n /w [⎇ main%]\n────\n❯ \n────\n ← open sidebar · Interactive · Manual Approval · / commands'
+# agy 1.5.17 with a status line as its footer (#416): real captures, email and folder replaced,
+# read as plain text as every caller reads a screen.
+fx=$here/fixtures/progress-agy-1.5.17
+for c in busy-3s:busy busy-9s:busy task-wait:busy task-wait-later:busy done:idle; do
+  check "agy 1.5.17 with a status line, ${c%%:*}: ${c#*:}" "$(eng_state agy "$(plain <"$fx-${c%%:*}.txt")")" "${c#*:}"
+done
+check "agy 1.5.17: a Braille glyph inside a reply line is no spinner" \
+  "$(eng_state agy $'────\n> ask\n  the pattern ⠋ is a spinner\n────\n>\n────\nGemini 4 Hydrogen (High) · ctx 3% · 5h 6% · 7d 95%')" "idle"
 check "copilot's footer: idle" "$(eng_state copilot "$cidle")" "idle"
 check "copilot's footer: busy" "$(eng_state copilot "${cidle/← open sidebar · Interactive · Manual Approval · \/ commands/◎ Working ctrl+c interrupt}")" "busy"
 check "copilot: the trust dialog is its own state, answered with Enter; once answered it is not (it stays in scrollback)" "$(eng_state copilot $'Do you trust the files in this folder?\n ❯ 1. Yes\n enter to select')|$(eng_state copilot $'Do you trust the files in this folder?\n enter to select\n'"$cidle")|$(eng_trust_key copilot)" "trust|idle|Enter"

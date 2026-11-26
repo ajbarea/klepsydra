@@ -57,6 +57,7 @@ TABLE = [
             r"^limits from events",
             r"^resume: limits, resets",
             r"^resume: what AJ typed",
+            r"^resume: agy heartbeat",
             r"^resume: review round",
             r"^round 4: AJ resumed",
             r"^live_session$",

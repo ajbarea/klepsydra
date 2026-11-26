@@ -73,7 +73,7 @@ prune_hourly() { # stamp prune dir now
 }
 # --- end prune helpers ---
 
-# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
 # The folder for the locks and stamps every caller must share: one per host and
 # boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
 # used only while it and the folder above it are ours, not symlinks and the
@@ -272,7 +272,7 @@ branch_of() { # gitdir
   esac
 }
 
-# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and hooks/klepsydra-browser.sh ---
+# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, hooks/klepsydra-browser.sh and fleet/lib.sh ---
 # Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
 # `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
 # The name sits in parentheses and may itself contain spaces or ")".
@@ -345,25 +345,29 @@ nested_claude() { # pid
   (claude_ancestor "${stat[1]}")
 }
 
-# How many Bash tool calls Claude Code process `pid` runs now: its child
-# shells, one per call however many subshells or pipes the call starts, less
-# the one running this hook (`me` and its parents). Claude Code's footer counts
-# them so; the hook events cannot, since none fires when a background shell
-# ends mid-turn. A zombie has ended; sh and dash are hook wrappers (dash keeps
-# its process for `sh -c CMD`), never a Bash tool call: Claude Code runs those
-# in bash or zsh, or the CLAUDE_CODE_SHELL it names. Where /bin/sh is bash, a
-# hook wrapper can briefly count; the card's min with its set bounds that.
-# Prints nothing when no children list is readable, 0 for an empty one, and
-# nothing under CLAUDE_CODE_SHELL_PREFIX, whose wrapper hides the shell.
+# --- live shells: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
+# How many tool calls the engine process `pid` runs now: its child shells, one
+# per call however many subshells or pipes the call starts, less the one
+# running this hook (`me` and its parents). Claude Code's footer counts them
+# so; the hook events cannot, since none fires when a background shell ends
+# mid-turn. agy runs each call as `bash -c CMD` too, and starts its MCP servers
+# as npm, uv or node, never a shell (agy 1.5.17, 11-25), so the same rule
+# counts its tasks and never its servers. A zombie has ended; sh and dash are
+# hook wrappers (dash keeps its process for `sh -c CMD`), never a tool call:
+# the engines run those in bash or zsh, or the CLAUDE_CODE_SHELL it names.
+# Where /bin/sh is bash, a hook wrapper can briefly count; the card's min with
+# its set bounds that. Prints nothing when no children list is readable, 0 for
+# an empty one, and nothing under CLAUDE_CODE_SHELL_PREFIX, whose wrapper
+# hides the shell.
 live_shells() { # pid me
   local pid=$1 p=$2 f child comm n=0 listed=0 i own=${CLAUDE_CODE_SHELL:-}
-  local -a stat=() mine=()
+  local -a stat=() callers=()
   [[ -n ${CLAUDE_CODE_SHELL_PREFIX:-} ]] && return 0
   own=${own##*/}
   [[ $own == sh || $own == dash ]] && own=""
   for ((i = 0; i < 32; i++)); do
     [[ $p == "$pid" ]] && break
-    mine+=("$p")
+    callers+=("$p")
     proc_stat "$p" || break
     p=${stat[1]}
     (( p >= 1 )) || break
@@ -373,7 +377,7 @@ live_shells() { # pid me
     listed=1
     for child in $(<"$f"); do
       [[ $child =~ ^[0-9]+$ ]] || continue
-      [[ " ${mine[*]} " == *" $child "* ]] && continue
+      [[ " ${callers[*]} " == *" $child "* ]] && continue
       proc_stat "$child" && [[ ${stat[0]} == Z ]] && continue
       comm=""
       { IFS= read -r comm <"$PROC_ROOT/$child/comm"; } 2>/dev/null
@@ -383,6 +387,7 @@ live_shells() { # pid me
   done
   (( listed )) && printf '%s' "$n"
 }
+# --- end live shells ---
 
 # The voice keryx holds for a terminal, or nothing without keryx or a hold.
 holder_voice() { # pid start
@@ -802,7 +807,10 @@ def assistant_text($line):
             ended: null, turns: 0, written_at: $now}) as $s
   | $s
   | .engine = (($ev.engine | strings | select(test("^[A-Za-z0-9._-]{1,32}$"))) // .engine // "claude")
-  | .name = (($ev.session_title | text) // .name)
+  | (if ($worktree != "" and $branch != "" and ($branch | IN("main", "master") | not)) then $branch
+     elif ($brief_title != "") then $brief_title
+     else null end) as $fallback_name
+  | .name = (($ev.session_title | text) // .name // $fallback_name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
   # An orchestrator file written before faces (#222) is Hephaestus's: it keeps him.
@@ -974,7 +982,7 @@ def assistant_text($line):
       # non-shell program counts as no shell, but the list still names it).
       | if $event == "Stop" and ($ev.background_tasks | type) == "array" then del(.shells_live)
         else .shells_live = $n
-          | if $n == 0 then .background |= map(select(.kind != "shell")) else . end end
+          | if $n == 0 then (.engine == "agy") as $agy | .background |= map(select(.kind != "shell" and (.kind != "task" or ($agy | not)))) else . end end
     else del(.shells_live) end
 
   # State, with what it needs from AJ and who asked.
@@ -999,9 +1007,9 @@ def assistant_text($line):
      elif $event == "Notification" and $ev.notification_type == "idle_prompt"
           and (.state == "working" or .state == "needs_you") and $now - .state_at >= 30 then
        # The prompt is free; work still out keeps the session working.
-       if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+       if .background != [] or (.engine == "agy" and (.shells_live // 0) > 0) then {state: "working", reason: "background"} else {state: "done", reason: null} end
      elif $event == "Stop" then
-       if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+       if .background != [] or (.engine == "agy" and (.shells_live // 0) > 0) then {state: "working", reason: "background"} else {state: "done", reason: null} end
      elif $event == "StopFailure" then {state: "error", reason: (($ev.error // "unknown") | gsub("_"; " "))}
      elif $event == "SessionEnd" then {state: "ended", reason: (($ev.reason // "other") | ended_as)}
      elif $adopt and .state == "done" then {state: "working", reason: "background"}
@@ -1276,16 +1284,17 @@ fleet_registry_event() { # state event session source input cleared_sid
 }
 
 main() {
-  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine="" call_tokens=""
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine="" call_tokens="" prompt=""
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
     [ (.session_id | s), (.hook_event_name | s), (.cwd | s),
       (if .hook_event_name == "PostToolUse" and (.tool_name | IN("Edit", "Write", "NotebookEdit"))
        then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end),
-      (.transcript_path | s), (.source | s), (.engine | s)
+      (.transcript_path | s), (.source | s), (.engine | s),
+      (.prompt | s)
     ] | join("\u001f")' 2>/dev/null) || return 0
-  IFS=$'\x1f' read -r session event cwd edited transcript source engine <<<"$fields"
+  IFS=$'\x1f' read -r session event cwd edited transcript source engine prompt <<<"$fields"
   [[ $session =~ $UUID_RE && " $EVENTS " == *" $event "* ]] || return 0
 
   now=${KLEPSYDRA_NOW:-}
@@ -1400,8 +1409,30 @@ main() {
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
   [[ -n $old_git && ! -e $old_git ]] && where_gone=true
+  # A session with no name yet is named after its brief's first line (or,
+  # in jq below, its worktree's branch), never a number (#416).
+  local brief_title="" brief_file="" reg reg_p
+  reg=${REGISTRY:-${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/panes.tsv}
+  if [[ $old == *'"name":"'* ]]; then :
+  elif [[ $prompt =~ Read\ your\ brief\ at\ ([^[:space:]]+) ]]; then
+    brief_file=${BASH_REMATCH[1]}
+    [[ $brief_file == ~* ]] && brief_file="${HOME:-}${brief_file#\~}"
+  elif [[ -n $tmux_pane && -r $reg ]]; then
+    while IFS=$'\t' read -r reg_p _ brief_file _; do
+      [[ $reg_p == "$tmux_pane" ]] && break
+      brief_file=""
+    done <"$reg" 2>/dev/null
+  fi
+  if [[ -n $brief_file && -f $brief_file ]]; then
+    { IFS= read -r brief_title <"$brief_file"; } 2>/dev/null
+    brief_title=${brief_title#\# }
+    brief_title=${brief_title#\#}
+    brief_title=${brief_title#Task: }
+    brief_title=${brief_title#"${brief_title%%[![:space:]]*}"}
+    brief_title=${brief_title%"${brief_title##*[![:space:]]}"}
+  fi
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" --argjson bg_max "$BACKGROUND_MAX" --argjson stopped_ttl "$STOPPED_TTL" \
-    --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
+    --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" --arg brief_title "$brief_title" \
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" --arg dir "$where_dir" --arg gh "$where_remote" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \

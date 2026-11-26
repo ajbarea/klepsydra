@@ -224,6 +224,29 @@ screen_parse() { # SCREEN
   if ((${#f[@]} == 5)); then SCR_RAW=$1; else unset SCR_RAW; fi
 }
 
+# The screen as progress reads it (#416), into PROGRESS: the plain text (a
+# colour change is no progress) less every line an engine redraws while
+# nothing moves: a spinner line (Braille, as agy draws it, or Claude Code's
+# ✢ ✳ ✶ ✻ ✽) with its timer, an "esc to" or "ctrl+c" cue, and agy's status
+# line, whose usage percentages move with any session on the account. One
+# pass over the lines in bash: no fork, and linear in the screen's size.
+screen_progress() { # SCREEN
+  screen_parse "$1"
+  progress_lines
+}
+# shellcheck disable=SC2034 # PROGRESS is for the caller
+progress_lines() { # SCR_PLAIN into PROGRESS, comparing bytes whatever the locale
+  local LC_ALL=C line lead out=""
+  while IFS= read -r line; do
+    lead=${line#"${line%%[![:space:]]*}"}
+    case ${lead:0:2} in $'\xe2\xa0' | $'\xe2\xa1' | $'\xe2\xa2' | $'\xe2\xa3') continue ;; esac
+    case ${lead:0:3} in $'\xe2\x9c\xa2' | $'\xe2\x9c\xb3' | $'\xe2\x9c\xb6' | $'\xe2\x9c\xbb' | $'\xe2\x9c\xbd') continue ;; esac
+    case $line in *"esc to interrupt"* | *"esc to cancel"* | *"ctrl+c interrupt"* | *" · ctx "[0-9]*"% · "*) continue ;; esac
+    out+=$line$'\n'
+  done <<<"$SCR_PLAIN"
+  PROGRESS=$out
+}
+
 # nonblank_tail N TEXT: NEAR is TEXT's last N lines that are not blank.
 nonblank_tail() {
   local n=$1 i lines=()
@@ -1465,12 +1488,25 @@ wrapup_pending() { # SID
 # (klepsydra's) says done, or stopped with only background work, and lists no
 # background work still running, and no wrap-up answer is owed. Prints the session's stamp from the same
 # read, for prompt_stamp comparisons.
+# agy lists no background work: its live child shells (shells_live, which the
+# hook and the resume service count) are its crew, as in view.rs (#416).
+AGY_IDLE_JQ='(.engine != "agy" or ((.shells_live // 0) == 0))'
+# The crew a session file shows, as view.rs counts it, from $crew (its fresh
+# entries) and $root (the file): agy's live shells are its crew, and a task it
+# listed with none left has ended; Claude's count only caps the shells it named.
+# shellcheck disable=SC2016 # jq's $vars, not the shell's
+CREW_JQ='($root.shells_live) as $live
+        | (if $root.engine == "agy" then ([$crew.shells, ($live // 0)] | max)
+           elif ($live | type == "number") then ([$crew.shells, $live] | min)
+           else $crew.shells end) as $shells
+        | (if $root.engine == "agy" and $live == 0 then 0 else $crew.tasks end) as $tasks'
+
 turn_done() { # PANE [SID]: SID when the caller already has PANE's live session
   local sid=${2:-}
   [[ -n $sid ]] || sid=$(live_session "$1") || return 1
   ! wrapup_pending "$sid" >/dev/null || return 1
   jq -er 'select((.state == "done" or (.state == "working" and .reason == "background"))
-    and ((.background // []) | length) == 0) | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
+    and ((.background // []) | length) == 0 and '"$AGY_IDLE_JQ"') | '"$STAMP_JQ" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null
 }
 
 # Whether the agent in PANE has finished its turn but keeps background work
@@ -1479,7 +1515,7 @@ turn_settled() { # PANE
   local sid
   sid=$(live_session "$1") || return 1
   jq -e '(.state == "done" or (.state == "working" and .reason == "background"))
-    and ((.background // []) | length) > 0' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
+    and (((.background // []) | length) > 0 or ('"$AGY_IDLE_JQ"' | not))' "$KLEPSYDRA_DIR/fleet/$sid.json" >/dev/null 2>&1
 }
 
 # How long a forgotten shell keeps a finished session working (view.rs: BACKGROUND_STALE_AFTER).
@@ -1499,10 +1535,10 @@ pane_background() { # PANE [NOW]
   jq -e --argjson now "$now" \
         --argjson stale "$BACKGROUND_STALE_AFTER" \
         --argjson ahead "$BACKGROUND_AHEAD" '
-    select(has("background") and (.background | type == "array"))
+    select((has("background") and (.background | type == "array")) or .engine == "agy")
     | . as $root
     | (if ($root.state == "working" or $root.state == "needs_you") then
-        (reduce .background[] as $b ({agents: 0, shells: 0, tasks: 0};
+        (reduce (.background // [])[] as $b ({agents: 0, shells: 0, tasks: 0};
           if ($b | type == "object")
              and ($b.id | type == "string" and length > 0)
              and ($b.at | type == "number")
@@ -1515,9 +1551,8 @@ pane_background() { # PANE [NOW]
           else .
           end
         )) as $crew
-        | ($root.shells_live) as $live
-        | (if ($live | type == "number") then ([$crew.shells, $live] | min) else $crew.shells end) as $shells
-        | select(($crew.agents + $shells + $crew.tasks) > 0)
+        | '"$CREW_JQ"'
+        | select(($crew.agents + $shells + $tasks) > 0)
       else empty
       end)
   ' "$f" >/dev/null 2>&1
@@ -1538,12 +1573,13 @@ pane_background_summary() { # PANE [NOW]
   jq -r --argjson now "$now" \
         --argjson stale "$BACKGROUND_STALE_AFTER" \
         --argjson ahead "$BACKGROUND_AHEAD" '
-    if (has("background") and (.background | type == "array")) | not then
+    . as $root
+    | if ((has("background") and (.background | type == "array")) or .engine == "agy") | not then
       "state=\(.state // "none"):no-background"
     elif .state != "working" and .state != "needs_you" then
       "state=\(.state // "none")"
     else
-      (reduce .background[] as $b ({agents: 0, shells: 0, tasks: 0};
+      (reduce (.background // [])[] as $b ({agents: 0, shells: 0, tasks: 0};
         if ($b | type == "object")
            and ($b.id | type == "string" and length > 0)
            and ($b.at | type == "number")
@@ -1556,9 +1592,8 @@ pane_background_summary() { # PANE [NOW]
         else .
         end
       )) as $crew
-      | (.shells_live) as $live
-      | (if ($live | type == "number") then ([$crew.shells, $live] | min) else $crew.shells end) as $shells
-      | "state=\(.state):crew=\($crew.agents + $shells + $crew.tasks):bg=\(.background | length):live=\($live // "none")"
+      | '"$CREW_JQ"'
+      | "state=\(.state):crew=\($crew.agents + $shells + $tasks):bg=\((.background // []) | length):live=\($live // "none")"
     end' "$f" 2>/dev/null || echo "corrupt-session-file"
 }
 
@@ -2154,3 +2189,162 @@ heph_note() { # WHY SID HEPH DOING
 # call) before the resume service asks the worker to checkpoint and start
 # fresh (#515). The wall's ledger.js CONTEXT_BUDGET holds the same number.
 FLEET_CONTEXT_BUDGET=${FLEET_CONTEXT_BUDGET:-300000}
+
+# What an engine process runs now, for the resume service's agy rules (#416).
+# The hook reads the same tree; tests point FLEET_PROC at a fake /proc.
+PROC_ROOT=${FLEET_PROC:-/proc}
+# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, hooks/klepsydra-browser.sh and fleet/lib.sh ---
+# Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
+# `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
+# The name sits in parentheses and may itself contain spaces or ")".
+proc_stat() { # pid
+  local raw=""
+  { IFS= read -r raw <"$PROC_ROOT/$1/stat"; } 2>/dev/null
+  [[ $raw == *") "* ]] || return 1
+  read -r -a stat <<<"${raw##*") "}"
+  (( ${#stat[@]} > 19 ))
+}
+
+# Whether `pid` runs with start time `start`: a zombie has exited, and a pid
+# with another start time is a later process.
+proc_is() { # pid start
+  local -a stat=()
+  [[ $1 =~ ^[0-9]+$ && $2 =~ ^[0-9]+$ ]] || return 1
+  proc_stat "$1" && [[ ${stat[0]} != Z && ${stat[19]} == "$2" ]]
+}
+
+# The kernel's release string ("...microsoft-standard-WSL2" under WSL), into the
+# caller's `osrelease`; fails when it cannot be read.
+proc_osrelease() {
+  osrelease=""
+  { IFS= read -r osrelease <"$PROC_ROOT/sys/kernel/osrelease"; } 2>/dev/null
+  [[ -n $osrelease ]]
+}
+# --- end proc stat ---
+
+# The hook's lock folder, so the resume service writes a session file under
+# the hook's own lock (#416).
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
+# The folder for the locks and stamps every caller must share: one per host and
+# boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
+# used only while it and the folder above it are ours, not symlinks and the
+# folder above it is writable by no one else. Sets LOCK_DIR, or empties it,
+# says why in LOCK_WHY and fails; never waits, never prints. Not
+# XDG_RUNTIME_DIR: a WSL boot sets it before logind makes it, and the overlay's
+# shells may lack it, so callers would split between two locks (#517). Making
+# this boot's folder removes this host's folders last changed before this boot
+# began (btime), which only ended boots can be. Another host's are untouched
+# while hostnames differ (same-name hosts on one shared HOME still prune each
+# other). An unusable hostname never prunes, so run-_-* accumulates one small
+# folder per boot. The host is the kernel's hostname, so renaming a host
+# mid-boot moves its lock.
+lock_why() { # PATH [w]: fails with LOCK_WHY set when PATH is no folder of ours (w: or not writable)
+  local mode
+  if [[ -L $1 ]]; then LOCK_WHY="$1 is a symlink"
+  elif [[ ! -e $1 ]]; then LOCK_WHY="$1 is missing"
+  elif [[ ! -d $1 ]]; then LOCK_WHY="$1 is not a folder"
+  elif [[ ! -O $1 ]]; then LOCK_WHY="$1 belongs to another user"
+  elif [[ -n ${2:-} && ! -w $1 ]]; then
+    mode=$(stat -c %A -- "$1" 2>/dev/null)
+    if [[ ${mode:2:1} == w ]]; then LOCK_WHY="$1 cannot be written (a read-only file system, or locked)"
+    else LOCK_WHY="$1 is not writable (mode ${mode:-unknown})"; fi
+  else return 0; fi
+  return 1
+}
+# shellcheck disable=SC2034 # LOCK_WHY is for the caller
+lock_dir() {
+  local base=${KLEPSYDRA_STATE:-} given boot="" host="" run old name mode key val btime="" m err prune=1
+  LOCK_DIR="" LOCK_WHY=""
+  if [[ -z $base ]]; then
+    if [[ -n ${HOME:-} ]]; then base=$HOME
+    else local HOME; unset HOME; base=~; fi # bash reads the password file's home
+    base=$base/.local/state/klepsydra
+  fi
+  given=$base
+  while [[ $base == */ ]]; do base=${base%/}; done
+  if [[ $base != /* ]]; then
+    if [[ $given == /* ]]; then LOCK_WHY="the state folder cannot be /"
+    else LOCK_WHY="the state folder '$given' is not an absolute path"; fi
+    return 1
+  fi
+  # builtin reads: no process
+  { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null
+  [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown prune=0
+  { read -r host <"${KLEPSYDRA_HOSTNAME:-/proc/sys/kernel/hostname}"; } 2>/dev/null
+  [[ ${#host} -le 253 && $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || host=_ prune=0 # no hostname has a _, so no host's prune reaches it
+  run=$base/run-$host-$boot
+  if [[ ! -e $run && ! -L $run ]]; then
+    if [[ ! -e $base && ! -L $base ]]; then
+      if ! err=$({ mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>&1); then
+        if [[ ! -e $base && ! -L $base ]]; then # not another caller's mkdir winning
+          LOCK_WHY="cannot make $base${err:+: ${err##*: }}"; return 1
+        fi
+      fi
+    fi
+    lock_why "$base" || return 1
+    mode=$(stat -c %a -- "$base" 2>/dev/null) # once a boot: others could plant links
+    if [[ ! $mode =~ ^[0-7]{3,4}$ ]] || (( (8#$mode & 8#022) != 0 )); then
+      LOCK_WHY="$base is writable by its group or others (mode ${mode:-unknown})"; return 1
+    fi
+    if err=$(mkdir -m 700 -- "$run" 2>&1); then
+      if (( prune )); then
+        while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done 2>/dev/null </proc/stat
+        for old in "$base/run-$host-"*; do
+          name=${old##*/}; name=${name#"run-$host-"}
+          [[ $btime =~ ^[0-9]+$ && $name =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ &&
+            $old != "$run" && -d $old && ! -L $old ]] || continue
+          m=$(stat -c %Y -- "$old" 2>/dev/null) && [[ $m =~ ^[0-9]+$ ]] && (( m < btime )) && rm -rf -- "${old:?}" 2>/dev/null
+        done
+      fi
+    elif [[ ! -e $run && ! -L $run ]]; then # not another caller's mkdir winning
+      LOCK_WHY="cannot make $run${err:+: ${err##*: }}"; return 1
+    fi
+  fi
+  lock_why "$base" && lock_why "$run" w || return 1
+  LOCK_DIR=$run
+}
+# --- end lock dir ---
+
+# --- live shells: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
+# How many tool calls the engine process `pid` runs now: its child shells, one
+# per call however many subshells or pipes the call starts, less the one
+# running this hook (`me` and its parents). Claude Code's footer counts them
+# so; the hook events cannot, since none fires when a background shell ends
+# mid-turn. agy runs each call as `bash -c CMD` too, and starts its MCP servers
+# as npm, uv or node, never a shell (agy 1.5.17, 11-25), so the same rule
+# counts its tasks and never its servers. A zombie has ended; sh and dash are
+# hook wrappers (dash keeps its process for `sh -c CMD`), never a tool call:
+# the engines run those in bash or zsh, or the CLAUDE_CODE_SHELL it names.
+# Where /bin/sh is bash, a hook wrapper can briefly count; the card's min with
+# its set bounds that. Prints nothing when no children list is readable, 0 for
+# an empty one, and nothing under CLAUDE_CODE_SHELL_PREFIX, whose wrapper
+# hides the shell.
+live_shells() { # pid me
+  local pid=$1 p=$2 f child comm n=0 listed=0 i own=${CLAUDE_CODE_SHELL:-}
+  local -a stat=() callers=()
+  [[ -n ${CLAUDE_CODE_SHELL_PREFIX:-} ]] && return 0
+  own=${own##*/}
+  [[ $own == sh || $own == dash ]] && own=""
+  for ((i = 0; i < 32; i++)); do
+    [[ $p == "$pid" ]] && break
+    callers+=("$p")
+    proc_stat "$p" || break
+    p=${stat[1]}
+    (( p >= 1 )) || break
+  done
+  for f in "$PROC_ROOT/$pid"/task/*/children; do
+    [[ -r $f ]] || continue
+    listed=1
+    for child in $(<"$f"); do
+      [[ $child =~ ^[0-9]+$ ]] || continue
+      [[ " ${callers[*]} " == *" $child "* ]] && continue
+      proc_stat "$child" && [[ ${stat[0]} == Z ]] && continue
+      comm=""
+      { IFS= read -r comm <"$PROC_ROOT/$child/comm"; } 2>/dev/null
+      # bwrap: a call in Claude Code's sandbox.
+      [[ $comm == bash || $comm == zsh || $comm == bwrap || (-n $own && $comm == "${own:0:15}") ]] && n=$((n + 1))
+    done
+  done
+  (( listed )) && printf '%s' "$n"
+}
+# --- end live shells ---

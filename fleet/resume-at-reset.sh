@@ -36,9 +36,13 @@
 # Each pass also closes Playwright MCP browsers left without their server (#379).
 set -u
 FLEET_TARGET=fleet::resume
-here=$(dirname "$(readlink -f "$0")")
+# The script's own folder, from its own path: a test that sources it for its
+# functions gets them, and the guard before load_state keeps the loop off.
+here=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
+# shellcheck source=fleet/engines.sh
+. "$here/engines.sh"
 LAUNCH=${LAUNCH:-$here/launch.sh}
 FRESH_AFTER_S=${FRESH_AFTER_S:-3300} # Claude Code's prompt cache lives an hour
 POLL_S=${POLL_S:-60}
@@ -47,7 +51,7 @@ FLEET_PREMOVE_PCT=${FLEET_PREMOVE_PCT:-95} # a window used this far moves a work
 DOCTOR=${DOCTOR:-$here/doctor.sh}
 MSG='The usage limit has reset. Continue from where you stopped: re-run a subagent that failed on the limit only if you still need its result (each re-run starts cold and costs a full context), then carry on with your queue. Re-read PR comments before any merge.'
 
-declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said checkpointed
+declare -A last due seen_on rc_on note move_failed move_tries fresh_failed asked job_kind job_ctx held_said checkpointed screen_seen pane_session pane_claude
 declare -A job=() # set, so ${#job[@]} reads 0 under set -u
 # What the service knows per pane survives its own restart (a cut-over, a
 # reboot's unit start), for as long as the same tmux server holds the panes.
@@ -76,17 +80,29 @@ load_state() {
 }
 
 save_state() {
-  local p tmp server
+  local p tmp server f
+  local -a panes=()
+  local -A alive=()
   server=$(t display-message -p '#{pid}' 2>/dev/null) || return 0
   tmp=$(mktemp "$STATE_FILE.XXXXXX") || return 0
+  mapfile -t panes < <(fleet_panes)
   {
     printf '#server %s\n' "$server"
-    for p in $(fleet_panes); do
+    for p in "${panes[@]}"; do
+      alive[$p]=1
       printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
         "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}" "${held_said[$p]:-}" "${checkpointed[$p]:-}"
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
+  # A closed pane's last screen goes with it; an empty pane list (tmux did
+  # not answer) prunes nothing.
+  (( ${#panes[@]} )) || return 0
+  for f in "$FLEET_STATE/screens/"_*; do
+    [[ -f $f && ! -L $f ]] || continue
+    p=${f##*/}
+    [[ -n ${alive[%${p#_}]:-} ]] || rm -f -- "$f"
+  done
 }
 
 clock() { printf '%s' "${FLEET_NOW:-$(date +%s)}"; }
@@ -564,6 +580,153 @@ done_move() { # PANE KIND RC NEW CTX
 }
 
 
+# agy's live child shells keep its card working, and an idle prompt with none
+# left ends the turn (#416, Heph 11-24). Runs every pass, whether or not the
+# screen changed, and writes the hook's file under the hook's own lock, read
+# again there, so no hook write in between is lost; state_at moves with the
+# state, as the hook moves it. A call that ended while the turn still runs
+# leaves the turn its own. `live` is live_shells' count; `st` is eng_state's word.
+# The calls are counted again under the lock: a count that changed while the
+# service waited (a call ended, a hook wrote) leaves this pass to the next.
+agy_state() { # SID LIVE ST PID
+  local f=$KLEPSYDRA_DIR/fleet/$1.json lk new tmp
+  [[ -n ${LOCK_DIR:-} ]] || lock_dir || return 0
+  { exec {lk}>>"$LOCK_DIR/klepsydra-fleet-$UID.lock"; } 2>/dev/null || return 0
+  if flock -w 5 "$lk" && [[ -f $f && ! -L $f && $(live_shells "$4" "$$") == "$2" ]]; then
+    new=$(jq -c --argjson now "$NOW" --argjson live "$2" --arg st "$3" '
+      select(.engine == "agy" and (.state == "working" or .state == "done"))
+      | if $live > 0 then
+          select(.state != "working" or .reason != "background" or .shells_live != $live)
+          | (if .state != "working" or .reason != "background" then .state_at = $now else . end)
+          | .state = "working" | .reason = "background" | .shells_live = $live
+        elif $st == "busy" then
+          select(.state == "working" and (.reason == "background" or (.shells_live // 0) > 0))
+          | (if .reason != null then .state_at = $now else . end)
+          | .reason = null | .shells_live = 0
+        elif $st == "idle" then
+          select(.state == "working" or (.shells_live // 0) > 0 or ((.background // []) | length) > 0)
+          | (if .state != "done" then .state_at = $now else . end)
+          | .state = "done" | .reason = null | .shells_live = 0 | .background = []
+        else empty end
+      | .written_at = $now' "$f" 2>/dev/null)
+    if [[ -n $new ]]; then
+      tmp=$f.$$.tmp
+      if printf '%s\n' "$new" >"$tmp" 2>/dev/null; then mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp"; fi
+    fi
+  fi
+  exec {lk}>&-
+}
+
+# The session in PANE, into PANE_SID, remembered per pane while it stays alive.
+pane_sid() { # PANE
+  local p=$1 sid="" reg_p r_name r_brief r_sid
+  PANE_SID=${pane_session[$p]:-}
+  [[ -n $PANE_SID ]] && session_alive "$PANE_SID" && return 0
+  if [[ -r ${REGISTRY:-$FLEET_STATE/panes.tsv} ]]; then
+    while IFS=$'\t' read -r reg_p r_name r_brief r_sid _; do
+      [[ $reg_p == "$p" && -n $r_sid ]] && { sid=$r_sid; break; }
+    done <"${REGISTRY:-$FLEET_STATE/panes.tsv}" 2>/dev/null
+  fi
+  if [[ -z $sid && -n ${ORCH:-} && $p == "$ORCH" ]]; then
+    sid=${OSID:-}
+    [[ -z $sid ]] && { IFS= read -r sid <"$FLEET_STATE/orchestrator.session"; } 2>/dev/null
+  fi
+  [[ -z $sid ]] && sid=$(live_session "$p") || true
+  [[ -n $sid ]] || return 1
+  pane_session[$p]=$sid PANE_SID=$sid
+}
+
+# A heartbeat for an engine with no status line of its own (#416): agy's
+# state rules every pass, then <session>.beat rewritten when the screen shows
+# progress, never because a process is alive, so a hung agent still goes
+# silent. A Claude session beats from its status line and is left alone.
+update_heartbeat() { # PANE SCREEN
+  local p=$1 s=$2 sid sjson="" engine pid="" start="" live st
+  # A pane seen to hold Claude costs no process while that same Claude process
+  # runs (its pid and start time, read from /proc): /clear keeps the process
+  # and the engine, and an exit or a crash ends the process, so the pane is
+  # looked up again and an engine started there next is seen.
+  if [[ -n ${pane_claude[$p]:-} ]]; then
+    proc_is "${pane_claude[$p]% *}" "${pane_claude[$p]#* }" && return 0
+    unset "pane_claude[$p]"
+  fi
+  pane_sid "$p" || return 0
+  sid=$PANE_SID
+  { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null
+  [[ $sjson =~ \"engine\":[[:space:]]*\"([A-Za-z0-9._-]+)\" ]] && engine=${BASH_REMATCH[1]} || return 0
+  if [[ $sjson =~ \"claude\":[[:space:]]*\{[[:space:]]*\"pid\":[[:space:]]*([0-9]+)(,[[:space:]]*\"start\":[[:space:]]*([0-9]+))? ]]; then
+    pid=${BASH_REMATCH[1]} start=${BASH_REMATCH[3]}
+  fi
+  if [[ $engine == claude ]]; then
+    [[ -n $start ]] && proc_is "$pid" "$start" && pane_claude[$p]="$pid $start"
+    return 0
+  fi
+  screen_progress "$s"
+  if [[ $engine == agy && -n $pid ]]; then
+    if [[ -z $start ]] || proc_is "$pid" "$start"; then
+      live=$(live_shells "$pid" "$$")
+      if [[ $live =~ ^[0-9]+$ ]]; then
+        st=busy
+        (( live > 0 )) || st=$(eng_state agy "$SCR_PLAIN")
+        agy_state "$sid" "$live" "$st" "$pid"
+      fi
+    fi
+  fi
+  # The last progress seen survives a restart of the service (screens/<pane>),
+  # so a frozen screen never beats because the service started again.
+  local seen=$FLEET_STATE/screens/${p//%/_}
+  [[ ${screen_seen[$p]+set} ]] || { IFS= read -r -d '' "screen_seen[$p]" <"$seen"; } 2>/dev/null
+  [[ ${screen_seen[$p]+set} && ${screen_seen[$p]} == "$PROGRESS" ]] && return 0
+  screen_seen[$p]=$PROGRESS
+  [[ -d ${seen%/*} ]] || mkdir -p -- "${seen%/*}" 2>/dev/null
+  { printf '%s' "$PROGRESS" >"$seen"; } 2>/dev/null
+  write_beat "$p" "$sid"
+}
+
+# Rewrite <SID>.beat in the status line's format (name, tab, 10 s bucket),
+# unless the status line itself wrote one in the last 45 s. A number is never
+# a name (#416 B1); the name falls back to the session's, its worktree's
+# branch, its brief's first line, then its registry row's.
+write_beat() { # PANE SID
+  local p=$1 sid=$2 beat=$KLEPSYDRA_DIR/fleet/$2.beat b_raw="" was_name="" was_bucket="" name="" sjson=""
+  local reg_p r_name="" r_brief="" r_sid brief="" line="" tmp
+  if [[ -f $beat ]]; then
+    { IFS= read -r b_raw <"$beat"; } 2>/dev/null
+    if [[ $b_raw == *$'\t'* ]]; then was_name=${b_raw%%$'\t'*} was_bucket=${b_raw#*$'\t'}; else was_bucket=$b_raw; fi
+  fi
+  [[ $was_name =~ ^[0-9]+$ ]] && was_name=""
+  [[ $was_bucket =~ ^[0-9]+$ ]] && (( NOW - was_bucket * 10 < 45 )) && return 0
+  name=$was_name
+  if [[ -z $name ]]; then
+    { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null
+    if [[ $sjson =~ \"name\":[[:space:]]*\"([^\"]+)\" && ! ${BASH_REMATCH[1]} =~ ^[0-9]+$ ]]; then
+      name=${BASH_REMATCH[1]}
+    elif [[ $sjson =~ \"worktree\":[[:space:]]*\"[^\"]+\" && $sjson =~ \"branch\":[[:space:]]*\"([^\"]+)\" ]]; then
+      [[ ${BASH_REMATCH[1]} != main && ${BASH_REMATCH[1]} != master && ! ${BASH_REMATCH[1]} =~ ^[0-9]+$ ]] && name=${BASH_REMATCH[1]}
+    fi
+  fi
+  if [[ -z $name && -r ${REGISTRY:-$FLEET_STATE/panes.tsv} ]]; then
+    while IFS=$'\t' read -r reg_p r_name r_brief r_sid _; do
+      [[ $reg_p == "$p" ]] && break
+      r_name="" r_brief=""
+    done <"${REGISTRY:-$FLEET_STATE/panes.tsv}" 2>/dev/null
+    brief=$r_brief
+    if [[ -z $brief && $sjson =~ Read\ your\ brief\ at\ ([^[:space:]\"]+) ]]; then
+      brief=${BASH_REMATCH[1]}
+      [[ $brief == "~"* ]] && brief=${HOME:-}${brief#\~}
+    fi
+    if [[ -n $brief && -f $brief ]]; then
+      { IFS= read -r line <"$brief"; } 2>/dev/null
+      line=${line#\#} line=${line# } line=${line#Task: }
+      line=${line#"${line%%[![:space:]]*}"} line=${line%"${line##*[![:space:]]}"}
+      [[ -n $line && ! $line =~ ^[0-9]+$ ]] && name=$line
+    fi
+    [[ -z $name && -n $r_name && ! $r_name =~ ^[0-9]+$ ]] && name=$r_name
+  fi
+  tmp=$beat.$$.tmp
+  if printf '%s\t%s\n' "$name" "$((NOW / 10))" >"$tmp" 2>/dev/null; then mv -f "$tmp" "$beat" 2>/dev/null || rm -f "$tmp"; fi
+}
+
 one() { # PANE
   local p=$1 s ps typed orch=0 armed at limit reset reg name brief idle new got tmp rc
   # Heph is the session on record in the pane on record. A tmux restart reuses
@@ -592,10 +755,11 @@ one() { # PANE
   (( orch )) && cfg=$(heph_config)
   PANE_ID=${ACCT_ID[$cfg]:-}
   [[ -n $PANE_ID ]] && ACTIVE=$(account_label "$PANE_ID")
-  (( NOW - ${last[$p]:-0} < 900 )) && return
-  [[ -n ${job[$p]:-} ]] && return
   launching "$p" && return
   s=$(screen "$p") || return
+  update_heartbeat "$p" "$s"
+  (( NOW - ${last[$p]:-0} < 900 )) && return
+  [[ -n ${job[$p]:-} ]] && return
   screen_parse "$s"
   ps=$SCR_PLAIN typed=$SCR_INPUT
 
@@ -953,6 +1117,8 @@ pass() {
     PASS_SEEN=$seen
   fi
 }
+
+[[ ${BASH_SOURCE[0]} != "$0" ]] && return 0 2>/dev/null || true
 
 load_state
 NOW=$(clock)
