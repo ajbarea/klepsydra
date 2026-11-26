@@ -154,12 +154,14 @@ class Wall:
 
 
 def comfortable_height(wall, width, cards):
-    """The height the comfortable wall needs at `width`, bar included."""
+    """The height the comfortable wall needs at `width`, bar included, and the
+    queue file's folded line under it when it shows, as Auto counts it."""
     page = wall.open(width, 2000, cards)
     pick(page, ".density label:has([value=comfortable])")
     page.wait_for_timeout(SETTLE_MS)
     need = page.evaluate(
-        "Math.ceil(document.getElementById('wall').getBoundingClientRect().bottom)"
+        "Math.ceil(Math.max(...['wall', 'queue-file'].map((id) => document.getElementById(id))"
+        ".filter((e) => e && e.checkVisibility()).map((e) => e.getBoundingClientRect().bottom)))"
     )
     page.close()
     return need
@@ -4585,6 +4587,177 @@ def theme_list_is_dark(wall):
     page.close()
 
 
+# ---- The queue file, folded under the Agents wall (#386) -------------------
+QF = "#queue-file"
+OPEN_ALL = "document.querySelector('#queue-file .qf-fold').open = true; for (const d of document.querySelectorAll('#queue-file .queue-content details')) d.open = true"
+
+
+def queue_file_renders_as_text_and_copies(wall):
+    """The sample file renders with no link, image or script element; the HTML
+    block and the javascript: link show as text; only Running now opens
+    unasked; Copy puts a code block's text and a link's address on the clipboard."""
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=8")
+    page.wait_for_selector(f"{QF} .queue-content details", state="attached")
+    got = page.evaluate("""() => {
+      const c = document.querySelector('#queue-file .queue-content');
+      return {
+        folded: !document.querySelector('#queue-file .qf-fold').open,
+        unsafe: c.querySelectorAll(':is(a, img, script, iframe, [href], [src], [onclick], [onerror])').length + c.querySelectorAll('[style]').length,
+        html: [...c.querySelectorAll('.q-html')].map((e) => e.textContent),
+        open: [...c.querySelectorAll('details')].map((d) => [d.querySelector('summary').textContent.trim().slice(0, 12), d.open]),
+      };
+    }""")
+    page.evaluate(OPEN_ALL)
+    bad = page.inner_text(f"{QF} .queue-content details:has(> summary:has-text('Queued')) li:nth-child(2)")
+    page.click(f"{QF} .q-code .q-copy >> nth=0")
+    page.wait_for_function("[...document.querySelectorAll('#queue-file .q-copy')].some((b) => b.textContent === 'Copied')")
+    code = page.evaluate("navigator.clipboard.readText()")
+    page.click(f"{QF} button[aria-label='Copy link: https://tracker.example.com/items/42']")
+    page.wait_for_function("navigator.clipboard.readText().then((t) => t.startsWith('https://'))")
+    link = page.evaluate("navigator.clipboard.readText()")
+    said = page.inner_text(f"{QF} .queue-live")
+    opened = [o for _, o in got["open"]]
+    ok = (
+        got["folded"]
+        and got["unsafe"] == 0
+        and got["html"] == ['<script>alert("an HTML block shows as text")</script>']
+        and opened == [t.lower().startswith("running now") for t, _ in got["open"]]
+        and "[bad link](javascript:alert(1))" in bad
+        and code.startswith("cp ~/.claude/settings.json")
+        and link == "https://tracker.example.com/items/42"
+        and said == "Copied"
+    )
+    wall.check(ok, "the queue file is folded, renders as text only, opens Running now, and Copy copies code and links", [got, bad, code[:30], link, said])
+    page.close()
+
+
+def queue_file_copy_labels_and_failures(wall):
+    """Two Copy clicks within the label's 2 s leave it reading Copy again; a
+    link whose copy fails selects nothing and names the address instead; a
+    code block whose copy fails is selected for Ctrl+C."""
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=4")
+    page.wait_for_selector(f"{QF} .queue-content details", state="attached")
+    page.evaluate(OPEN_ALL)
+    code = page.locator(f"{QF} .q-code > .q-copy").first
+    code.click()
+    page.wait_for_timeout(300)
+    code.click()
+    page.wait_for_timeout(1900)  # past the first click's 2 s, inside the second's
+    mid = code.text_content()
+    page.wait_for_timeout(700)
+    twice = code.text_content()
+    page.close()
+
+    both = "## Queued\n\n1. Read [the tracker](https://tracker.example.com/items/42), then run:\n   ```bash\n   cp ~/.claude/settings.json /tmp/x\n   ```\n"
+    page = wall.browser.new_page(viewport={"width": 1920, "height": 1000})
+    page.add_init_script("navigator.clipboard.writeText = () => Promise.reject(new DOMException('denied', 'NotAllowedError'));")
+    page.route("**/queue-demo.md", lambda r: r.fulfill(status=200, content_type="text/markdown", body=both))
+    page.goto(f"http://127.0.0.1:{wall.port}/src/wall.html?demo=4")
+    page.wait_for_selector(f"{QF} .queue-content details", state="attached")
+    page.evaluate(OPEN_ALL)
+    link = page.locator(f"{QF} button[aria-label='Copy link: https://tracker.example.com/items/42']")
+    link.click()
+    page.wait_for_function("document.querySelector('#queue-file .queue-live').textContent !== ''")
+    failed = page.evaluate("() => ({ selected: getSelection().toString(), said: document.querySelector('#queue-file .queue-live').textContent })")
+    label = link.text_content()
+    page.wait_for_timeout(2600)
+    after = link.text_content()
+    page.locator(f"{QF} .q-code > .q-copy").first.click()
+    page.wait_for_function("getSelection().toString() !== ''")
+    selected = page.evaluate("getSelection().toString()")
+    ok = (
+        mid == "Copied"
+        and twice == "Copy"
+        and failed == {"selected": "", "said": "Could not copy. The link is https://tracker.example.com/items/42"}
+        and label == "Not copied"
+        and after == "Copy link"
+        and selected.startswith("cp ~/.claude/settings.json")
+    )
+    wall.check(ok, "queue file: Copy twice keeps its label; a failed link copy selects nothing, a failed code copy selects the code", [mid, twice, failed, label, after, selected[:30]])
+    page.close()
+
+
+def queue_file_says_when_it_cannot_follow(wall):
+    """A queue_subscribe the app refuses is the queue file's problem line, not a blank section."""
+    fail = "(() => { const invoke = window.__TAURI__.core.invoke; window.__TAURI__.core.invoke = (cmd, args) => cmd === 'queue_subscribe' ? Promise.reject('no such command') : invoke(cmd, args); })();"
+    page = open_app(wall, init=fail)
+    # Folded, as it starts: a fault is one line a viewer sees without opening it.
+    shown = page.evaluate("!document.querySelector('#queue-file .qf-fold').open && document.querySelector('#queue-file .list-problem').checkVisibility()")
+    said = page.inner_text(f"{QF} .list-problem") if shown else None
+    wall.check(said == "The queue file could not be followed: no such command", "a failed queue_subscribe shows on the queue file's problem line", said)
+    page.close()
+
+
+def queue_file_follows_the_app(wall):
+    """In the app the queue file follows queue_subscribe: an edit repaints it
+    while the sections the viewer opened stay open, a fault is one line, and
+    no file yet is the empty state with its keeper named."""
+    text = (ROOT / "scripts/fixtures/queue-demo.md").read_text()
+    first = {"path": "C:\\Users\\you\\Desktop\\claude-queue.md", "text": text, "problem": None}
+    page = open_app(wall)
+    page.wait_for_function("window.__queue !== undefined")
+    page.evaluate("(v) => window.__queue.onmessage(v)", first)
+    page.wait_for_selector(f"{QF} .queue-content details", state="attached")
+    page.evaluate("document.querySelector('#queue-file .qf-fold').open = true")
+    page.click(f"{QF} summary:has-text('Queued')")
+    edited = text.replace("## Queued", "## Queued\n\n1. **A new item.**\n", 1)
+    page.evaluate("(v) => window.__queue.onmessage(v)", {**first, "text": edited})
+    page.wait_for_function("document.querySelector('#queue-file .queue-content').textContent.includes('A new item.')")
+    after = page.evaluate("""() => ({
+      open: [...document.querySelectorAll('#queue-file .queue-content details')].map((d) => [d.querySelector('summary').textContent.trim().slice(0, 7), d.open]),
+      path: document.querySelector('#queue-file .list-path').textContent,
+    })""")
+    page.evaluate("(v) => window.__queue.onmessage(v)", {"path": first["path"], "text": None, "problem": "No queue file at this path."})
+    page.wait_for_function("!document.querySelector('#queue-file .list-problem').hidden")
+    gone = page.evaluate("""() => ({
+      problem: document.querySelector('#queue-file .list-problem').textContent,
+      blocks: document.querySelector('#queue-file .queue-content').children.length,
+      kept: document.querySelector('#queue-file .list-kept').hidden,
+    })""")
+    page.evaluate(
+        "(v) => window.__queue.onmessage(v)",
+        {"path": first["path"], "text": None, "problem": "No queue file at this path.", "missing": True, "kept_by": "Hermes (orchestrator)"},
+    )
+    page.wait_for_function("document.querySelector('#queue-file .list-kept').textContent !== ''")
+    empty = page.evaluate("""() => ({
+      kept: document.querySelector('#queue-file .list-kept').textContent,
+      problem: document.querySelector('#queue-file .list-problem').textContent,
+      empty: document.querySelector('#queue-file .list-problem').classList.contains('empty'),
+    })""")
+    opened = dict(after["open"])
+    ok = (
+        opened.get("Queued") is True
+        and opened.get("Running") is True
+        and after["path"].endswith("claude-queue.md")
+        and gone == {"problem": "No queue file at this path.", "blocks": 0, "kept": True}
+        and empty == {"kept": "Kept by Hermes (orchestrator)", "problem": "No queue yet. It shows here once this file is written.", "empty": True}
+    )
+    wall.check(ok, "queue file: an edit repaints it and keeps open sections; a fault is one line; no file yet is the empty state, with its keeper named", [after, gone, empty])
+    page.close()
+
+
+def theme_renames_the_queue_file_keeper(wall):
+    """A keeper the hook named (its voice recorded) is named as the theme worn
+    names that character; one typed with --by stays as typed."""
+    page = open_app(wall, 1920, 1000)
+    page.wait_for_function("window.__queue !== undefined")
+    for kept, voice, theme, want in (
+        ("Hephaestus", "am_michael", "professions", "Kept by Foreman"),
+        ("Hephaestus", "am_michael", "dicebear", f"Kept by {THEMES['dicebear']['characters']['am_michael']['name']}"),
+        ("Hephaestus", "am_michael", "kourai", "Kept by Hephaestus"),
+        ("Heph (orchestrator)", None, "professions", "Kept by Heph (orchestrator)"),
+        ("Editor", None, "kourai", "Kept by Editor"),
+    ):
+        page.evaluate("([k, v]) => window.__queue.onmessage({path: 'C:/q.md', text: '# Q', problem: null, kept_by: k, kept_voice: v})", [kept, voice])
+        page.evaluate("(t) => window.__theme.onmessage(t)", theme)
+        page.wait_for_timeout(SETTLE_MS)
+        got = page.evaluate("document.querySelector('#queue-file .list-kept').textContent")
+        wall.check(got == want, f"queue file keeper in {theme}: {want}", got)
+    page.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -4608,6 +4781,11 @@ def main() -> int:
         only = sys.argv[1:]
         cases = (
             fit,
+            queue_file_renders_as_text_and_copies,
+            queue_file_copy_labels_and_failures,
+            queue_file_says_when_it_cannot_follow,
+            queue_file_follows_the_app,
+            theme_renames_the_queue_file_keeper,
             grows,
             never_scrolls_comfortable,
             bar_of_comfortable,

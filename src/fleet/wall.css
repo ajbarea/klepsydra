@@ -188,8 +188,9 @@ html, body { background: var(--wall-bg); color: var(--text); font: 14px/1.45 var
 }
 /* The tally and what needs a look: CI or Fleet when not ok, a wrap-up in progress. */
 .lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; margin-right: auto; min-width: 0; }
-/* The bar's right: the panels, + New session and the view settings behind one gear (#248). */
-.bar-right { order: 2; display: flex; align-items: center; gap: var(--space-5); }
+/* The bar's right: the panels, + New session and the view settings behind one gear (#248).
+   At the bar's foot, so when the lead wraps to two lines the gear's menu still opens below the bar. */
+.bar-right { order: 2; display: flex; align-items: center; align-self: flex-end; gap: var(--space-5); }
 /* Split, Ledger, Queue and Wrap up… sit close together, so the half-screen bar keeps them on one line. */
 .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } /* 8 px rows: each button's 24 px hit area (4 px past it) stays its own */
 .tally { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; color: var(--text-dim); }
@@ -1041,7 +1042,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
    card's content without its name; with 90 px for a name, the card's 30 px of
    padding and border, and 20 px for a longer age, a wall narrower than 500 px
    stacks. That is always one column, where a card is as wide as the wall's
-   content, which a queue or ledger tab narrows. */
+   content, which the Ledger's tab narrows. */
 @container wall (max-width: 499.98px) {
   /* The phone wall keeps its own one-line header (.served), so these are the desktop's. */
   :root:not(.served) .wall[data-density="compact"] .card {
@@ -1426,8 +1427,8 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
   #ledger-open, #wrapup-open { padding-inline: var(--space-4); }
 }
 /* --panel-w is each panel's docked width (on its dialog), --dock-w the docked one's. */
-body:is(.queue-docked, .ledger-docked) { padding-right: var(--dock-w); }
-.ledger, .queue {
+body.ledger-docked { padding-right: var(--dock-w); }
+.ledger {
   position: fixed;
   inset: 0 0 0 auto;
   width: var(--panel-w, 480px);
@@ -1441,28 +1442,28 @@ body:is(.queue-docked, .ledger-docked) { padding-right: var(--dock-w); }
   color: var(--text);
   color-scheme: dark;
 }
-:is(.queue, .ledger)[data-mode="modal"] { width: min(600px, 100vw); }
-:is(.queue, .ledger)::backdrop { background: rgb(0 0 0 / 60%); }
+.ledger[data-mode="modal"] { width: min(600px, 100vw); }
+.ledger::backdrop { background: rgb(0 0 0 / 60%); }
 /* The separator is the panel's left edge: drag it, or focus it and use the arrow keys. */
-:is(.queue-resize, .ledger-resize) { position: absolute; inset: 0 auto 0 -4px; width: 9px; cursor: col-resize; z-index: 1; touch-action: none; }
-:is(.queue-resize, .ledger-resize)::after { content: ""; position: absolute; inset: 0 4px 0 4px; background: transparent; }
-:is(.queue-resize, .ledger-resize):is(:hover, :focus-visible)::after { background: var(--text-dim); }
-:is(.queue-resize, .ledger-resize):focus-visible { outline: 2px solid var(--card-focus); outline-offset: -2px; }
-:is(.queue, .ledger)[data-mode="modal"] :is(.queue-resize, .ledger-resize) { display: none; }
+.ledger-resize { position: absolute; inset: 0 auto 0 -4px; width: 9px; cursor: col-resize; z-index: 1; touch-action: none; }
+.ledger-resize::after { content: ""; position: absolute; inset: 0 4px 0 4px; background: transparent; }
+.ledger-resize:is(:hover, :focus-visible)::after { background: var(--text-dim); }
+.ledger-resize:focus-visible { outline: 2px solid var(--card-focus); outline-offset: -2px; }
+.ledger[data-mode="modal"] .ledger-resize { display: none; }
 /* Full: a modal over the whole window. A held drag previews where it will land. */
 /* Inset, not 100vw: a classic scrollbar is in 100vw, and the separator would sit off screen. */
-:is(.queue, .ledger):is([data-mode="full"], [data-snap="full"]) { inset: 0; width: auto; }
-:is(.queue, .ledger)[data-snap="docked"] { left: auto; width: var(--panel-w); }
-:is(.queue, .ledger)[data-snap="shut"] { left: auto; width: 0; }
-:is(.queue, .ledger)[data-snap="shut"] :is(.queue-body, .ledger-body) { visibility: hidden; }
-:is(.queue-full, .ledger-full) { display: inline-flex; align-items: center; padding: 0 var(--space-4); }
-:is(.queue-full, .ledger-full) svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-:is(.queue-full, .ledger-full)[aria-pressed="true"] { background: var(--button-hover); border-color: var(--text-dim); }
+.ledger:is([data-mode="full"], [data-snap="full"]) { inset: 0; width: auto; }
+.ledger[data-snap="docked"] { left: auto; width: var(--panel-w); }
+.ledger[data-snap="shut"] { left: auto; width: 0; }
+.ledger[data-snap="shut"] .ledger-body { visibility: hidden; }
+.ledger-full { display: inline-flex; align-items: center; padding: 0 var(--space-4); }
+.ledger-full svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ledger-full[aria-pressed="true"] { background: var(--button-hover); border-color: var(--text-dim); }
 /* Shut: a tab on the right edge reopens it, 24 px across (WCAG 2.5.8), and the
    wall's padding keeps it off the cards. Queue's sits mid edge and Ledger's
    just above it, each as tall as the longer name, so the two stack. */
-:root { --queue-tab: 24px; --tab-h: 72px; }
-:is(.queue-tab, .ledger-tab) {
+:root { --edge-tab: 24px; --tab-h: 72px; }
+.ledger-tab {
   position: fixed;
   right: 0;
   top: 50%;
@@ -1471,7 +1472,7 @@ body:is(.queue-docked, .ledger-docked) { padding-right: var(--dock-w); }
   display: flex;
   align-items: center;
   justify-content: center;
-  width: var(--queue-tab);
+  width: var(--edge-tab);
   height: var(--tab-h);
   padding: var(--space-5) 0;
   writing-mode: vertical-rl;
@@ -1479,19 +1480,18 @@ body:is(.queue-docked, .ledger-docked) { padding-right: var(--dock-w); }
   border-right: 0;
   border-radius: 8px 0 0 8px;
 }
-:is(.queue-tab, .ledger-tab)[hidden] { display: none; }
-:is(.queue-tab, .ledger-tab):focus-visible { outline-offset: -4px; }
-body:is(.queue-tabbed, .ledger-tabbed) .wall { padding-right: max(var(--wall-pad), calc(var(--queue-tab) + var(--space-1))); }
-.queue-body { height: 100%; overflow: hidden; display: flex; flex-direction: column; gap: 16px; padding: 22px 24px 32px; }
+.ledger-tab[hidden] { display: none; }
+.ledger-tab:focus-visible { outline-offset: -4px; }
+body.ledger-tabbed .wall { padding-right: max(var(--wall-pad), calc(var(--edge-tab) + var(--space-1))); }
 /* A narrow panel puts the tools on a line of their own under the title. */
-:is(.queue-head, .ledger-head) { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-4) var(--space-7); }
-:is(.queue-head, .ledger-head) > div:first-child { min-width: 0; flex: 1 1 9rem; }
-:is(.queue-tools, .ledger-tools) { display: flex; justify-content: flex-end; gap: var(--space-5); flex: none; margin-left: auto; }
-:is(.queue-text, .ledger-text) { display: flex; }
-:is(.queue-text, .ledger-text) button { padding: 0 var(--space-4); font-variant-numeric: tabular-nums; }
-:is(.queue-text, .ledger-text) button + button { margin-left: -1px; }
-:is(.queue-reset, .ledger-reset) { min-width: 5ch; }
-:is(.queue-head, .ledger-head) h2 { font: 650 22px/1.2 var(--display); letter-spacing: -0.01em; }
+.ledger-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-4) var(--space-7); }
+.ledger-head > div:first-child { min-width: 0; flex: 1 1 9rem; }
+.ledger-tools { display: flex; justify-content: flex-end; gap: var(--space-5); flex: none; margin-left: auto; }
+.ledger-text { display: flex; }
+.ledger-text button { padding: 0 var(--space-4); font-variant-numeric: tabular-nums; }
+.ledger-text button + button { margin-left: -1px; }
+.ledger-reset { min-width: 5ch; }
+.ledger-head h2 { font: 650 22px/1.2 var(--display); letter-spacing: -0.01em; }
 .list-path { color: var(--text-dim); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-kept { color: var(--text-dim); font-size: 12.5px; }
 .list-problem { padding: 10px 12px; border-left: 3px solid var(--tone-error); background: var(--card-quiet); border-radius: 0 8px 8px 0; }
@@ -1505,10 +1505,6 @@ body:is(.queue-tabbed, .ledger-tabbed) .wall { padding-right: max(var(--wall-pad
 .list-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
 .list-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .list-head h2 { font: 650 22px/1.2 var(--display); letter-spacing: -0.01em; }
-.lists-split { position: relative; cursor: row-resize; touch-action: none; }
-.lists-split::after { content: ""; position: absolute; inset: 6px 0; height: 1px; background: var(--card-line); }
-.lists-split:is(:hover, :focus-visible, .dragging)::after { inset: 5px 0; height: 3px; background: var(--text-dim); }
-.lists-split:focus-visible { outline: 2px solid var(--card-focus); outline-offset: -2px; border-radius: 4px; }
 .queue-content { display: flex; flex-direction: column; gap: 12px; overflow-wrap: anywhere; font-size: 13.5px; }
 .queue-content h3 { font: 650 17px/1.3 var(--display); }
 .queue-content h4, .queue-content h5, .queue-content h6 { font: 650 15px/1.3 var(--display); }

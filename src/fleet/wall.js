@@ -905,6 +905,9 @@ const heldArrivals = new Set();
 const canSlide = () =>
   typeof document.startViewTransition === "function" && !reducedMotion();
 
+/** The layout whose lanes the wall wears: the chosen one, none on the phone. */
+const wallLayout = () => (served ? null : rooms.layout);
+
 /** A status lane's head on the wall: its name and how many cards it holds. */
 function laneHead() {
   const h = document.createElement("h2");
@@ -964,8 +967,9 @@ function render(snapshot) {
       return el;
     };
     paintEmpty(!showsCards());
-    // Status lanes (#386): a head before each lane's cards, as the layout groups them.
-    const laid = lanes(visible, served ? "B" : rooms.layout);
+    // Status lanes (#386): a head before each lane's cards, as the layout groups them;
+    // the phone keeps its one column, needs-you first, with no heads to cost it height.
+    const laid = lanes(visible, wallLayout());
     wall.toggleAttribute("data-lanes", laid.length !== visible.length);
     syncChildren(
       wall,
@@ -994,7 +998,7 @@ function render(snapshot) {
     }
   };
   const was = [...wall.children].map((el) => el.dataset.key).filter((k) => !k.startsWith("lane:"));
-  const next = lanes(visibleCards(), served ? "B" : rooms.layout).filter((x) => !x.lane).map((c) => c.id);
+  const next = lanes(visibleCards(), wallLayout()).filter((x) => !x.lane).map((c) => c.id);
   if (shouldSlide(was, next, snapshot) && canSlide()) document.startViewTransition(() => sync());
   else sync();
   paintWrapup(cards, now);

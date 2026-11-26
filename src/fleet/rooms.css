@@ -132,7 +132,7 @@ body[data-layout="E"] .ny-focus-card .ny-more { display: block; }
 .wall[data-lanes][data-density="compact"] { grid-auto-rows: auto; }
 
 /* The queue file, folded under the Agents wall. */
-.queue-file { position: relative; z-index: 1; margin: var(--space-5) var(--wall-pad) var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--card-line); }
+.queue-file { position: relative; z-index: 1; margin: var(--space-3) var(--wall-pad) 0; padding-top: var(--space-2); border-top: 1px solid var(--card-line); }
 .queue-file[hidden] { display: none; }
 .qf-head { display: flex; align-items: baseline; gap: var(--space-5); flex-wrap: wrap; cursor: pointer; list-style: none; min-height: 32px; }
 .qf-head::-webkit-details-marker { display: none; }
