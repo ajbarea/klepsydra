@@ -209,9 +209,12 @@ def checks(run, browser, port, needs, shots):
                 run.check(not s["wall"] and not s["queue"], f"{tag}: the wall and the queue give way to Needs you", [s["wall"], s["queue"]])
             run.check(s["unsafe"] == 0 and s["pwned"] is None, f"{tag}: the file's text is text: no link, image or script runs", [s["unsafe"], s["pwned"]])
             run.check(not s["hscroll"], f"{tag}: no sideways scroll", s["hscroll"])
+            # At every width, and in E's side panel too: nothing in the bar covers the room's title.
+            head = page.evaluate("document.getElementById('needs-title').getBoundingClientRect().top >= document.querySelector('.bar').getBoundingClientRect().bottom - 1")
+            run.check(head, f"{tag}: the room's title sits below the header", head)
             if width <= 640:
-                head = page.evaluate("document.getElementById('needs-title').getBoundingClientRect().top >= document.querySelector('.bar').getBoundingClientRect().bottom - 1")
-                run.check(head, f"{tag}: the room's title sits below the header", head)
+                cols = page.evaluate("[...document.querySelectorAll('#needs-room .ny-row')].map((r) => getComputedStyle(r).gridTemplateColumns.split(' ').length)")
+                run.check(cols and set(cols) == {1}, f"{tag}: every row is one column on a phone", sorted(set(cols)))
             if shots:
                 page.screenshot(path=str(shots / f"klepsydra-386-{layout}-{width}.png"))
             if layout == "B" and width > 640:

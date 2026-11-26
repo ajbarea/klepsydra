@@ -1793,6 +1793,16 @@ new ResizeObserver(() => {
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 if (inTauri) tauri("get_needs_layout").then((l) => rooms.setLayout(l), () => {});
 
+// Amber Door's panel stands beside the wall, under the bar (a standard side sheet):
+// its top follows the bar's foot as the bar wraps or scrolls away.
+let doorFrame = 0;
+const placeDoor = () => {
+  cancelAnimationFrame(doorFrame);
+  doorFrame = requestAnimationFrame(() => document.body.style.setProperty("--bar-foot", `${Math.max(0, Math.round(bar.getBoundingClientRect().bottom))}px`));
+};
+new ResizeObserver(placeDoor).observe(bar);
+addEventListener("scroll", placeDoor, { passive: true });
+
 // The floating gauge's background opacity (#438), in the app only.
 if (inTauri) {
   const input = document.getElementById("gauge-opacity");
