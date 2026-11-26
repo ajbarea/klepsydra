@@ -69,6 +69,7 @@ body[data-layout="E"][data-view="needs"] :is(#wall, #empty, .limits, #queue-file
   background: var(--button-bg); color: var(--text); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
 }
 .ny-link::before { content: "↗ "; color: var(--text-faint); }
+.ny-link-copy::before { content: "⧉ "; }
 .ny-link:hover { background: var(--button-hover); }
 .ny-acts { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; justify-content: flex-end; }
 .ny-acts button { height: 30px; padding: 0 var(--space-5); border-radius: 7px; border: 1px solid var(--button-line); background: var(--button-bg); color: var(--text); font: 600 12.5px/1 var(--font); cursor: pointer; }
@@ -127,6 +128,7 @@ body[data-layout="E"] .ny-focus-card .ny-more { display: block; }
 .wall > .lane-head + .lane-head, .wall > .card + .lane-head { margin-top: var(--space-5); }
 .wall > .lane-head .lane-count { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .wall > .lane-head[data-lane="blocked"] { color: var(--tone-needs); }
+.wall > .lane-head[data-lane="error"] { color: var(--tone-error); }
 .wall[data-lanes][data-density="compact"] { grid-auto-rows: auto; }
 
 /* The queue file, folded under the Agents wall. */

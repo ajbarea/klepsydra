@@ -73,6 +73,24 @@ def main():
         out,
     )
     check("the same seed gives the same text", scrub(FILE) == out)
+    icon = scrub("- \uf0ea Reznik 11-26 [x](https://a.b/c)\n")
+    check(
+        "a private-use icon in the file is no marker",
+        "Reznik" not in icon and "11-26" in icon and "example.com" in icon,
+        icon,
+    )
+    many = scrub(
+        "".join(
+            f"- 11-{d % 28 + 1:02d} [x](https://a.b/{d}) Reznik\n" for d in range(4000)
+        )
+    )
+    check(
+        "thousands of held dates and links all come back",
+        "Reznik" not in many
+        and many.count("example.com") == 4000
+        and not re.search(r"[\ue000-\uf8ff\U000f0000-\U000ffffd]", many),
+        many[:200],
+    )
     sys.exit(1 if failures else 0)
 
 

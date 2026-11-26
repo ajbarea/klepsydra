@@ -18,18 +18,20 @@ export const parseLayout = (v) => (LAYOUTS.includes(v) ? v : DEFAULT_LAYOUT);
 export const UNDO_MS = 6000;
 export const JUMP_MS = 8000;
 
-/** Blocked on you: a question waits, or it stopped on an error. */
-const BLOCKED = new Set(["needs_you", "error"]);
+/** Blocked on you: a question waits. The pill, the tally, the room and the lanes all mean this. */
+export const isBlocked = (status) => status === "needs_you";
 const LANES = {
   B: [
-    ["blocked", "Blocked", (s) => BLOCKED.has(s)],
+    ["blocked", "Blocked", isBlocked],
+    ["error", "Errors", (s) => s === "error"],
     ["working", "Working", (s) => s === "working"],
     ["finished", "Finished", (s) => s === "done"],
     ["idle", "Idle", () => true],
   ],
   D: [
     ["working", "Working", (s) => s === "working"],
-    ["blocked", "Needs you", (s) => BLOCKED.has(s)],
+    ["blocked", "Needs you", isBlocked],
+    ["error", "Errors", (s) => s === "error"],
     ["finished", "Finished", (s) => s === "done"],
     ["idle", "Idle", () => true],
   ],
@@ -96,7 +98,8 @@ export function keyAction(e, ctx) {
 
 /**
  * Done and Undo for the room: `invoke` is the app's command call. One Done
- * at a time; Undo puts back the last one, once.
+ * at a time; Undo puts back the last one, once. Each answers with the file's
+ * text as the app wrote it, so the room need not wait for the file watcher.
  */
 export function createDone(invoke) {
   let token = null;
@@ -112,8 +115,9 @@ export function createDone(invoke) {
       if (busy) return { ok: false, why: null };
       busy = true;
       try {
-        token = await invoke("needs_done", { block: item.block });
-        return { ok: true };
+        const r = await invoke("needs_done", { block: item.block, line: item.line ?? null });
+        token = r.undo;
+        return { ok: true, text: r.text };
       } catch (err) {
         return { ok: false, why: String(err) };
       } finally {
@@ -126,8 +130,8 @@ export function createDone(invoke) {
       token = null;
       busy = true;
       try {
-        await invoke("needs_undo", { undo: t });
-        return { ok: true };
+        const text = await invoke("needs_undo", { undo: t });
+        return { ok: true, text };
       } catch (err) {
         return { ok: false, why: String(err) };
       } finally {
@@ -194,13 +198,13 @@ export function createRooms({
   let view = "agents";
   let needs = { items: [], count: 0, next: null };
   let fileState = { text: null, problem: null, calm: false };
-  let hidden = new Set(); // items marked done, gone from the list until the file says so
+  let hidden = new Set(); // items whose Done is on its way to the file
   let focusKey = null;
   let before = null; // statuses at the last look
   let toastTimer = 0;
   let toastJump = null; // the session id a jump toast names
 
-  const blocked = () => cards().filter((c) => c.status === "needs_you");
+  const blocked = () => cards().filter((c) => isBlocked(c.status));
   const shownItems = () => needs.items.filter((i) => !hidden.has(i.key));
   const rows = () => [...room.querySelectorAll(".ny-row")];
 
@@ -278,8 +282,9 @@ export function createRooms({
     if (item.links.length) {
       const links = el(doc, "div", "ny-links");
       for (const l of item.links) {
-        const b = button(doc, "ny-link", l.label, `Open ${l.label}`);
-        b.title = l.url;
+        // A link the app would not open (not https, or re-encoded from how the file writes it) copies instead.
+        const b = button(doc, l.opens ? "ny-link" : "ny-link ny-link-copy", l.label, `${l.opens ? "Open" : "Copy"} ${l.label}`);
+        b.title = l.opens ? l.url : `${l.url} (copies; it opens from the file only as written)`;
         b.dataset.url = l.url;
         links.append(b);
       }
@@ -340,6 +345,7 @@ export function createRooms({
   }
 
   function paintRoom() {
+    const day = now().toDateString();
     const gs = groups();
     const order = gs.flatMap((g) => g.rows);
     if (!order.some((r) => r.key === focusKey)) focusKey = order[0]?.key ?? null;
@@ -382,7 +388,8 @@ export function createRooms({
           () => doc.createElement("li"),
           (row, r) => {
             // Rebuilt only when what it shows changed: an open detail or focus survives a repaint.
-            const sig = r.kind === "blocked" ? JSON.stringify([r.c.name, r.c.task, r.c.ask, r.c.jump, Boolean(invoke)]) : r.key;
+            // An item's due chip reads from today, so a new day rebuilds it.
+            const sig = r.kind === "blocked" ? JSON.stringify([r.c.name, r.c.task, r.c.ask, r.c.jump, Boolean(invoke)]) : `${r.key}\u0000${day}`;
             if (row.dataset.sig !== sig) {
               (r.kind === "blocked" ? blockedRow : itemRow)(row, r.kind === "blocked" ? r.c : r.item);
               row.dataset.sig = sig;
@@ -406,8 +413,9 @@ export function createRooms({
       delete focusBox.dataset.key;
       return;
     }
-    if (focusBox.dataset.key === r.key) return;
-    focusBox.dataset.key = r.key;
+    const sig = `${r.key}\u0000${now().toDateString()}`;
+    if (focusBox.dataset.key === sig) return;
+    focusBox.dataset.key = sig;
     const items = order.filter((x) => x.kind === "item");
     const holder = doc.createElement("div");
     itemRow(holder, r.item);
@@ -460,15 +468,23 @@ export function createRooms({
     press(b, row?.querySelector(".ny-said"), () => invoke("jump_to_terminal", { id: c.id, name: c.session ?? "" }));
   }
 
-  function open(item) {
-    const url = item?.links[0]?.url;
-    if (!url) {
-      showToast("This item has no link to open.");
-      return;
-    }
+  function openUrl(url) {
     Promise.resolve()
       .then(() => openLink(url))
       .catch((err) => showToast(`Not opened: ${err?.message ?? err}`));
+  }
+
+  function open(item) {
+    const link = item?.links.find((l) => l.opens);
+    if (link) openUrl(link.url);
+    else showToast(item?.links.length ? "This link opens from the file only; C copies it." : "This item has no link to open.");
+  }
+
+  /** The file as the app just wrote it: the room shows it now, not when the watcher next reads. */
+  function written(text) {
+    if (typeof text !== "string") return;
+    fileState = { ...fileState, text };
+    needs = needsModel(text, now());
   }
 
   async function markDone(item) {
@@ -485,9 +501,10 @@ export function createRooms({
     paint();
     if (view === "needs" && nextKey) focusRow(nextKey);
     const r = await writer.done(item);
+    hidden.delete(item.key);
+    if (r.ok) written(r.text);
+    paint();
     if (!r.ok) {
-      hidden.delete(item.key);
-      paint();
       if (r.why) showToast(`Not done: ${r.why}`);
       return;
     }
@@ -498,8 +515,11 @@ export function createRooms({
     if (!writer?.undoable) return;
     hideToast();
     const r = await writer.undo();
-    if (!r.ok && r.why) showToast(`Not undone: ${r.why}`);
-    else if (r.ok) showToast("Put back.");
+    if (r.ok) {
+      written(r.text);
+      paint();
+      showToast("Put back.");
+    } else if (r.why) showToast(`Not undone: ${r.why}`);
   }
 
   // The toast: one at a time, never taking focus; its timer waits while the pointer or focus is in it.
@@ -574,11 +594,9 @@ export function createRooms({
     if (t.closest(".ny-done")) {
       if (t.closest(".ny-done").getAttribute("aria-disabled") === "true") showToast("Marking done writes the Needs you file in the app only.");
       else markDone(item);
-    } else if (t.closest(".ny-link")) {
-      Promise.resolve()
-        .then(() => openLink(t.closest(".ny-link").dataset.url))
-        .catch((err) => showToast(`Not opened: ${err?.message ?? err}`));
-    } else if (t.closest(".ny-copy")) copyText(t.closest(".ny-copy").dataset.url, t.closest(".ny-copy"));
+    } else if (t.closest(".ny-link-copy")) copyText(t.closest(".ny-link-copy").dataset.url, t.closest(".ny-link-copy"));
+    else if (t.closest(".ny-link")) openUrl(t.closest(".ny-link").dataset.url);
+    else if (t.closest(".ny-copy")) copyText(t.closest(".ny-copy").dataset.url, t.closest(".ny-copy"));
     else if (t.closest(".ny-answer") && c) answer(c, t.closest(".ny-answer"));
     else if (t.closest(".ny-card") && c) jumpTo(c.id);
     else if (row?.classList.contains("ny-row") && !t.closest("button, a")) focusRow(key);
@@ -670,7 +688,7 @@ export function createRooms({
     updateNeeds(view_) {
       fileState = { text: view_.text ?? null, problem: view_.missing ? null : view_.problem ?? null, calm: view_.calm === true };
       needs = needsModel(fileState.text ?? "", now());
-      // An item marked done stays hidden only while the file still holds it.
+      // A Done on its way stays hidden only while the file still holds the item.
       hidden = new Set([...hidden].filter((k) => needs.items.some((i) => i.key === k)));
       paint();
     },

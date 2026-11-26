@@ -84,6 +84,41 @@ test("a loose list's item ends at its last text line, not the blank line after i
   );
 });
 
+test("a lone carriage return ends a line for the blocks as it does for the parser", () => {
+  const m = needsModel("- 📋 a\rb\n- 📋 c\n- 📋 d\n", TODAY);
+  assert.deepEqual(
+    m.items.map((i) => [i.title, i.block, i.line]),
+    [
+      ["a b", "- 📋 a\nb", 0],
+      ["c", "- 📋 c", 2],
+      ["d", "- 📋 d", 3],
+    ],
+  );
+});
+
+test("each item's block is the source lines from its line on, whatever the line endings", () => {
+  for (const eol of ["\n", "\r\n", "\r"]) {
+    const text = FILE.replaceAll("\n", eol);
+    const lines = text.split(/\r\n?|\n/);
+    for (const i of needsModel(text, TODAY).items) {
+      assert.equal(lines.slice(i.line, i.line + i.block.split("\n").length).join("\n"), i.block, JSON.stringify([eol, i.title]));
+    }
+  }
+});
+
+test("an item opens only links the app will open: https and written in its block as it stands", () => {
+  const m = needsModel("- 📋 **A:** [x](https://ex.com/Café) [y](http://ex.com/) [z](https://ex.com/ok?a=1&b=2) <mailto:a@b.c>\n", TODAY);
+  assert.deepEqual(
+    m.items[0].links.map((l) => [l.url, l.opens]),
+    [
+      ["https://ex.com/Caf%C3%A9", false],
+      ["http://ex.com/", false],
+      ["https://ex.com/ok?a=1&b=2", true],
+      ["mailto:a@b.c", false],
+    ],
+  );
+});
+
 test("two identical items keep distinct keys", () => {
   const m = needsModel("- 📋 same\n- 📋 same\n", TODAY);
   assert.equal(m.count, 2);
@@ -109,6 +144,14 @@ test("due dates: the first date the item names, nearest today, shown as a date",
   assert.equal(dueOf("Delta 12-06: deadline", TODAY)?.getDate(), 6, "a colon after the date");
   assert.equal(dueOf("Thu 11-27, 9:30-10:00 am", TODAY)?.getDate(), 27, "the date, not the time range");
   for (const none of ["9:30-10:00 slot", "#12-3", "55-03", "1.5-2 hours", "no date at all", "13-40"]) assert.equal(dueOf(none, TODAY), null, none);
+  // Words and counts that only look like dates.
+  for (const none of ["Review the deck 2 times", "Decide 3 options", "Write 2-3 paragraphs", "a 10-20 minutes read", "Marching 4 abreast", "you may 2 of them", "Junior 5"]) {
+    assert.equal(dueOf(none, TODAY), null, none);
+  }
+  assert.equal(dueOf("December 6 deadline", TODAY)?.getDate(), 6);
+  assert.equal(dueOf("Sept. 9", TODAY)?.getMonth(), 8);
+  assert.equal(dueOf("Mon 1-4 kickoff", TODAY)?.getDate(), 4, "a weekday before it makes a short date a date");
+  assert.equal(dueOf("by 1-05", TODAY)?.getMonth(), 0);
   assert.deepEqual(dueLabel(new Date(2026, 10, 25), TODAY), { label: "Today", tone: "today", days: 0 });
   assert.equal(dueLabel(new Date(2026, 10, 26), TODAY).label, "Tomorrow, Thu 11-26");
   assert.equal(dueLabel(new Date(2026, 10, 27), TODAY).tone, "soon");
@@ -130,24 +173,25 @@ test("Done sends the item's block to the app and Undo puts back that block alone
   const calls = [];
   const invoke = async (cmd, args) => {
     calls.push([cmd, args]);
-    if (cmd === "needs_done") return { block: args.block, after: "above", at: 3 };
-    return null;
+    if (cmd === "needs_done") return { undo: { block: args.block, after: "above", at: 3 }, text: "after done" };
+    return "after undo";
   };
   const writer = createDone(invoke);
   const item = needsModel(FILE, TODAY).items[1];
-  assert.deepEqual(await writer.done(item), { ok: true });
+  assert.equal(item.line, 11, "the line the item starts on, as the app counts lines");
+  assert.deepEqual(await writer.done(item), { ok: true, text: "after done" });
   assert.ok(writer.undoable);
-  assert.deepEqual(await writer.undo(), { ok: true });
+  assert.deepEqual(await writer.undo(), { ok: true, text: "after undo" });
   assert.deepEqual(await writer.undo(), { ok: false, why: null }, "a second Undo does nothing");
   assert.deepEqual(calls, [
-    ["needs_done", { block: item.block }],
+    ["needs_done", { block: item.block, line: 11 }],
     ["needs_undo", { undo: { block: item.block, after: "above", at: 3 } }],
   ]);
 });
 
 test("an Undo window ends only its own Done, never a later one's", async () => {
   let n = 0;
-  const writer = createDone(async (cmd) => (cmd === "needs_done" ? { block: "- x", after: null, at: n++ } : null));
+  const writer = createDone(async (cmd) => (cmd === "needs_done" ? { undo: { block: "- x", after: null, at: n++ }, text: "" } : ""));
   const [a, b] = needsModel(FILE, TODAY).items;
   await writer.done(a);
   const endsA = writer.expiry();
@@ -164,7 +208,7 @@ test("Done runs one at a time, so a held key cannot remove several rows", { time
   const writer = createDone((cmd, args) => {
     calls.push(cmd);
     return new Promise((r) => {
-      release = () => r({ block: args.block, after: null, at: 0 });
+      release = () => r({ undo: { block: args.block, after: null, at: 0 }, text: "" });
     });
   });
   const [a, b] = needsModel(FILE, TODAY).items;
@@ -262,12 +306,13 @@ test("a Done swipe is rightward, long and level; a diagonal scroll is not one", 
   assert.equal(swipeDone(-120, 0), false, "leftward");
 });
 
-test("lanes: B is blocked, working, finished, idle; D puts Working first; E keeps the wall", () => {
+test("lanes: B is blocked, errors, working, finished, idle; D puts Working first; E keeps the wall", () => {
   const c = (id, status) => ({ id, status });
   const cards = [c("w1", "working"), c("n1", "needs_you"), c("d1", "done"), c("e1", "error"), c("i1", "ended"), c("w2", "working"), c("s1", "silent")];
   const shape = (out) => out.map((x) => (x.lane ? `[${x.label} ${x.count}]` : x.id)).join(" ");
-  assert.equal(shape(lanes(cards, "B")), "[Blocked 2] n1 e1 [Working 2] w1 w2 [Finished 1] d1 [Idle 2] i1 s1");
-  assert.equal(shape(lanes(cards, "D")), "[Working 2] w1 w2 [Needs you 2] n1 e1 [Finished 1] d1 [Idle 2] i1 s1");
+  // Blocked means needs_you everywhere (pill, tally, room, lane): an error has its own lane.
+  assert.equal(shape(lanes(cards, "B")), "[Blocked 1] n1 [Errors 1] e1 [Working 2] w1 w2 [Finished 1] d1 [Idle 2] i1 s1");
+  assert.equal(shape(lanes(cards, "D")), "[Working 2] w1 w2 [Needs you 1] n1 [Errors 1] e1 [Finished 1] d1 [Idle 2] i1 s1");
   assert.equal(lanes(cards, "E"), cards);
   assert.deepEqual(lanes([], "B"), []);
 });

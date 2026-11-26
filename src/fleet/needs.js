@@ -14,6 +14,12 @@ const HALF_YEAR_DAYS = 183;
 const isEl = (n) => typeof n !== "string";
 const isList = (n) => isEl(n) && (n.tag === "ul" || n.tag === "ol");
 
+/** The longest link the app opens (needs.rs URL_MAX). */
+const URL_MAX = 2048;
+/** Whether the app opens `url` (needs.rs safe_url): https, a host, plain URL characters. */
+export const opensInApp = (url) =>
+  url.length <= URL_MAX && /^https:\/\/[^/?#]+/.test(url) && /^[A-Za-z0-9\-._~:/?#[\]@!$&()*+,;=%]+$/.test(url);
+
 /** The links a tree holds, each once: `{label, url}`, safe ones only (queue.js keeps no other). */
 export function linksOf(nodes) {
   const out = [];
@@ -96,13 +102,18 @@ function nearest(month, day, today, year) {
   return null;
 }
 
-// "Wed 11-25", "11-25", "2026-12-06", "Dec 6": the first whole one in the text.
+// "Wed 11-25", "11-26", "2026-12-06", "Dec 6", "December 6": the first whole one in the text.
+const UNIT = String.raw`\s+(?:min|mins|minutes?|h|hrs?|hours?|days?|weeks?|months?|years?|pages?|words?|times|slides?|people|steps?|percent)\b|\s*%`;
 const DATES = [
   [/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g, (m) => [Number(m[2]), Number(m[3]), Number(m[1])]],
-  // Not a time range (9:30-10:00), a number range (1.5-2) or an issue (#12-3).
-  [/(?<![\d#.-]|\d:)(\d{1,2})-(\d{1,2})(?![\d-]|:\d)/g, (m) => [Number(m[1]), Number(m[2]), null]],
+  // After a weekday, any month-day: "Mon 1-4".
+  [/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?,?\s+(\d{1,2})-(\d{1,2})(?![\d-]|:\d)/g, (m) => [Number(m[1]), Number(m[2]), null]],
+  // Alone, a two-digit day ("11-26", "1-05"), so a count range ("2-3 paragraphs") is no date;
+  // not a time range (9:30-10:00), a number range (1.5-2), an issue (#12-3) or a range of units.
+  [new RegExp(String.raw`(?<![\d#.-]|\d:)(\d{1,2})-(\d{2})(?![\d-]|:\d|${UNIT})`, "g"), (m) => [Number(m[1]), Number(m[2]), null]],
+  // A month's name or its short form, capitalised: "Dec 6", "Sept. 9"; not "Decide 3" or "may 2".
   [
-    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?!\d)/gi,
+    /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b\.?\s+(\d{1,2})(?![\d:])/g,
     (m) => [MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1, Number(m[2]), null],
   ],
 ];
@@ -145,14 +156,16 @@ function blockOf(lines, [from, to]) {
 
 /**
  * The Needs you file `text` as the room shows it: `items` in file order, each
- * `{key, section, title, detail, more, links, block, due}`, and `next`, the
+ * `{key, section, title, detail, more, links, block, line, due}` (`line`: where
+ * `block` starts, `links`: `{label, url, opens}`), and `next`, the
  * soonest item dated today or later. `count` is the header's number and
  * always `items.length`. `today` is injected for tests.
  */
 export function needsModel(text, today = new Date()) {
   if (typeof text !== "string" || !text) return { items: [], count: 0, next: null };
   const nodes = sections(toTree(parse(text)));
-  const lines = text.split(/\r?\n/);
+  // Lines as markdown-it counts them (a lone CR ends one too), so `line` and `block` match the app's.
+  const lines = text.split(/\r\n?|\n/);
   const seen = new Map();
   const items = (asks(nodes) ?? []).map(({ node, section }) => {
     const parts = itemParts(node);
@@ -161,14 +174,17 @@ export function needsModel(text, today = new Date()) {
     const n = (seen.get(block) ?? 0) + 1;
     seen.set(block, n);
     const due = dueOf(parts.title, today) ?? dueOf(textOf({ kids: parts.detail }), today);
+    // Open only what the app opens: https, written in the item as it stands (markdown-it may re-encode the rest).
+    const links = linksOf([node]).map((l) => ({ ...l, opens: opensInApp(l.url) && block.includes(l.url) }));
     return {
       key: n > 1 ? `${block}\u0000${n}` : block,
       section,
       title: parts.title || "(untitled item)",
       detail: parts.detail,
       more: parts.more,
-      links: linksOf([node]),
+      links,
       block,
+      line: node.lines ? node.lines[0] : null,
       due,
     };
   });

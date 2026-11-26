@@ -14,18 +14,26 @@ DATE = re.compile(
 )
 
 
+PRIVATE = "[\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]"
+MARK = 0xF0000
+MARKS = 0xFFFFD - MARK + 1
+
+
 def scrub(text, seed=386):
     """`text` with every word and digit swapped and every link pointed at
     example.com; markdown, dates, weekdays and times stay, so the shape and
     the due chips are the real file's and no word of it is."""
     rng = random.Random(seed)
     kept = []
+    # Marks are plane-15 private-use characters (no letter or digit to swap);
+    # any private-use character already in the file (an icon) is dropped first.
+    text = re.sub(PRIVATE, "?", text)
 
     def hold(m):
         kept.append(m.group())
-        return chr(
-            0xE000 + len(kept) - 1
-        )  # a private-use mark: no letter or digit to swap
+        if len(kept) > MARKS:
+            raise ValueError(f"more than {MARKS} dates, links and headings to hold")
+        return chr(MARK + len(kept) - 1)
 
     text = re.sub(
         r"\]\([^)]*\)",
@@ -48,7 +56,7 @@ def scrub(text, seed=386):
     text = re.sub(r"[^\W\d_]+", word, text)
     text = re.sub(r"\d", lambda _: str(rng.randrange(10)), text)
     for _ in range(2):  # a held heading holds its held dates
-        text = re.sub("[\ue000-\uf8ff]", lambda m: kept[ord(m.group()) - 0xE000], text)
+        text = re.sub(PRIVATE, lambda m: kept[ord(m.group()) - MARK], text)
     # Section titles are the file's own words: placeholders keep the order, dates stay.
     titles = iter(["## Today", "## Coming up", "## When convenient", "## Later"])
     out = []
