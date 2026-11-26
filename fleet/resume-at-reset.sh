@@ -35,11 +35,12 @@
 # limited panes) to resume.beat for `fleet doctor`, and logs it when it changes.
 # Each pass also closes Playwright MCP browsers left without their server (#379).
 set -u
-shopt -s extglob
 FLEET_TARGET=fleet::resume
 here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
+# shellcheck source=fleet/engines.sh
+. "$here/engines.sh"
 LAUNCH=${LAUNCH:-$here/launch.sh}
 FRESH_AFTER_S=${FRESH_AFTER_S:-3300} # Claude Code's prompt cache lives an hour
 POLL_S=${POLL_S:-60}
@@ -565,175 +566,129 @@ done_move() { # PANE KIND RC NEW CTX
 }
 
 
-# Update heartbeat in <session>.beat on screen CHANGE only (#416),
-# never on "process alive". A hung agent must still go silent.
-# Write in statusline format atomically without overwriting any statusline name,
-# and only when no fresh status-line beat exists.
+# agy's live child shells keep its card working, and an idle prompt with none
+# left ends the turn (#416, Heph 11-24). Runs every pass, whether or not the
+# screen changed, and writes the hook's file under the hook's own lock, read
+# again there, so no hook write in between is lost; state_at moves with the
+# state, as the hook moves it. A call that ended while the turn still runs
+# leaves the turn its own. `live` is live_shells' count; `st` is eng_state's word.
+agy_state() { # SID LIVE ST
+  local f=$KLEPSYDRA_DIR/fleet/$1.json lk new tmp
+  { exec {lk}>>"${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock"; } 2>/dev/null || return 0
+  if flock -w 5 "$lk" && [[ -f $f && ! -L $f ]]; then
+    new=$(jq -c --argjson now "$NOW" --argjson live "$2" --arg st "$3" '
+      select(.engine == "agy" and (.state == "working" or .state == "done"))
+      | if $live > 0 then
+          select(.state != "working" or .reason != "background" or .shells_live != $live)
+          | (if .state != "working" or .reason != "background" then .state_at = $now else . end)
+          | .state = "working" | .reason = "background" | .shells_live = $live
+        elif $st == "busy" then
+          select(.state == "working" and (.reason == "background" or (.shells_live // 0) > 0))
+          | (if .reason != null then .state_at = $now else . end)
+          | .reason = null | .shells_live = 0
+        elif $st == "idle" then
+          select(.state == "working" or (.shells_live // 0) > 0 or ((.background // []) | length) > 0)
+          | (if .state != "done" then .state_at = $now else . end)
+          | .state = "done" | .reason = null | .shells_live = 0 | .background = []
+        else empty end
+      | .written_at = $now' "$f" 2>/dev/null)
+    if [[ -n $new ]]; then
+      tmp=$f.$$.tmp
+      if printf '%s\n' "$new" >"$tmp" 2>/dev/null; then mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp"; fi
+    fi
+  fi
+  exec {lk}>&-
+}
+
+# The session in PANE, into PANE_SID, remembered per pane while it stays alive.
+pane_sid() { # PANE
+  local p=$1 sid="" reg_p r_name r_brief r_sid
+  PANE_SID=${pane_session[$p]:-}
+  [[ -n $PANE_SID ]] && session_alive "$PANE_SID" && return 0
+  if [[ -r ${REGISTRY:-$FLEET_STATE/panes.tsv} ]]; then
+    while IFS=$'\t' read -r reg_p r_name r_brief r_sid _; do
+      [[ $reg_p == "$p" && -n $r_sid ]] && { sid=$r_sid; break; }
+    done <"${REGISTRY:-$FLEET_STATE/panes.tsv}" 2>/dev/null
+  fi
+  if [[ -z $sid && -n ${ORCH:-} && $p == "$ORCH" ]]; then
+    sid=${OSID:-}
+    [[ -z $sid ]] && { IFS= read -r sid <"$FLEET_STATE/orchestrator.session"; } 2>/dev/null
+  fi
+  [[ -z $sid ]] && sid=$(live_session "$p") || true
+  [[ -n $sid ]] || return 1
+  pane_session[$p]=$sid PANE_SID=$sid
+}
+
+# A heartbeat for an engine with no status line of its own (#416): agy's
+# state rules every pass, then <session>.beat rewritten when the screen shows
+# progress, never because a process is alive, so a hung agent still goes
+# silent. A Claude session beats from its status line and is left alone.
 update_heartbeat() { # PANE SCREEN
-  local p=$1 s=$2
-  # Liveness requires real progress, not a redraw of a spinner or timer (#416 B2).
-  local clean="$s"
-  clean=${clean//[-⠀-⣿✢|\/\\]/}
-  clean=${clean//\([0-9]s\)/}
-  clean=${clean//\([0-9][0-9]s\)/}
-  clean=${clean//\([0-9][0-9][0-9]s\)/}
-  clean=${clean//\([0-9]m [0-9]s\)/}
-  clean=${clean//\([0-9]m [0-9][0-9]s\)/}
-  clean=${clean//\([0-9].[0-9]s\)/}
-  clean=${clean//\([0-9][0-9].[0-9]s\)/}
-  clean=${clean//\([0-9]*s · *esc to interrupt\)/}
-  clean=${clean//\[[0-9]s\]/}
-  clean=${clean//\[[0-9][0-9]s\]/}
-  clean=${clean//\[[0-9][0-9][0-9]s\]/}
-  clean=${clean// +([0-9])m +([0-9])s/}
-  clean=${clean// +([0-9])s/}
-  clean=${clean//esc to @(cancel|interrupt)/}
-  clean=${clean//+( )/ }
-  clean=${clean%%+([[:space:]])}
-
-  local screen_f="$FLEET_STATE/screens/${p//%/_}"
-  local prev_screen="" screen_changed=0
-  if [[ -n ${screen_seen[$p]+set} ]]; then
-    [[ "$clean" != "${screen_seen[$p]}" ]] && screen_changed=1
-  elif [[ -f "$screen_f" ]]; then
-    { IFS= read -r -d '' prev_screen <"$screen_f"; } 2>/dev/null || true
-    [[ "$clean" != "$prev_screen" ]] && screen_changed=1
-  else
-    screen_changed=1
-  fi
-  (( screen_changed )) || return 0
-  screen_seen[$p]="$clean"
-  [[ -d "$FLEET_STATE/screens" ]] || mkdir -p "$FLEET_STATE/screens" 2>/dev/null
-  printf '%s' "$clean" >"$screen_f"
-
-  local sid=""
-  if [[ -n ${pane_session[$p]:-} ]] && session_alive "${pane_session[$p]}"; then
-    sid=${pane_session[$p]}
-  fi
-  if [[ -z $sid ]]; then
-    local reg_p r_name r_brief r_sid
-    if [[ -r ${REGISTRY:-$FLEET_STATE/panes.tsv} ]]; then
-      while IFS=$'\t' read -r reg_p r_name r_brief r_sid _; do
-        if [[ $reg_p == "$p" && -n $r_sid ]]; then
-          sid=$r_sid
-          break
-        fi
-      done < "${REGISTRY:-$FLEET_STATE/panes.tsv}" 2>/dev/null
-    fi
-    if [[ -z $sid && -n ${ORCH:-} && $p == "${ORCH:-}" ]]; then
-      sid=${OSID:-}
-      [[ -z $sid ]] && { IFS= read -r sid <"$FLEET_STATE/orchestrator.session"; } 2>/dev/null
-    fi
-    if [[ -z $sid ]]; then
-      sid=$(live_session "$p") || sid=""
-    fi
-    [[ -n $sid ]] && pane_session[$p]=$sid
-  fi
-  [[ -n $sid ]] || return 0
-
-  local sjson=""
-  if [[ -f "$KLEPSYDRA_DIR/fleet/$sid.json" ]]; then
-    { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null || true
-  fi
-
-  # agy session state rules (#416 Heph 11-24):
-  # 1. Live child process under agy (background task) = WORKING (waiting on a task), whatever screen shows.
-  # 2. DONE only when prompt is idle, final summary printed, AND no child process is alive.
-  # 3. Task shown as "running" with no process = DONE / stale.
-  if [[ $sjson =~ \"engine\":[[:space:]]*\"agy\" ]]; then
-    local agy_pid="" live_count=""
-    if [[ $sjson =~ \"pid\":[[:space:]]*([0-9]+) ]]; then
-      agy_pid="${BASH_REMATCH[1]}"
-      live_count=$(live_shells "$agy_pid" "$$")
-    fi
-    if [[ -n $live_count && $live_count =~ ^[0-9]+$ && $live_count -gt 0 ]]; then
-      # Case 1: Live child process running -> WORKING (waiting on a task)
-      if [[ ! $sjson =~ \"state\":[[:space:]]*\"working\" || ! $sjson =~ \"reason\":[[:space:]]*\"background\" || ! $sjson =~ \"shells_live\":[[:space:]]*$live_count ]]; then
-        local sj_tmp="$KLEPSYDRA_DIR/fleet/$sid.json.$$.tmp"
-        if jq -c '.state = "working" | .reason = "background" | .shells_live = '"$live_count"' | .written_at = '"$NOW" "$KLEPSYDRA_DIR/fleet/$sid.json" >"$sj_tmp" 2>/dev/null; then
-          mv -f "$sj_tmp" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null || rm -f "$sj_tmp"
-        fi
-      fi
-    else
-      # Case 2 & 3: No child process running (live_count is 0 or empty)
-      local foot="" f_line is_prompt_idle=0
-      while IFS= read -r f_line; do
-        [[ -n ${f_line//[[:space:]]/} ]] && foot="$f_line"
-      done <<<"$s"
-      if [[ $foot == *"? for shortcuts"* || $foot == *"ctx "* || $foot == *"5h "* || $foot == *"7d "* || $s =~ \>[[:space:]]*$ ]]; then
-        if [[ ! $s =~ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⡿⣻] && $s != *"Running command"* && $s != *"Thinking..."* ]]; then
-          is_prompt_idle=1
-        fi
-      fi
-      if (( is_prompt_idle )) || [[ $sjson =~ \"background\":[[:space:]]*\[.+\] ]]; then
-        if [[ $sjson =~ \"state\":[[:space:]]*\"working\" || $sjson =~ \"background\":[[:space:]]*\[.+\] || $sjson =~ \"shells_live\" ]]; then
-          local sj_tmp="$KLEPSYDRA_DIR/fleet/$sid.json.$$.tmp"
-          if jq -c '.state = "done" | .reason = null | del(.shells_live) | .background = [] | .written_at = '"$NOW" "$KLEPSYDRA_DIR/fleet/$sid.json" >"$sj_tmp" 2>/dev/null; then
-            mv -f "$sj_tmp" "$KLEPSYDRA_DIR/fleet/$sid.json" 2>/dev/null || rm -f "$sj_tmp"
-          fi
-          return 0
-        fi
+  local p=$1 s=$2 sid sjson="" engine pid start live st
+  pane_sid "$p" || return 0
+  sid=$PANE_SID
+  { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null
+  [[ $sjson =~ \"engine\":[[:space:]]*\"([A-Za-z0-9._-]+)\" ]] && engine=${BASH_REMATCH[1]} || return 0
+  [[ $engine == claude ]] && return 0
+  if [[ $engine == agy && $sjson =~ \"claude\":[[:space:]]*\{[[:space:]]*\"pid\":[[:space:]]*([0-9]+)(,[[:space:]]*\"start\":[[:space:]]*([0-9]+))? ]]; then
+    pid=${BASH_REMATCH[1]} start=${BASH_REMATCH[3]}
+    if [[ -z $start ]] || proc_is "$pid" "$start"; then
+      live=$(live_shells "$pid" "$$")
+      if [[ $live =~ ^[0-9]+$ ]]; then
+        st=busy
+        (( live > 0 )) || st=$(eng_state agy "$s")
+        agy_state "$sid" "$live" "$st"
       fi
     fi
   fi
+  screen_progress "$s"
+  [[ ${screen_seen[$p]+set} && ${screen_seen[$p]} == "$PROGRESS" ]] && return 0
+  screen_seen[$p]=$PROGRESS
+  write_beat "$p" "$sid"
+}
 
-  local beat="$KLEPSYDRA_DIR/fleet/$sid.beat"
-  local was_name="" was_bucket=""
+# Rewrite <SID>.beat in the status line's format (name, tab, 10 s bucket),
+# unless the status line itself wrote one in the last 45 s. A number is never
+# a name (#416 B1); the name falls back to the session's, its worktree's
+# branch, its brief's first line, then its registry row's.
+write_beat() { # PANE SID
+  local p=$1 sid=$2 beat=$KLEPSYDRA_DIR/fleet/$2.beat b_raw="" was_name="" was_bucket="" name="" sjson=""
+  local reg_p r_name="" r_brief="" r_sid brief="" line="" tmp
   if [[ -f $beat ]]; then
-    local b_raw=""
-    { IFS= read -r b_raw <"$beat"; } 2>/dev/null || true
-    if [[ $b_raw == *$'\t'* ]]; then
-      was_name=${b_raw%%$'\t'*}
-      was_bucket=${b_raw#*$'\t'}
-    else
-      was_bucket="$b_raw"
-    fi
+    { IFS= read -r b_raw <"$beat"; } 2>/dev/null
+    if [[ $b_raw == *$'\t'* ]]; then was_name=${b_raw%%$'\t'*} was_bucket=${b_raw#*$'\t'}; else was_bucket=$b_raw; fi
   fi
-  # A heartbeat/count value or numeric bucket is never accepted as a name (#416 B1).
   [[ $was_name =~ ^[0-9]+$ ]] && was_name=""
-
-  if [[ $was_bucket =~ ^[0-9]+$ ]]; then
-    # Statusline refreshes every 30 s: if within 45 s, Claude Code keeps its own beat unchanged.
-    (( NOW - was_bucket * 10 < 45 )) && return 0
-  fi
-
-  local beat_name="$was_name"
-  if [[ -z $beat_name ]]; then
-    if [[ $sjson =~ \"name\":\"([^\"]+)\" ]]; then
-      local cand="${BASH_REMATCH[1]}"
-      [[ ! $cand =~ ^[0-9]+$ ]] && beat_name="$cand"
-    elif [[ $sjson =~ \"worktree\":\"[^\"]+\" && $sjson =~ \"branch\":\"([^\"]+)\" ]]; then
-      local br="${BASH_REMATCH[1]}"
-      [[ -n $br && $br != "main" && $br != "master" && ! $br =~ ^[0-9]+$ ]] && beat_name="$br"
+  [[ $was_bucket =~ ^[0-9]+$ ]] && (( NOW - was_bucket * 10 < 45 )) && return 0
+  name=$was_name
+  if [[ -z $name ]]; then
+    { IFS= read -r -d '' sjson <"$KLEPSYDRA_DIR/fleet/$sid.json"; } 2>/dev/null
+    if [[ $sjson =~ \"name\":[[:space:]]*\"([^\"]+)\" && ! ${BASH_REMATCH[1]} =~ ^[0-9]+$ ]]; then
+      name=${BASH_REMATCH[1]}
+    elif [[ $sjson =~ \"worktree\":[[:space:]]*\"[^\"]+\" && $sjson =~ \"branch\":[[:space:]]*\"([^\"]+)\" ]]; then
+      [[ ${BASH_REMATCH[1]} != main && ${BASH_REMATCH[1]} != master && ! ${BASH_REMATCH[1]} =~ ^[0-9]+$ ]] && name=${BASH_REMATCH[1]}
     fi
   fi
-  if [[ -z $beat_name ]]; then
-    local brief_file="${r_brief:-}"
-    if [[ -z $brief_file && $sjson =~ Read\ your\ brief\ at\ ([^[:space:]\"]+) ]]; then
-      brief_file="${BASH_REMATCH[1]}"
-      [[ $brief_file == ~* ]] && brief_file="${HOME:-}${brief_file#\~}"
+  if [[ -z $name && -r ${REGISTRY:-$FLEET_STATE/panes.tsv} ]]; then
+    while IFS=$'\t' read -r reg_p r_name r_brief r_sid _; do
+      [[ $reg_p == "$p" ]] && break
+      r_name="" r_brief=""
+    done <"${REGISTRY:-$FLEET_STATE/panes.tsv}" 2>/dev/null
+    brief=$r_brief
+    if [[ -z $brief && $sjson =~ Read\ your\ brief\ at\ ([^[:space:]\"]+) ]]; then
+      brief=${BASH_REMATCH[1]}
+      [[ $brief == "~"* ]] && brief=${HOME:-}${brief#\~}
     fi
-    if [[ -n $brief_file && -f $brief_file ]]; then
-      local b_line=""
-      { IFS= read -r b_line <"$brief_file"; } 2>/dev/null || true
-      b_line=${b_line#\# }
-      b_line=${b_line#\#}
-      b_line=${b_line#Task: }
-      b_line=${b_line#"${b_line%%[![:space:]]*}"}
-      b_line=${b_line%"${b_line##*[![:space:]]}"}
-      [[ ! $b_line =~ ^[0-9]+$ ]] && beat_name="$b_line"
+    if [[ -n $brief && -f $brief ]]; then
+      { IFS= read -r line <"$brief"; } 2>/dev/null
+      line=${line#\#} line=${line# } line=${line#Task: }
+      line=${line#"${line%%[![:space:]]*}"} line=${line%"${line##*[![:space:]]}"}
+      [[ -n $line && ! $line =~ ^[0-9]+$ ]] && name=$line
     fi
+    [[ -z $name && -n $r_name && ! $r_name =~ ^[0-9]+$ ]] && name=$r_name
   fi
-  if [[ -z $beat_name && -n ${r_name:-} && ! ${r_name:-} =~ ^[0-9]+$ ]]; then
-    beat_name="$r_name"
-  fi
-
-  local beat_line="$beat_name"$'\t'"$((NOW / 10))"
-  [[ -d "${beat%/*}" ]] || mkdir -p "${beat%/*}" 2>/dev/null
-  local tmp="$beat.$$.tmp"
-  if printf '%s\n' "$beat_line" >"$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$beat" 2>/dev/null || rm -f "$tmp"
-  fi
+  tmp=$beat.$$.tmp
+  if printf '%s\t%s\n' "$name" "$((NOW / 10))" >"$tmp" 2>/dev/null; then mv -f "$tmp" "$beat" 2>/dev/null || rm -f "$tmp"; fi
 }
 
 one() { # PANE

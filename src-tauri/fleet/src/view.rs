@@ -208,6 +208,9 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         .beat
         .as_ref()
         .map_or(entry.modified, |b| b.0.max(entry.modified));
+    // agy lists no background work; its live child shells are its crew (#416).
+    let agy = f.engine.as_deref() == Some("agy");
+    let live = f.shells_live.unwrap_or(0);
     let mut crew = Crew::default();
     if matches!(f.state, State::Working | State::NeedsYou) {
         for b in &f.background {
@@ -222,19 +225,23 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         }
         // A finished background run stays in the set until Stop; fewer shells
         // running than it names means some have ended.
-        if let Some(live) = f.shells_live {
-            crew.shells = crew.shells.min(live);
-            if live == 0 {
-                crew.tasks = 0;
+        if agy {
+            crew.shells = crew.shells.max(live);
+            if f.shells_live == Some(0) {
+                crew.tasks = 0; // a task agy listed has no process left
             }
+        } else if let Some(live) = f.shells_live {
+            crew.shells = crew.shells.min(live);
         }
     }
     // A turn that ended with work out: once all of it is stale, it is done.
     let after_turn = f.state == State::Working && f.reason.as_deref() == Some("background");
     let crew_out = crew.agents + crew.shells + crew.tasks > 0;
     // A prompt hides the status line, so a waiting session sends no beats.
-    let silent = !matches!(f.state, State::Ended | State::NeedsYou | State::Done)
-        && (!after_turn || crew_out)
+    // agy beats only when its screen changes (the resume service), so an idle
+    // agy, or one waiting on a live child, is quiet by design, not silent.
+    let silent = !matches!(f.state, State::Ended | State::NeedsYou)
+        && !(agy && (f.state == State::Done || live > 0 || (after_turn && !crew_out)))
         && now.saturating_sub(last_word) > SILENT_AFTER;
     let (status, reason, status_at) = if silent {
         (Status::Silent, None, last_word)
@@ -244,7 +251,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
             State::Working if after_turn && !crew_out => Status::Done,
             State::Working => Status::Working,
             State::NeedsYou => Status::NeedsYou,
-            State::Done if f.shells_live.unwrap_or(0) > 0 => Status::Working,
+            State::Done if agy && live > 0 => Status::Working,
             State::Done => Status::Done,
             State::Error => Status::Error,
             State::Ended => Status::Ended,
@@ -256,7 +263,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         };
         let reason = if status == Status::Done {
             None
-        } else if f.state == State::Done && f.shells_live.unwrap_or(0) > 0 {
+        } else if agy && f.state == State::Done && live > 0 {
             Some("background".into())
         } else {
             f.reason.clone()
@@ -803,51 +810,79 @@ mod tests {
         assert_eq!((v.status, v.background), (Status::Silent, Crew::default()));
     }
 
+    fn agy(mut e: Entry) -> Entry {
+        e.file.engine = Some("agy".into());
+        e
+    }
+
     #[test]
-    fn done_session_with_old_beat_is_not_silent_working_session_is() {
+    fn the_exact_file_the_resume_service_writes_for_a_running_agy_task_reads_working() {
+        // What resume-at-reset.sh writes while an agy child shell runs (#416):
+        // no background entries, the live count only.
+        let text = format!(
+            r#"{{"v":1,"session_id":"cb9fa591-1514-44d1-a31c-eba4a7cb41ed","engine":"agy","state":"working","reason":"background","state_at":{},"written_at":{},"shells_live":1}}"#,
+            NOW - 300,
+            NOW - 300
+        );
+        let file =
+            crate::session::parse(&text, "cb9fa591-1514-44d1-a31c-eba4a7cb41ed", NOW - 300).unwrap();
+        let e = Entry {
+            file,
+            modified: NOW - 300,
+            beat: None,
+        };
+        let v = view(&e, NOW).unwrap();
+        assert_eq!(v.status, Status::Working, "a live child is agy's crew, and no beat makes it silent");
+        assert_eq!(v.background.shells, 1);
+        let mut gone = e.clone();
+        gone.file.shells_live = Some(0);
+        assert_eq!(view(&gone, NOW).unwrap().status, Status::Done, "the child ended: the turn is done");
+    }
+
+    #[test]
+    fn a_claude_file_with_live_shells_but_no_entries_keeps_main_s_reading() {
+        let mut e = entry("a", State::Working, NOW - 300, NOW - 300);
+        e.file.reason = Some("background".into());
+        e.file.shells_live = Some(1);
+        assert_eq!(view(&e, NOW).unwrap().status, Status::Done, "Claude names its shells; a count alone is no crew");
+        let mut d = entry("a", State::Done, NOW - 300, NOW - 300);
+        d.file.shells_live = Some(1);
+        assert_eq!(view(&d, NOW).unwrap().status, Status::Done);
+    }
+
+    #[test]
+    fn an_idle_agy_with_an_old_beat_is_done_not_silent_and_claude_still_goes_silent() {
         let mut e = entry("a", State::Done, NOW - 300, NOW - 300);
         e.beat = Some((NOW - SILENT_AFTER - 10, None));
         e.modified = NOW - SILENT_AFTER - 10;
-        let v = view(&e, NOW).unwrap();
-        assert_eq!(v.status, Status::Done);
+        assert_eq!(view(&agy(e.clone()), NOW).unwrap().status, Status::Done);
+        assert_eq!(view(&e, NOW).unwrap().status, Status::Silent, "a crashed Claude session reads silent, as on main");
 
-        let mut w = entry("a", State::Working, NOW - 300, NOW - 300);
+        let mut w = agy(entry("a", State::Working, NOW - 300, NOW - 300));
         w.beat = Some((NOW - SILENT_AFTER - 10, None));
         w.modified = NOW - SILENT_AFTER - 10;
-        let vw = view(&w, NOW).unwrap();
-        assert_eq!(vw.status, Status::Silent);
+        assert_eq!(view(&w, NOW).unwrap().status, Status::Silent, "a mid-turn agy whose screen froze goes silent");
     }
 
     #[test]
-    fn session_with_live_process_reads_working_whatever_state_said() {
+    fn an_agy_done_file_with_a_live_child_reads_working_a_claude_one_does_not() {
         let mut e = entry("a", State::Done, NOW - 300, NOW - 300);
         e.file.shells_live = Some(1);
-        let v = view(&e, NOW).unwrap();
-        assert_eq!(v.status, Status::Working);
-        assert_eq!(v.reason.as_deref(), Some("background"));
+        let v = view(&agy(e.clone()), NOW).unwrap();
+        assert_eq!((v.status, v.reason.as_deref()), (Status::Working, Some("background")));
+        assert_eq!(view(&e, NOW).unwrap().status, Status::Done);
     }
 
     #[test]
-    fn session_idle_at_prompt_after_summary_with_no_process_reads_done() {
-        let mut e = entry("a", State::Working, NOW - 300, NOW - 300);
-        e.file.reason = Some("background".into());
-        e.file.shells_live = Some(0);
-        let v = view(&e, NOW).unwrap();
-        assert_eq!(v.status, Status::Done);
-        assert_eq!(v.reason, None);
-    }
-
-    #[test]
-    fn background_task_listed_with_no_process_reads_done_not_silent() {
+    fn an_agy_task_with_no_process_left_is_done_a_claude_workflow_task_still_runs() {
         let mut e = entry("a", State::Working, NOW - 300, NOW - 300);
         e.file.reason = Some("background".into());
         e.file.background = vec![crew_entry("t1", Kind::Task, NOW - 60)];
         e.file.shells_live = Some(0);
-        e.beat = Some((NOW - SILENT_AFTER - 10, None));
-        e.modified = NOW - SILENT_AFTER - 10;
-        let v = view(&e, NOW).unwrap();
-        assert_eq!(v.status, Status::Done);
-        assert_eq!(v.background, Crew::default());
+        let v = view(&agy(e.clone()), NOW).unwrap();
+        assert_eq!((v.status, v.background), (Status::Done, Crew::default()));
+        let c = view(&e, NOW).unwrap();
+        assert_eq!((c.status, c.background.tasks), (Status::Working, 1), "Claude's task list is its own word");
     }
 
     #[test]
@@ -928,12 +963,7 @@ mod tests {
         assert_eq!(view(&e, NOW).unwrap().status, Status::Done);
         e.file.state_at = NOW - 200;
         e.modified = NOW - 200;
-        assert_eq!(view(&e, NOW).unwrap().status, Status::Done);
-        let mut w = entry("a", State::Working, NOW - 200, 0);
-        w.beat = None;
-        w.file.state_at = NOW - 200;
-        w.modified = NOW - 200;
-        assert_eq!(view(&w, NOW).unwrap().status, Status::Silent);
+        assert_eq!(view(&e, NOW).unwrap().status, Status::Silent);
     }
 
     #[test]

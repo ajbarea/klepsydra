@@ -443,95 +443,125 @@ resume "$(( noon + 4330 ))"
 check "a line AJ already sent is not sent twice; the continue message follows it" "$(has "$(events sent)" "SUBMIT The usage limit has reset.") $(grep -c 'AJ: sent' "$work/sent.log")" "yes 0"
 t kill-window -t "$p"
 
-echo "resume: agy heartbeat on screen change (#416)"
+echo "resume: agy heartbeat and task state (#416)"
 : >"$FLEET_LOG"
 AGY_SID=aaaaaaaa-4444-4111-8222-333333333333
 CLA_SID=bbbbbbbb-4444-4111-8222-333333333334
-p_agy=$(pane agybeat '{"above":["agy task running..."]}'); settle
-live "$p_agy" "$AGY_SID"
+arun=$work/agyrun aproc=$work/agyproc
+mkdir -p "$arun"
+# A private runtime folder: the service takes the hook's lock there, never the real one.
+aresume() { XDG_RUNTIME_DIR=$arun FLEET_PROC=$aproc resume "$1"; }
+# A fake /proc: agy (pid 78910, start 4242) and the children listed after it,
+# each "pid:comm:state" (a bash child is a tool call, npm an MCP server).
+agytree() {
+  local c pid comm st kids=""
+  rm -rf -- "${aproc:?}"
+  mkdir -p "$aproc/78910/task/78910"
+  printf '78910 (agy) S 1 %s\n' "$(seq -s ' ' 2 18) 4242 $(seq -s ' ' 20 48)" >"$aproc/78910/stat"
+  for c in "$@"; do
+    IFS=: read -r pid comm st <<<"$c"
+    mkdir -p "$aproc/$pid"
+    printf '%s (%s) %s 78910 %s\n' "$pid" "$comm" "$st" "$(seq -s ' ' 2 48)" >"$aproc/$pid/stat"
+    printf '%s\n' "$comm" >"$aproc/$pid/comm"
+    kids+="$pid "
+  done
+  printf '%s' "$kids" >"$aproc/78910/task/78910/children"
+}
+# The session file the hook writes for agy, with FIELDS (jq) on top.
+agyfile() {
+  jq -c -n --arg p "$p_agy" "{v: 1, session_id: \"$AGY_SID\", engine: \"agy\", state: \"working\", reason: null,
+    state_at: 1, written_at: 1, claude: {pid: 78910, start: 4242}, tmux: {pane: \$p}} | $1" >"$KLEPSYDRA_DIR/fleet/$AGY_SID.json"
+}
+afield() { jq -c "$1" "$KLEPSYDRA_DIR/fleet/$AGY_SID.json"; }
+beat() { cat "$KLEPSYDRA_DIR/fleet/$1.beat" 2>/dev/null || echo none; }
+
+p_agy=$(pane agybeat '{"above":["agy task running..."],"below":["esc to cancel"]}'); settle
 printf '%s\tagy-worker\t%s\t%s\t/w\n' "$p_agy" "$work/agy.brief" "$AGY_SID" >>"$REGISTRY"
-
 p_cla=$(pane clabeat '{"above":["claude working..."]}'); settle
-live "$p_cla" "$CLA_SID"
 printf '%s\tclaude-worker\t%s\t%s\t/w\n' "$p_cla" "$work/claude.brief" "$CLA_SID" >>"$REGISTRY"
+jq -c -n --arg p "$p_cla" "{v: 1, session_id: \"$CLA_SID\", engine: \"claude\", state: \"working\", tmux: {pane: \$p}}" >"$KLEPSYDRA_DIR/fleet/$CLA_SID.json"
+agytree
+agyfile .
 
-# Pass 1 at noon: screen seen, initial beat written for agy (busy with spinner)
-state agybeat '{"above":["⠋ Thinking... (5s)", "agy task running..."]}'
-resume "$noon"
-b_agy1=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
-check "#416: agy initial beat written on screen seen" "$b_agy1" "agy-worker"$'\t'"$((noon / 10))"
+state agybeat '{"above":["⠋ Running command... 5s","agy task running..."],"below":["esc to cancel"]}'
+aresume "$noon"
+check "#416: agy's first screen writes its beat, named from its registry row" "$(beat "$AGY_SID")" "agy-worker"$'\t'"$((noon / 10))"
+state agybeat '{"above":["⠙ Running command... 15s","agy task running...","tool executed: edits made"],"below":["esc to cancel"]}'
+aresume "$((noon + 60))"
+check "#416: a new line is progress: the beat moves" "$(beat "$AGY_SID")" "agy-worker"$'\t'"$(((noon + 60) / 10))"
+# A frozen agent redraws its spinner, timer and colours; none of it is progress
+# (#563 review: Claude's glyphs, timers past 10 min, colour-only changes).
+state agybeat '{"above":["\u001b[33m✻ Running command... (12m 3s)\u001b[0m","\u001b[2magy task running...\u001b[0m","tool executed: edits made"],"below":["esc to cancel"]}'
+aresume "$((noon + 160))"
+check "#416: spinner glyph, a 12 min timer and colour alone leave the beat where it was" "$(beat "$AGY_SID")" "agy-worker"$'\t'"$(((noon + 60) / 10))"
+state agybeat '{"above":["⣟ Running command... (1000s)","agy task running...","tool executed: edits made"],"below":["esc to cancel"]}'
+aresume "$((noon + 220))"
+check "#416: ... and so does a 1000 s timer" "$(beat "$AGY_SID")" "agy-worker"$'\t'"$(((noon + 60) / 10))"
 
-# Pass 2 at noon+60: busy with spinner, real progress made -> beat refreshes
-state agybeat '{"above":["⠙ Thinking... (15s)", "agy task running...", "tool executed: edits made"]}'
-resume "$(( noon + 60 ))"
-b_agy2=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
-check "#416 (busy with spinner): screen changes with progress, so the beat refreshes" "$b_agy2" "agy-worker"$'\t'"$(((noon + 60) / 10))"
+# A Claude session beats from its own status line: a stale one is still left alone.
+printf 'claude-tab\t%s\n' "$((noon / 10))" >"$KLEPSYDRA_DIR/fleet/$CLA_SID.beat"
+state clabeat '{"above":["claude working...","new output"]}'
+aresume "$((noon + 230))"
+check "#416: a Claude pane's beat is the status line's alone, even 230 s old" "$(beat "$CLA_SID")" "claude-tab"$'\t'"$((noon / 10))"
 
-# Pass 3 at noon+160: frozen spinner >90 s (only spinner glyph and timer advance, no real progress)
-# Liveness must come from real progress, not redraw (B2). Beat is not rewritten, reads silent.
-state agybeat '{"above":["⠸ Thinking... (115s)", "agy task running...", "tool executed: edits made"]}'
-resume "$(( noon + 160 ))"
-b_agy3=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
-check "#416 (frozen spinner >90 s): beat not rewritten when only spinner/timer changes" "$b_agy3" "$b_agy2"
-beat_bucket=$(cut -f2 <<<"$b_agy3")
-beat_age=$(( (noon + 160) - beat_bucket * 10 ))
-check "#416 (frozen spinner >90 s): reads silent (beat age $beat_age > 90 s)" "$(( beat_age > 90 ))" "1"
-
-# Pass 4 at noon+180: idle at prompt after a summary -> transitions to done (AJ 11-24)
-jq -n --arg p "$p_agy" '{session_id: "aaaaaaaa-4444-4111-8222-333333333333", engine: "agy", state: "working", tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.json"
+# A live child shell is agy's task: working whatever the screen, on a pass
+# whose screen did not change (#563 review 8), with state_at moved (review 7).
+agyfile '.state = "done"'
+agytree 78911:bash:S 78912:npm:S
+aresume "$((noon + 240))"
+check "#416: a live call under agy reads working, on an unchanged screen; MCP servers do not count" \
+  "$(afield '[.state, .reason, .shells_live, .state_at]')" "[\"working\",\"background\",1,$((noon + 240))]"
+check "#416 review 1: turn_done holds a move while agy's call runs" \
+  "$(bash -c '. "$1/lib.sh"; turn_done "$2" >/dev/null && echo free || echo held' _ "$here" "$p_agy")" held
+check "#416 review 1: and the watcher sees background work" \
+  "$(bash -c '. "$1/lib.sh"; pane_background "$2" "$3" && echo out || echo none' _ "$here" "$p_agy" "$((noon + 240))")" out
+# Busy footer, no child: the turn runs on; nothing changes.
+agytree 78911:bash:Z 78912:npm:S
+state agybeat '{"above":["⣟ Running command... 3s","agy task running..."],"below":["esc to cancel"]}'
+aresume "$((noon + 250))"
+check "#416: the call ended mid-turn (busy footer): still working, the turn's own, no call counted" "$(afield '[.state, .reason, .shells_live]')" '["working",null,0]'
+# The status line alone (agy 1.5.12+) is no idle footer: eng_state decides, not ctx/5h text (review 9).
+state agybeat '{"above":["⣟ Running command... 3s","agy task running..."],"below":["Gemini 4 Hydrogen (High) · ctx 3% · 5h 6% · 7d 95%"]}'
+aresume "$((noon + 255))"
+check "#416 review 9: a status line under a spinner is not idle" "$(afield '[.state, .reason]')" '["working",null]'
+# Idle at the prompt with the child gone (a zombie is gone): done, its stale task with it.
+agyfile '.state = "working" | .reason = "background" | .shells_live = 1 | .background = [{id: "t1", kind: "task", at: 1}]'
 state agybeat '{"above":["Done! Everything resolved."],"below":["? for shortcuts"]}'
-resume "$(( noon + 180 ))"
-check "#416 (idle at prompt after summary): agy session transitions to done" "$(jq -r '[.state, .reason] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "done,"
+aresume "$((noon + 260))"
+check "#416: idle, no live call: done, its listed task cleared, state_at moved" \
+  "$(afield '[.state, .reason, .shells_live, (.background | length), .state_at]')" "[\"done\",null,0,0,$((noon + 260))]"
+check "#416 review 1: and turn_done frees the pane" \
+  "$(bash -c '. "$1/lib.sh"; turn_done "$2" >/dev/null && echo free || echo held' _ "$here" "$p_agy")" free
+# An agy asking AJ keeps its ask though a call runs.
+agyfile '.state = "needs_you" | .reason = "approve Bash"'
+agytree 78911:bash:S
+aresume "$((noon + 270))"
+check "#416: an ask is never covered by a running call" "$(afield '[.state, .reason]')" '["needs_you","approve Bash"]'
 
-# Pass 5 at noon+200: background task listed with no process running -> background cleared and done
-jq -n --arg p "$p_agy" '{session_id: "aaaaaaaa-4444-4111-8222-333333333333", engine: "agy", state: "working", reason: "background", background: [{id: "task1", kind: "task", at: 1000}], tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.json"
-state agybeat '{"above":["All background tasks completed."],"below":["? for shortcuts"]}'
-resume "$(( noon + 200 ))"
-check "#416 (background task listed with no process): background cleared and transitions to done" "$(jq -r '[.state, (.background | length)] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "done,0"
-
-# Pass 6 at noon+220: B1 numeric bucket is never accepted as session name
-printf '179235300\t179235300\n' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.beat"
-state agybeat '{"above":["new progress line..."]}'
-resume "$(( noon + 220 ))"
-b_b1=$(cat "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" 2>/dev/null || echo none)
-check "#416 (B1): numeric bucket is not taken as session name" "$b_b1" "agy-worker"$'\t'"$(((noon + 220) / 10))"
-
-# Pass 7: a Claude pane with a fresh status-line beat is untouched
-printf 'claude-tab\t%s\n' "$(((noon + 220) / 10))" >"$KLEPSYDRA_DIR/fleet/$CLA_SID.beat"
-state clabeat '{"above":["claude working...", "new output"]}'
-resume "$(( noon + 230 ))"
-b_cla=$(cat "$KLEPSYDRA_DIR/fleet/$CLA_SID.beat" 2>/dev/null || echo none)
-check "#416: Claude pane with fresh status-line beat is untouched" "$b_cla" "claude-tab"$'\t'"$(((noon + 220) / 10))"
-
-# Pass 8 at noon+240: live child process under agy session -> WORKING (waiting on a task) (#416 Heph 11-24)
-# The process tree lives in a private fake /proc, passed only to this pass; never the real one.
-aproc=$work/agyproc fake_pid=78910 fake_child=78911
-aproc_ok=no
-if mkdir -p "$aproc/$fake_pid/task/$fake_pid" "$aproc/$fake_child" &&
-  printf '%s (agy) S 1 %s\n' "$fake_pid" "$(seq -s ' ' 1 48)" >"$aproc/$fake_pid/stat" &&
-  printf 'agy\n' >"$aproc/$fake_pid/comm" &&
-  printf '%s (make) S %s %s\n' "$fake_child" "$fake_pid" "$(seq -s ' ' 1 48)" >"$aproc/$fake_child/stat" &&
-  printf 'make\n' >"$aproc/$fake_child/comm" &&
-  printf 'make\0test-fleet\0' >"$aproc/$fake_child/cmdline" &&
-  printf '%s ' "$fake_child" >"$aproc/$fake_pid/task/$fake_pid/children"; then
-  aproc_ok=yes
-fi
-check "#416 (live child process under agy): fake proc root built at $aproc" "$aproc_ok" yes
-jq -n --arg p "$p_agy" --argjson pid "$fake_pid" \
-  '{session_id: "aaaaaaaa-4444-4111-8222-333333333333", engine: "agy", state: "done", reason: null, claude: {pid: $pid}, tmux: {pane: $p}}' >"$KLEPSYDRA_DIR/fleet/$AGY_SID.json"
-state agybeat '{"above":["Done! Everything resolved."],"below":["? for shortcuts"]}'
-FLEET_PROC=$aproc resume "$(( noon + 240 ))"
-check "#416 (live child process under agy): reads working in background" "$(jq -r '[.state, .reason, .shells_live] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "working,background,1"
-# The same child once it has exited but is not yet reaped (a zombie) is no live task:
-# the card the pass above left working goes done at the next screen change.
-printf '%s (make) Z %s %s\n' "$fake_child" "$fake_pid" "$(seq -s ' ' 1 48)" >"$aproc/$fake_child/stat"
-state agybeat '{"above":["Done! The task finished."],"below":["? for shortcuts"]}'
-FLEET_PROC=$aproc resume "$(( noon + 250 ))"
-check "#416 (zombie child under agy): is no live task, so the card reads done" "$(jq -r '[.state, .reason] | join(",")' "$KLEPSYDRA_DIR/fleet/$AGY_SID.json")" "done,"
-rm -rf -- "${aproc:?}"
+# The service writes under the hook's lock and reads the file again there, so
+# a hook write made while it waited is kept (review 7).
+agyfile '.state = "done"'
+agytree 78911:bash:S
+lockf=$arun/klepsydra-fleet-$UID.lock
+exec {hold}>>"$lockf"
+flock "$hold"
+aresume "$((noon + 280))" &
+rpid=$!
+# Wait until the service holds the lock file open (it is then waiting on it), 10 s at most.
+for _ in $(seq 200); do
+  find /proc/[0-9]*/fd -maxdepth 1 -lname "$lockf" 2>/dev/null | grep -qv "^/proc/$$/" && break
+  sleep 0.05
+done
+agyfile '.state = "done" | .name = "from-hook"'
+flock -u "$hold"
+exec {hold}>&-
+wait "$rpid"
+check "#416 review 7: a hook write made while the service waited on the lock is kept" \
+  "$(afield '[.name, .state, .shells_live]')" '["from-hook","working",1]'
 
 t kill-window -t "$p_agy"
 t kill-window -t "$p_cla"
+rm -rf -- "${aproc:?}" "${arun:?}"
 rm -f "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" "$KLEPSYDRA_DIR/fleet/$AGY_SID.json" \
       "$KLEPSYDRA_DIR/fleet/$CLA_SID.beat" "$KLEPSYDRA_DIR/fleet/$CLA_SID.json"
 

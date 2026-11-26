@@ -645,22 +645,27 @@ fire session-start.json ".engine = \"agy\" | .cwd = \"$repos/klepsydra\""
 now=1792353520 fire user-prompt.json ".engine = \"agy\" | .cwd = \"$repos/klepsydra\" | .prompt = \"Read your brief at $work/briefs/brief.md\""
 check "agy brief first line fallback names it" "$(field .name)" '"Fix agy cards"'
 
-# agy child process counting: MCP servers ignored, tasks counted, live task keeps working state (#416)
+# agy's tasks are its child shells (#416). The tree as agy 1.5.17 draws it
+# (11-25): MCP servers as npm and uv, never a shell; each tool call as
+# `bash -c CMD`, whatever its command line says (an "mcp" or ".server" in it
+# is no server). The hook runs as a child too and never counts.
 mkproc 680 1 agy 8717628 S agy
 mkproc 681 680 klepsydra-fleet 8717701 S bash "$hook"
-mkproc 682 680 npm 8717630 S npm exec @playwright/mcp@latest
-mkproc 683 680 make 8717631 S make test-fleet
+mkproc 682 680 npm 8717630 S npm exec @playwright/mcp@latest --browser chrome
+mkproc 684 680 uv 8717632 S uv run --quiet --directory /home/user/.gemini/config/plugins/epistole python -m epistole.server
+mkproc 683 680 bash 8717631 S bash -c "make test-mcp"
+mkproc 685 680 bash 8717633 S bash -c "python3 -m http.server"
 mkdir -p "$work/proc/680/task/680"
-printf '%s ' 682 683 >"$work/proc/680/task/680/children"
+printf '%s ' 681 682 683 684 685 >"$work/proc/680/task/680/children"
 rm -f "$file"
 fire session-start.json '.engine = "agy"' KLEPSYDRA_PID=681
 fire user-prompt.json '.engine = "agy"' KLEPSYDRA_PID=681
 fire stop.json '.engine = "agy" | del(.background_tasks)' KLEPSYDRA_PID=681
-check "agy with live task child stays working with background reason" "$(field '[.state, .reason, .shells_live]')" '["working","background",1]'
-printf '%s ' 682 >"$work/proc/680/task/680/children"
+check "#416: agy's two live calls count, its MCP servers and the hook do not; the turn stays working" "$(field '[.state, .reason, .shells_live]')" '["working","background",2]'
+printf '%s ' 681 682 684 >"$work/proc/680/task/680/children"
 fire stop.json '.engine = "agy" | del(.background_tasks)' KLEPSYDRA_PID=681
-check "agy with no live task child transitions to done" "$(field '[.state, .reason]')" '["done",null]'
-rm -rf "$work/proc/680" "$work/proc/681" "$work/proc/682" "$work/proc/683"
+check "#416: no call left, only servers: the turn is done" "$(field '[.state, .reason, .shells_live]')" '["done",null,0]'
+rm -rf -- "${work:?}/proc/680" "${work:?}/proc/681" "${work:?}/proc/682" "${work:?}/proc/683" "${work:?}/proc/684" "${work:?}/proc/685"
 
 echo "bad input"
 out=$(KLEPSYDRA_DIR="$dir" XDG_RUNTIME_DIR="$work" bash "$hook" <"$fixtures/malformed.json"); rc=$?
@@ -1077,6 +1082,14 @@ fire post-tool-task-stop.json '.tool_input = {task_id: "abd38d40cac785715"} | .t
 rm -rf -- "${work:?}/proc/500/task"
 fire post-tool-bash.json
 check "#167: without the children list no live count is kept" "$(field 'has("shells_live")')" "false"
+# #416: agy's "no live child, no task" rule is agy's alone. A Claude Stop that
+# lists a running workflow, then the idle prompt with no shell alive, keeps
+# the workflow and the turn working, as before.
+kids 550
+fire user-prompt.json
+now=1792356500 fire stop.json '.background_tasks = [{id: "wf1", type: "workflow", status: "running", description: "review"}]'
+now=1792356540 fire notification-idle.json
+check "#416: a Claude workflow with no shell alive still runs: working, its task kept" "$(field '[.state, .reason, ([.background[] | .kind] | join(","))]')" '["working","background","task"]'
 # Stop's own list of running tasks is the truth.
 fire user-prompt.json
 now=1792356450 fire subagent-start.json
@@ -1444,6 +1457,10 @@ check "dir block identical in the statusline" "$(block "$hook")" "$(block "$here
 pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
 check "proc stat block present" "$([[ -n "$(pblock "$hook")" ]] && echo yes)" "yes"
 check "proc stat block identical in the launcher" "$(pblock "$hook")" "$(pblock "$here/klepsydra-launch.sh")"
+check "proc stat block identical in the fleet scripts (#416)" "$(pblock "$hook")" "$(pblock "$here/../fleet/lib.sh")"
+lblock() { sed -n '/^# --- live shells/,/^# --- end live shells ---$/p' "$1"; }
+check "live shells block present" "$([[ -n "$(lblock "$hook")" ]] && echo yes)" "yes"
+check "live shells block identical in the fleet scripts (#416)" "$(lblock "$hook")" "$(lblock "$here/../fleet/lib.sh")"
 # shellcheck disable=SC2016 # a literal $PROC_ROOT, as the scripts spell it
 check "the launcher parses /proc only in the block" \
   "$(sed '/^# --- proc stat/,/^# --- end proc stat ---$/d' "$here/klepsydra-launch.sh" | grep -cE 'read -r -a stat|<"?(/proc|\$PROC_ROOT)/')" "0"
