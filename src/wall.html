@@ -12,11 +12,16 @@
 <link rel="apple-touch-icon" href="phone/apple-touch-icon.png" />
 <link rel="stylesheet" href="fleet/badge.css" />
 <link rel="stylesheet" href="fleet/wall.css" />
+<link rel="stylesheet" href="fleet/rooms.css" />
 </head>
 <body>
   <header class="bar">
     <div class="lead">
       <div class="tally" role="group" aria-label="Session counts"></div>
+      <nav class="rooms-nav" aria-label="Views">
+        <button type="button" id="needs-pill" class="room-pill rp-needs" aria-pressed="false" aria-keyshortcuts="N" title="Needs you (N)"><span class="rp-name">Needs you</span> <span class="rp-count">0</span><kbd aria-hidden="true">N</kbd></button>
+        <button type="button" id="agents-pill" class="room-pill rp-agents" aria-pressed="true" aria-keyshortcuts="A" title="Agents (A)"><span class="rp-name">Agents</span> <span class="rp-count">0 working</span><kbd aria-hidden="true">A</kbd></button>
+      </nav>
       <button type="button" id="ci-open" popovertarget="ci" data-phone hidden>CI</button>
       <button type="button" id="health-open" popovertarget="health" data-phone hidden>Fleet</button>
       <p class="wrapup-bar" hidden>
@@ -37,7 +42,6 @@
       <div class="tools">
         <button type="button" id="split" aria-pressed="false" title="The wall on the left half of this screen, the fleet terminal on the right" hidden>Split<span class="visually-hidden"> with terminal</span></button>
         <button type="button" id="ledger-open" aria-controls="ledger" aria-expanded="false">Ledger</button>
-        <button type="button" id="queue-open" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Queue (Ctrl+Alt+B)">Queue</button>
         <button type="button" id="wrapup-open" aria-haspopup="dialog">Wrap up…</button>
       </div>
       <span class="new-split" role="group" aria-label="New session"><button type="button" id="new-session" class="primary"><span class="ico" aria-hidden="true"></span><span class="new-label">+ New session</span><span class="mono" hidden></span></button><button type="button" id="new-kind" class="primary caret" popovertarget="new-menu" aria-expanded="false" aria-label="Other engines" title="Other engines" hidden><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button></span>
@@ -51,6 +55,14 @@
             <label><input type="radio" name="density" value="compact" /><span>Compact</span></label>
           </fieldset>
           <label class="theme-pick" title="How each session looks"><span>Characters</span><select id="theme"></select></label>
+          <label class="needs-layout-pick" title="How Needs you and Agents share the wall"><span>Needs you layout</span>
+            <select id="needs-layout">
+              <option value="B">Two rooms</option>
+              <option value="D">Inbox and Floor</option>
+              <option value="E">Amber Door</option>
+            </select>
+          </label>
+          <span id="layout-note" class="ny-note" role="status"></span>
           <label class="opacity-pick" title="The floating gauge's background: 0% shows only its text" hidden><span>Gauge background</span><input id="gauge-opacity" type="range" min="0" max="100" step="5" value="85" aria-valuetext="85%" /><span class="opacity-value" aria-hidden="true">85%</span></label>
         </div>
       </details>
@@ -68,6 +80,21 @@
   </section>
   <h1 id="wall-title" class="visually-hidden">Claude Code sessions</h1>
   <section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"></section>
+  <section id="needs-room" class="needs-room" aria-labelledby="needs-title" tabindex="-1" hidden>
+    <header class="ny-head">
+      <h2 id="needs-title">Needs you</h2>
+      <p class="ny-sub"></p>
+    </header>
+    <p class="ny-problem" role="status" hidden></p>
+    <p class="ny-next" hidden></p>
+    <div class="ny-focus" hidden></div>
+    <div class="ny-groups"></div>
+    <div class="ny-clear" hidden>
+      <p class="ny-clear-title">Nothing waits on you.</p>
+      <p class="ny-clear-sub">New asks and sessions waiting on you land here first.</p>
+    </div>
+    <p class="ny-keys" aria-hidden="true"><kbd>J</kbd><kbd>K</kbd> move · <kbd>O</kbd> open · <kbd>C</kbd> copy link · <kbd>E</kbd> done · <kbd>U</kbd> undo · <kbd>Esc</kbd> back</p>
+  </section>
   <section id="empty" class="empty" aria-labelledby="empty-title" hidden>
     <img class="keeper" alt="" />
     <h2 id="empty-title" tabindex="-1">All quiet.</h2>
@@ -77,6 +104,18 @@
       <button type="button" id="clear-ended" class="link" hidden></button>
     </div>
     <span id="clear-note" role="status"></span>
+  </section>
+  <section id="queue-file" class="queue-file" aria-labelledby="queue-file-title" hidden>
+    <details class="qf-fold">
+      <summary class="qf-head">
+        <h2 id="queue-file-title">Fleet queue</h2>
+        <span class="list-path"></span>
+        <span class="list-kept" hidden></span>
+      </summary>
+      <div class="queue-content"></div>
+    </details>
+    <p class="list-problem" role="status" hidden></p>
+    <p class="queue-live visually-hidden" role="status"></p>
   </section>
   </main>
   <p id="live" class="visually-hidden" aria-live="polite"></p>
@@ -112,45 +151,6 @@
   </dialog>
   <button type="button" id="ledger-tab" class="ledger-tab" aria-label="Open Ledger" aria-controls="ledger" aria-expanded="false" title="Open Ledger" hidden>Ledger</button>
 
-  <dialog id="queue" class="queue" aria-label="Needs you and Queue">
-    <div class="queue-resize" role="separator" aria-orientation="vertical" aria-label="Queue panel width" aria-controls="queue" tabindex="0"></div>
-    <div class="queue-body">
-      <header class="queue-head">
-        <div>
-          <h2 id="queue-title" tabindex="-1">Needs you</h2>
-          <p class="list-path"></p>
-          <p class="list-kept" hidden></p>
-        </div>
-        <div class="queue-tools">
-          <div class="queue-text" role="group" aria-label="Text size">
-            <button type="button" class="queue-smaller" aria-label="Smaller text" title="Smaller text (Ctrl+-)">A&minus;</button>
-            <button type="button" class="queue-reset" title="Reset text size (Ctrl+0)">100%</button>
-            <button type="button" class="queue-larger" aria-label="Larger text" title="Larger text (Ctrl+=)">A+</button>
-          </div>
-          <button type="button" class="queue-full" aria-pressed="false" aria-label="Full screen" title="Full screen (Esc to leave)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg></button>
-          <button type="button" class="queue-close">Close</button>
-        </div>
-      </header>
-      <div class="lists">
-        <section id="needs-list" class="list list-needs" aria-labelledby="queue-title">
-          <p class="list-problem" role="status" hidden></p>
-          <div class="list-scroll"><div class="queue-content"></div></div>
-        </section>
-        <div class="lists-split" role="separator" aria-orientation="horizontal" aria-label="Split between Needs you and Queue" aria-controls="needs-list queue-list" tabindex="0" title="Drag, or use the arrow keys; double-click to reset"></div>
-        <section id="queue-list" class="list list-queue" aria-labelledby="queue-list-title">
-          <header class="list-head">
-            <h2 id="queue-list-title" tabindex="-1">Queue</h2>
-            <p class="list-path"></p>
-            <p class="list-kept" hidden></p>
-          </header>
-          <p class="list-problem" role="status" hidden></p>
-          <div class="list-scroll"><div class="queue-content"></div></div>
-        </section>
-      </div>
-      <p class="queue-live visually-hidden" role="status"></p>
-    </div>
-  </dialog>
-  <button type="button" id="queue-tab" class="queue-tab" aria-label="Open Queue" aria-controls="queue" aria-expanded="false" aria-keyshortcuts="Control+Alt+B" title="Open Queue (Ctrl+Alt+B)" hidden>Queue</button>
 
   <div id="session-menu" class="session-menu" role="menu" hidden>
     <button type="button" role="menuitem" tabindex="-1" data-act="interrupt">Interrupt</button>
@@ -201,7 +201,7 @@
         <span class="also-more" role="img" hidden></span>
         <p class="crew-line" hidden><span class="count"></span><span class="delegate" hidden></span><span class="free" hidden>prompt free</span></p>
       </div>
-      <p class="ask" hidden><span class="mark"></span><span class="text"><span class="ask-lead"></span><span class="ask-keep"></span></span></p>
+      <p class="ask" hidden><span class="mark"></span><span class="text"><span class="ask-lead"></span><span class="ask-keep"></span></span><button type="button" class="to-needs" hidden>In Needs you</button></p>
       <div class="said">
         <p class="prompt"></p>
         <div class="reply-line">
@@ -277,5 +277,10 @@
     <ul class="health-checks"></ul>
     <p class="health-note"></p>
   </section>
+  <div id="room-toast" class="room-toast" role="status" aria-live="polite" hidden></div>
+  <nav id="phone-tabs" class="phone-tabs" aria-label="Views">
+    <button type="button" data-view="needs" aria-pressed="false"><span class="pt-name">Needs you</span> <span class="pt-count">0</span></button>
+    <button type="button" data-view="agents" aria-pressed="true"><span class="pt-name">Agents</span> <span class="pt-count">0</span></button>
+  </nav>
 </body>
 </html>

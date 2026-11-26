@@ -133,7 +133,7 @@ def busy(fleet):
 
 
 # Each card's Full text: whether it shows, and what the card cuts short.
-FULL_TEXT = """() => [...document.getElementById('wall').children].map((c) => {
+FULL_TEXT = """() => [...document.querySelectorAll('#wall > .card')].map((c) => {
   const shown = (el) => el.checkVisibility();
   const cut = [...c.querySelectorAll('.task, .repo, .branch span, .ask .ask-lead, .ask .ask-keep, .said p, .wrapup')]
     .filter((el) => shown(el) && (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight))
@@ -238,7 +238,7 @@ def hold_stream(addr):
 
 LAYOUT = """() => {
   const wall = document.getElementById('wall');
-  const cards = [...wall.children];
+  const cards = [...wall.querySelectorAll(':scope > .card')];
   const r = (el) => el.getBoundingClientRect();
   const shown = (el) => el.checkVisibility() && r(el).width > 0 && r(el).height > 0;
   const controls = [...document.querySelectorAll('a[href], button, input, [role=menuitem]')].filter(shown);
@@ -349,7 +349,7 @@ def main() -> int:
                 ctx.route("https://claude.ai/**", lambda route: (opened.append(route.request.url), route.fulfill(status=200, body="claude"))[1])
                 page = ctx.new_page()
                 page.goto(f"http://{addr}/")
-                shown = wait_until(page, "document.getElementById('wall').children.length === 16", 15)
+                shown = wait_until(page, "document.querySelectorAll('#wall > .card').length === 16", 15)
                 run.check(shown, "sixteen cards arrive over the stream", shown)
                 page.wait_for_timeout(400)
                 s = page.evaluate(LAYOUT)
@@ -557,7 +557,7 @@ def main() -> int:
                   obs.disconnect();
                 }).observe(document, { childList: true, subtree: true });""")
                 fresh.goto(f"http://{addr}/")
-                wait_until(fresh, "document.getElementById('wall').children.length === 16", 15)
+                wait_until(fresh, "document.querySelectorAll('#wall > .card').length === 16", 15)
                 first = fresh.evaluate("window.__first")
                 ch = THEMES["dicebear"]["characters"].get(voices.get(first["key"])) if first else None
                 run.check(bool(ch) and first["name"] == ch["name"] and first["face"].startswith("fleet/faces/dicebear/"), "a phone opened in DiceBear paints its first card in DiceBear", first)
@@ -573,13 +573,13 @@ def main() -> int:
                 stuck.route("**/fleet/themes/dicebear.json", lambda r: held.append(r))
                 t0 = time.monotonic()
                 stuck.goto(f"http://{addr}/")
-                shown = wait_until(stuck, "document.getElementById('wall').children.length === 16", wait_ms / 1000 + 4)
+                shown = wait_until(stuck, "document.querySelectorAll('#wall > .card').length === 16", wait_ms / 1000 + 4)
                 took = time.monotonic() - t0
                 face = stuck.evaluate("document.querySelector('#wall .card .face')?.getAttribute('src') ?? ''")
                 run.check(shown and held and took < wait_ms / 1000 + 2.5 and face.startswith("fleet/faces/kourai/"), f"a theme file that never answers: the phone paints in {took:.1f} s, in Kourai", [shown, took, face])
                 snapshot_file(snapshot, lambda f: f["sessions"].pop())
-                later = wait_until(stuck, "document.getElementById('wall').children.length === 15", 2)
-                run.check(later, "and a later snapshot is not held behind the theme's file", stuck.evaluate("document.getElementById('wall').children.length"))
+                later = wait_until(stuck, "document.querySelectorAll('#wall > .card').length === 15", 2)
+                run.check(later, "and a later snapshot is not held behind the theme's file", stuck.evaluate("document.querySelectorAll('#wall > .card').length"))
                 for r in held:
                     r.continue_()
                 turned = wait_until(stuck, "(document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/dicebear/')", 5)
@@ -592,7 +592,7 @@ def main() -> int:
                 once_ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=3, is_mobile=True, has_touch=True, service_workers="block")
                 once = once_ctx.new_page()
                 once.goto(f"http://{addr}/")
-                wait_until(once, "document.getElementById('wall').children.length === 16 && (document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/kourai/')", 10)
+                wait_until(once, "document.querySelectorAll('#wall > .card').length === 16 && (document.querySelector('#wall .card .face')?.getAttribute('src') || '').startsWith('fleet/faces/kourai/')", 10)
                 once.evaluate("""() => {
                   window.__paints = 0;
                   const name = document.querySelector('#wall .card .name');
@@ -606,7 +606,7 @@ def main() -> int:
                 run.check(paints == 1, "a switch to a theme not loaded yet paints the cards once", paints)
                 once_ctx.close()
                 snapshot_file(snapshot, one_more_needs)
-                wait_until(page, "document.getElementById('wall').children.length === 16", 10)
+                wait_until(page, "document.querySelectorAll('#wall > .card').length === 16", 10)
                 page.bring_to_front()
                 (klepsydra / "prefs.json.tmp").write_text(json.dumps({"theme": "kourai"}))
                 (klepsydra / "prefs.json.tmp").replace(klepsydra / "prefs.json")
@@ -618,10 +618,10 @@ def main() -> int:
                 snapshot_file(snapshot, malformed)
                 page.wait_for_timeout(600)
                 snapshot_file(snapshot, lambda f: (one_more_needs(f), f["sessions"].pop()))
-                back = wait_until(page, "document.getElementById('wall').children.length === 15", 10)
-                run.check(back, "a snapshot that cannot be shown is passed over, and the next paints", page.evaluate("document.getElementById('wall').children.length"))
+                back = wait_until(page, "document.querySelectorAll('#wall > .card').length === 15", 10)
+                run.check(back, "a snapshot that cannot be shown is passed over, and the next paints", page.evaluate("document.querySelectorAll('#wall > .card').length"))
                 snapshot_file(snapshot, one_more_needs)
-                wait_until(page, "document.getElementById('wall').children.length === 16", 10)
+                wait_until(page, "document.querySelectorAll('#wall > .card').length === 16", 10)
 
                 # A new reading arrives over the stream; one three hours old says so.
                 write_reading(klepsydra, PERSONAL, "Personal", {"five_hour": (91, 8 * 60 + 50), "seven_day": (27, (6 * 24 + 6) * 3600 + 1800)})
@@ -708,7 +708,7 @@ def main() -> int:
                 tablet = wide.new_page()
                 tablet.emulate_media(color_scheme="dark")
                 tablet.goto(f"http://{addr}/")
-                wait_until(tablet, "document.getElementById('wall').children.length === 2", 15)
+                wait_until(tablet, "document.querySelectorAll('#wall > .card').length === 2", 15)
                 tablet.wait_for_timeout(400)
                 cards = tablet.evaluate(FULL_TEXT)
                 density = tablet.evaluate("document.getElementById('wall').dataset.density")
@@ -744,12 +744,12 @@ def main() -> int:
                 page = browser.new_page(viewport={"width": 390, "height": 844})
                 page.goto(f"http://{addr}/")
                 wait_until(page, "!document.getElementById('link').hidden", 10)
-                refused = page.evaluate("document.getElementById('wall').children.length")
+                refused = page.evaluate("document.querySelectorAll('#wall > .card').length")
                 run.check(refused == 0, "a refused stream shows no wall", refused)
                 for h in held:
                     h.close()
-                wait_until(page, "document.getElementById('wall').children.length === 16", 60)
-                back = page.evaluate("[document.getElementById('wall').children.length, document.getElementById('link').hidden]")
+                wait_until(page, "document.querySelectorAll('#wall > .card').length === 16", 60)
+                back = page.evaluate("[document.querySelectorAll('#wall > .card').length, document.getElementById('link').hidden]")
                 run.check(back == [16, True], "the stream is opened again once a slot frees", back)
                 browser.close()
         finally:

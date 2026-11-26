@@ -23,8 +23,8 @@ Beside each chip sit the portraits of the sessions running on that account,
 one per Claude Code or Antigravity session. Click one to open the fleet wall: a card per session with its
 status, where it works and its last exchange, and buttons to jump to its
 terminal or end it. From the wall you can open the
-[ledger](#the-ledger) of tokens and blocked calls, read your to-do file in the
-[Queue panel](#queue-panel), [wrap up](#wrapping-up) every session before a
+[ledger](#the-ledger) of tokens and blocked calls, work your to-do list in
+[Needs you](#needs-you-and-agents), [wrap up](#wrapping-up) every session before a
 restart, [split](#split-mode) the screen with the fleet terminal (Windows),
 and follow the wall [from your phone](#fleet-on-your-phone).
 
@@ -452,7 +452,7 @@ monitor's taskbar, 220px in from the right. The menu also toggles "Compact"
 (below), "Ping" (Windows only; see Ping), "Start with Windows" ("Start at login"
 on Linux) and "Phone wall" (see Fleet on your phone). It holds the Characters
 and Voices submenus, "Choose queue file..." and "Choose Needs you file..." (see
-Queue panel), and Quit.
+Needs you and Agents), and Quit.
 Autostart is on by default; the icon may start in the notification-area
 overflow.
 
@@ -1277,99 +1277,29 @@ Code redacts third-party plugin and skill names, and MCP servers you
 configured, so the drawer labels those "third-party" and "custom". The
 drawer is local and reads only today's file.
 
-The drawer is a side panel built the same way as the [Queue panel](#queue-panel), and it
-behaves the same way. It docks on the right at 1200 px and wider and is a
-dialog when the window is narrower. It can be shut to a **Ledger** tab or
-filled to the whole window. It takes the same drags, the same separator keys
-and the same text size controls, and it remembers its own width, view and
-text size. Those are kept apart from the Queue's. A chip opens it docked on
+The drawer is a side panel (`src/fleet/sidepanel.js`). It docks on the right
+at 1200 px and wider and is a dialog when the window is narrower. It can be
+shut to a **Ledger** tab or filled to the whole window, and it remembers its
+width, view and text size. A chip opens it docked on
 that card's session, a chip pressed while it is open turns it to that
 session, and Close or Esc gives focus back to the chip, while the **Ledger**
 button that shuts it keeps the focus. While it is open, new snapshots from
 the fleet make it read the ledger again, at most once every 5 seconds.
 
-### Queue panel
-
-The **Queue** button beside **Ledger** shows two lists inside the wall, one
-over the other, in a side panel the Ledger shares (`src/fleet/sidepanel.js`):
-
-| List | File | Shows |
-|---|---|---|
-| **Needs you**, on top | `needs-you.md` beside the queue file | your to-do list: what the agents need from you |
-| **Queue**, below | `claude-queue.md` on your Desktop (the Desktop known folder, so a redirected Desktop is found too) | the agents' to-do list |
-
-Both are in view whenever the panel is open, each live, folded and scrolled on
-its own, so the asks waiting on you never scroll away behind the agents' plan,
-the way VS Code stacks views in its side bar. The bar between them moves the
-split: drag it, or focus it and use the Up and Down arrows (Page Up and Page
-Down for bigger steps, Home and End for the bounds); a double click puts it
-back at 40% for Needs you. The split stays between 15% and 85%, neither list
-drops below 120 px while the panel has room for both, and the split is
-remembered. The files stay the source of truth:
-agents and you keep editing them with any editor, and the panel only reads
-them.
-
-To read another file, pick it with the tray's **Choose queue file...** or
-**Choose Needs you file...**, or let a session own it: an orchestrator that
-keeps the queue runs
-
-```bash
-bash ~/.claude/klepsydra-fleet.sh queue set ~/fleet/queue.md --by "Hermes (orchestrator)"
-```
-
-and the panel names the file and says who keeps it ("Kept by Hermes
-(orchestrator)"), the way Claude Code's own to-do list is Claude's to edit and
-yours to read. `queue show` prints the current choice and `queue clear` goes
-back to the default. Both write `queue.json` in klepsydra's data folder (under
-WSL the path goes across as a Windows one), the newest choice wins, and it
-applies within five seconds. `--by` takes a name of 1 to 80 characters,
-always shown as typed. Without `--by`, from a session keryx holds a voice
-for, the hook names the keeper itself (the voice's character in the theme
-worn, "kept by Hephaestus"), and the panel renames it when the theme
-changes. `needs set`, `needs show` and `needs clear` do the same for the
-Needs you list, in `needs.json`; without one, the Needs you list reads
-`needs-you.md` in the queue file's folder, so pointing the queue at a folder
-of lists sets both. A Needs you file that is the queue file itself is not
-shown twice: the Needs you list says so and names the two commands that fix
-it. A
-file kept inside WSL (`\\wsl.localhost\...`) sends Windows no change
-notices, so its edits show on the five-second re-read rather than at once;
-one on a Windows drive (`/mnt/c/...`) shows within a second or two. An older `queue_path` in `prefs.json` still
-works when there is no `queue.json`.
-
-<p align="center">
-  <img src="assets/queue-panel.png" alt="The Queue panel as it docks beside the wall: text size and full-screen buttons, then the file's title and intro, a Needs you section open with numbered asks, two code blocks each with a Copy button, links with Copy link buttons, a done ask in quieter text, and folded Running now, Queued and Answers sections" width="360">
-</p>
-
-- **Live.** klepsydra watches the file's folder and re-reads the file a
-  quarter second after a burst of writes ends (at most a second after the
-  first), and every five seconds besides, so an agent's edit shows within a
-  second or two.
 - **Shut, docked or full.** At 1200 px wide and more the panel docks on the
   right and the cards make room; narrower, it opens as a dialog over the
-  wall, as the Ledger does. Drag its left edge, or focus that edge and use the
+  wall. Drag its left edge, or focus that edge and use the
   arrow keys (Home and End for the narrowest and widest), to resize it.
   Drag the edge right past half the narrowest width (160 px from the window's
   edge) and the panel snaps shut; drag it left to within 350 px of the
   window's left edge (half the 700 px it leaves the cards) and it fills the
   window. Either snap shows while you hold the drag, and dragging back over
   the line undoes it, as VS Code's panels and macOS split views do.
-- **The tab.** Shut, the panel leaves a small **Queue** tab at the middle of
-  the right edge, in the wall's margin. Click it, or press **Ctrl+Alt+B**
-  anywhere (the shortcut VS Code uses for its right-hand side bar), to open
-  the panel again at its last width; Ctrl+Alt+B shuts it too. **Close**, Esc
-  and the **Queue** button shut it to the tab as well. Below 1200 px there
-  is no margin to spare, so a shut panel shows no tab and the **Queue**
-  button opens it.
-- **One panel at a time.** The Queue and the Ledger share the right edge.
-  Opening one, docked or full, shuts the other, the way Chrome's side panel
-  and VS Code's side bar show one view at a time. While both are shut their
-  tabs sit one above the other, Ledger over Queue, so either is one click
-  away. While one is open neither tab shows, and the header buttons switch
-  between them. Each panel keeps its own width, view and text size
-  (`klepsydra.queue.*` and `klepsydra.ledger.*` in the page's storage).
-  Ctrl+Alt+B opens the Queue over an open Ledger, docked, full or a dialog,
-  and shuts the Ledger. The Ledger has no shortcut of its own.
+- **The tab.** Shut, the panel leaves a small **Ledger** tab at the middle of
+  the right edge, in the wall's margin. Click it to open
+  the panel again at its last width. **Close**, Esc and the **Ledger** button
+  shut it to the tab as well. Below 1200 px there is no margin to spare, so a
+  shut panel shows no tab and the **Ledger** button opens it.
 - **Full screen.** The **Full screen** button in the panel's header (beside
   Close) fills the window, keeping the text-size controls; Esc, the same
   button, or a drag of the left edge back to the right returns it to docked.
@@ -1389,26 +1319,89 @@ works when there is no `queue.json`.
   resets, and Ctrl with the mouse wheel over the panel steps it a notch at a
   time. Only the panel's text changes, never the cards, and the size is
   remembered.
-- **The header count.** The button reads "Queue · 3 for you": the Needs you
-  file's open asks (the items in its "Needs you" section, or in its lists when
-  it has no such section; none for a file with no list), less those marked ✅.
-  While no Needs you file can be shown, a queue file's own "Needs you" section
-  is counted, as before the two lists. It names the files' asks, not the
-  sessions the tally counts as needing you.
-- **Reading aids.** Each `##` section folds, with Needs you open. Lines
-  starting with ✅ read quieter, as done; 📋 lines carry a pending mark.
-  Every code block has a **Copy** button.
-- **Text only.** The file is parsed with a pinned copy of markdown-it and
-  built into the page as text. Raw HTML shows as text. A link shows its text,
-  with the address on hover and a **Copy link** button: klepsydra starts no
-  program but the launcher, so it does not open links itself. Only `https:`,
-  `http:` and `mailto:` links get the button; any other link is plain text.
-- **Empty until written.** A path with no file yet shows an empty queue
-  naming the path, not an error; it fills in when an agent writes the file.
+
+### Needs you and Agents
+
+The wall has two rooms. **Needs you** is what waits on you: sessions blocked
+on a question, then your own to-do file. **Agents** is what the fleet is
+doing: the session cards, with the queue file folded below them. Each has a
+pill in the header, **Needs you · N** (amber while N is above zero, bronze at
+zero) and **Agents · M working**. Press **N** or **A** to switch, **Esc** to
+go back to Agents. On a phone-width window the pills become two tabs at the
+bottom.
+
+| Room | Shows | From |
+|---|---|---|
+| **Needs you** | blocked sessions first, then the file's sections in order (Today, Coming up, When convenient) | the fleet snapshot and `needs-you.md` beside the queue file |
+| **Agents** | the cards in status lanes, then the queue file, its Running now section open | the fleet snapshot and `claude-queue.md` on your Desktop |
+
+N counts the open asks (top-level 📋 items; done ✅ items and nested steps
+never count) plus the blocked sessions. The pill, the phone tab, the room's
+subtitle and its list all come from one reading of the file, so they always
+agree. The tally above the cards says **blocked** for sessions waiting on an
+answer.
+
+**Working the list.** **J** and **K** move, **O** or **Enter** opens the
+item's first link, **C** copies it, **E** marks it done, and **U** undoes the
+last Done while its toast shows. A blocked session's row has **Answer**,
+which brings up its terminal as the card's **Open terminal** does, and
+**Show card**. A due chip shows the date an item names (a date in its title,
+such as "Thu 11-26"), amber when due today. When nothing is due today and no
+session is blocked, a line names the next dated item. On a phone, swipe an
+item right to mark it done.
+
+**Done writes the file.** The app removes the item's exact lines, nested
+steps included, and replaces the file atomically. It reads the file again
+just before the rename, so an agent's edit made in between is kept and the
+Done is applied to the new text. An item that changed since the wall read it
+is left alone, and the toast says so. Undo puts back only those lines, after
+the line that stood above them. Links open in your browser only when they are
+https and written in the file. The phone wall only reads, so it lists blocked
+sessions and points to the app for the to-do file.
+
+**Three layouts.** Settings (the gear) has **Needs you layout**, kept in
+`prefs.json`:
+
+| Layout | Needs you | Agents |
+|---|---|---|
+| **Two rooms** (default) | a full-page list, every row with its detail and links | lanes Blocked, Working, Finished, Idle |
+| **Inbox and Floor** | one line a row; the focused row opens to its detail | lanes Working, Needs you, Finished, Idle; a blocked card links to its row |
+| **Amber Door** | a panel a third of the screen wide over the dimmed wall, the focused ask large on top | the wall as it is |
+
+When a session blocks or finishes while you are in Needs you, a toast names
+it, and **Enter** shows its card. The view never switches itself, except in
+Amber Door, which opens its panel on a newly blocked session once, and never
+while you are typing or a dialog is open.
+
+**Which files.** Pick other files with the tray's **Choose queue file...** and
+**Choose Needs you file...**, or let a session own one: an orchestrator that
+keeps the queue runs
+
+```bash
+bash ~/.claude/klepsydra-fleet.sh queue set ~/fleet/queue.md --by "Hermes (orchestrator)"
+```
+
+and the queue file names who keeps it ("Kept by Hermes (orchestrator)").
+`queue show` prints the current choice and `queue clear` goes back to the
+default. Both write `queue.json` in klepsydra's data folder, the newest choice
+wins, and it applies within five seconds. `--by` takes a name of 1 to 80
+characters. Without `--by`, from a session keryx holds a voice for, the hook
+names the keeper itself in the theme worn. `needs set`, `needs show` and
+`needs clear` do the same for the Needs you file, in `needs.json`; without
+one, it is `needs-you.md` in the queue file's folder. A Needs you file that is
+the queue file itself is refused, naming the two commands that fix it.
+
+- **Live.** klepsydra watches each file's folder and re-reads it a quarter
+  second after a burst of writes ends, and every five seconds besides. A file
+  inside WSL (`\\wsl.localhost\...`) sends Windows no change notices, so its
+  edits show on the five-second re-read.
+- **Text only.** Both files are parsed with a pinned copy of markdown-it and
+  built into the page as text. Raw HTML shows as text, and only `https:`,
+  `http:` and `mailto:` links are offered (to open or copy); any other link is
+  plain text.
 - **One line when it cannot.** A folder, link or pipe at the path, a file
-  over 256 KB, or one that is not UTF-8 text is not read, and the panel says
-  which. So does a `queue.json` or `prefs.json` that cannot be read (rather
-  than falling back to the Desktop file), and a file that cannot be shown.
+  over 256 KB, or one that is not UTF-8 text is not read, and the room says
+  which. A path with no file yet is an empty list, not an error.
 
 ## How often it refreshes
 

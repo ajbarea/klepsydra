@@ -11,7 +11,8 @@ belong here.
 - description: a thin always-on-top bar showing how much of the Claude Code
   rate-limit windows has been used, fed by the `statusLine` hook rather than by
   any API call, plus the fleet wall: a card per Claude Code session (fed by the
-  fleet hook), the token ledger (a local OTLP receiver), the Queue panel,
+  fleet hook), the token ledger (a local OTLP receiver), the Needs you and
+  Agents rooms,
   wrap-up, split mode and a read-only phone wall
 - language: JavaScript (frontend, `src/`), Rust (shell, `src-tauri/`), Bash
   (the two hooks and the build scripts)
@@ -133,19 +134,25 @@ files belong to: the JS guards scan hooks and scripts too.
   through the boundary, and where the comfortable bar is taller), and a
   compact note covers no text; the empty state (no sessions, or only ended
   ones) fits both sizes, a long launch folder fits 420 px, and its buttons
-  send only launch_session and clear_session, each into its own note; the
-  Queue panel docks at 1920 and is a dialog at 945, resizes by keyboard,
-  renders as text only and follows its channel; each character theme
+  send only launch_session and clear_session, each into its own note; each character theme
   (Kourai, Professions, DiceBear) worn from the saved choice and switched
   live from the tray or the picker (names, faces and epithets change; cards,
   order, accents and focus do not; an unknown theme is Kourai), its keeper and
   every card's portrait loading, and its comfortable wall still fitting; one
   switch through all three with the Ledger docked and a portrait open
-  repaints cards, portrait, Ledger and keeper with no Ledger read, the Queue
-  renames its keeper, the picker saves once where it rests, and the picker
+  repaints cards, portrait, Ledger and keeper with no Ledger read, the picker
+  saves once where it rests, and the picker
   never makes the bar taller. Takes a few minutes. Needs
   Playwright's Chromium, or a Chrome at `$KLEPSYDRA_CHROME`; local only, not
   in CI.
+- `uv run -q --no-project --with playwright python -I scripts/test_rooms_browser.py`:
+  Needs you and Agents (#386) in layouts B, D and E at 1920 and 390, fed as
+  the app feeds them: one count everywhere, the blocked rows first, Answer's
+  jump, E / U writing and restoring the file's exact lines, the keys that must
+  do nothing (Ctrl+C, a held E, Enter after E, behind a dialog), the block
+  toast and Amber Door's auto-open, and the file's text staying text.
+  `--shots DIR` saves a screenshot per layout and width; `--needs FILE` shows
+  that file's shape with every word swapped. Local only.
 
 ### do_not_run (interactive / long-running / platform-bound)
 

@@ -217,12 +217,12 @@ def main():
         save(page.locator("#ledger").screenshot(), "ledger")
         page.close()
 
-        # The Queue panel, docked beside the wall.
+        # The Needs you room: blocked sessions, then the to-do file's sections.
         page = wall(browser, port, 1920, 1000, "demo=8", "comfortable")
-        page.click("#queue-open")
-        page.wait_for_selector("#queue .queue-content details")
+        page.keyboard.press("n")
+        page.wait_for_selector("#needs-room .ny-row")
         page.wait_for_timeout(SETTLE_MS)
-        save(page.locator("#queue").screenshot(), "queue-panel")
+        save(page.locator("#needs-room").screenshot(), "needs-you")
         page.close()
 
         # A wrap-up under way: each card says where its session stands.

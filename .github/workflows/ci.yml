@@ -109,6 +109,8 @@ jobs:
         run: bash scripts/test_build_windows.sh
       - name: Fleet suite split tests
         run: python3 -I scripts/test_split_fleet_suite.py
+      - name: Needs you scrub tests
+        run: python3 -I scripts/test_needs_scrub.py
       - name: Perf fixture tests
         run: python3 -I scripts/perf/test_fixture.py
       - name: CI watch tests
