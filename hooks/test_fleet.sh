@@ -1333,6 +1333,14 @@ fire user-prompt.json
 now=1792356500 fire stop.json '.background_tasks = [{id: "wf1", type: "workflow", status: "running", description: "review"}]'
 now=1792356540 fire notification-idle.json
 check "#416: a Claude workflow with no shell alive still runs: working, its task kept" "$(field '[.state, .reason, ([.background[] | .kind] | join(","))]')" '["working","background","task"]'
+# A live shell keeps a turn working only for agy, which lists no work of its
+# own: a Claude Stop with no task list and a Bash call alive reads done, as before.
+kids 901
+now=1792356550 fire stop.json '.background_tasks = []' # Stop's empty list ends the workflow
+fire user-prompt.json
+now=1792356560 fire stop.json 'del(.background_tasks)'
+check "#416: a Claude Stop with a live shell but no work listed is done" "$(field '[.state, .shells_live]')" '["done",1]'
+rm -rf -- "${work:?}/proc/500/task" # as before it: no children list
 # Stop's own list of running tasks is the truth.
 fire user-prompt.json
 now=1792356450 fire subagent-start.json
@@ -1701,6 +1709,7 @@ lblock() { sed -n '/^# --- lock dir/,/^# --- end lock dir ---$/p' "$1"; }
 check "lock dir block present" "$([[ -n "$(lblock "$hook")" ]] && echo yes)" "yes"
 check "lock dir block identical in the launcher" "$(lblock "$hook")" "$(lblock "$here/klepsydra-launch.sh")"
 check "lock dir block identical in the statusline" "$(lblock "$hook")" "$(lblock "$here/../statusline/klepsydra-statusline.sh")"
+check "lock dir block identical in the fleet scripts (#416)" "$(lblock "$hook")" "$(lblock "$here/../fleet/lib.sh")"
 # shellcheck disable=SC2016 # literal names, as the scripts spell them
 check "#517 B3, N3, N5: the hooks and statusline source nothing, read no XDG_RUNTIME_DIR and name no /tmp path" \
   "$(cat "$hook" "$here/klepsydra-launch.sh" "$here/../statusline/klepsydra-statusline.sh" | grep -v '^[[:space:]]*#' | grep -cE '^[[:space:]]*(\.|source)[[:space:]]+["$/~]|XDG_RUNTIME_DIR|runtime_dir|/tmp')" "0"
@@ -1708,9 +1717,9 @@ pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
 check "proc stat block present" "$([[ -n "$(pblock "$hook")" ]] && echo yes)" "yes"
 check "proc stat block identical in the launcher" "$(pblock "$hook")" "$(pblock "$here/klepsydra-launch.sh")"
 check "proc stat block identical in the fleet scripts (#416)" "$(pblock "$hook")" "$(pblock "$here/../fleet/lib.sh")"
-lblock() { sed -n '/^# --- live shells/,/^# --- end live shells ---$/p' "$1"; }
-check "live shells block present" "$([[ -n "$(lblock "$hook")" ]] && echo yes)" "yes"
-check "live shells block identical in the fleet scripts (#416)" "$(lblock "$hook")" "$(lblock "$here/../fleet/lib.sh")"
+sblock() { sed -n '/^# --- live shells/,/^# --- end live shells ---$/p' "$1"; }
+check "live shells block present" "$([[ -n "$(sblock "$hook")" ]] && echo yes)" "yes"
+check "live shells block identical in the fleet scripts (#416)" "$(sblock "$hook")" "$(sblock "$here/../fleet/lib.sh")"
 # shellcheck disable=SC2016 # a literal $PROC_ROOT, as the scripts spell it
 check "the launcher parses /proc only in the block (and the lock dir block's boot id and btime)" \
   "$(sed -e '/^# --- proc stat/,/^# --- end proc stat ---$/d' -e '/^# --- lock dir/,/^# --- end lock dir ---$/d' "$here/klepsydra-launch.sh" | grep -cE 'read -r -a stat|<"?(/proc|\$PROC_ROOT)/')" "0"

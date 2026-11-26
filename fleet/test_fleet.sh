@@ -451,10 +451,9 @@ echo "resume: agy heartbeat and task state (#416)"
 : >"$FLEET_LOG"
 AGY_SID=aaaaaaaa-4444-4111-8222-333333333333
 CLA_SID=bbbbbbbb-4444-4111-8222-333333333334
-arun=$work/agyrun aproc=$work/agyproc
-mkdir -p "$arun"
-# A private runtime folder: the service takes the hook's lock there, never the real one.
-aresume() { XDG_RUNTIME_DIR=$arun FLEET_PROC=$aproc resume "$1"; }
+aproc=$work/agyproc
+# The service takes the hook's lock in the suite's private state folder (KLEPSYDRA_STATE), never the real one.
+aresume() { FLEET_PROC=$aproc resume "$1"; }
 # A fake /proc: agy (pid 78910, start 4242) and the children listed after it,
 # each "pid:comm:state" (a bash child is a tool call, npm an MCP server).
 agytree() {
@@ -546,16 +545,35 @@ check "#416: an ask is never covered by a running call" "$(afield '[.state, .rea
 # a hook write made while it waited is kept (review 7).
 agyfile '.state = "done"'
 agytree 78911:bash:S
-lockf=$arun/klepsydra-fleet-$UID.lock
+lockf=$KLEPSYDRA_STATE/run-testhost-$(</proc/sys/kernel/random/boot_id)/klepsydra-fleet-$UID.lock
+mkdir -p -- "${lockf%/*}" && chmod 700 -- "${lockf%/*}"
 exec {hold}>>"$lockf"
 flock "$hold"
 aresume "$((noon + 280))" &
 rpid=$!
-# Wait until the service holds the lock file open (it is then waiting on it), 10 s at most.
+# Wait until the service holds the lock file open (it is then waiting on it),
+# 10 s at most. Only its own process tree is searched: a scan of every
+# process's fds on a busy host outlasts the service's 5 s wait on the lock.
+holds_lock() { # PID: PID or a process under it has $lockf open
+  local -a q=("$1")
+  local x c
+  local -a kids
+  while (( ${#q[@]} )); do
+    x=${q[0]} q=("${q[@]:1}")
+    for c in /proc/"$x"/fd/*; do [[ $(readlink -- "$c" 2>/dev/null) == "$lockf" ]] && return 0; done
+    for c in /proc/"$x"/task/*/children; do
+      kids=()
+      { read -r -a kids <"$c"; } 2>/dev/null
+      q+=("${kids[@]}")
+    done
+  done
+  return 1
+}
 for _ in $(seq 200); do
-  find /proc/[0-9]*/fd -maxdepth 1 -lname "$lockf" 2>/dev/null | grep -qv "^/proc/$$/" && break
+  holds_lock "$rpid" && break
   sleep 0.05
 done
+check "#416 review 7: the service waits on the hook's lock" "$(holds_lock "$rpid" && echo waiting)" waiting
 agyfile '.state = "done" | .name = "from-hook"'
 flock -u "$hold"
 exec {hold}>&-
@@ -563,9 +581,12 @@ wait "$rpid"
 check "#416 review 7: a hook write made while the service waited on the lock is kept" \
   "$(afield '[.name, .state, .shells_live]')" '["from-hook","working",1]'
 
+check "#416: agy's last screen is kept for the next start of the service" "$([[ -f $FLEET_STATE/screens/${p_agy//%/_} ]] && echo kept)" kept
 t kill-window -t "$p_agy"
 t kill-window -t "$p_cla"
-rm -rf -- "${aproc:?}" "${arun:?}"
+aresume "$((noon + 290))"
+check "#416: a closed pane's last screen is pruned" "$([[ -e $FLEET_STATE/screens/${p_agy//%/_} ]] && echo left || echo pruned)" pruned
+rm -rf -- "${aproc:?}"
 rm -f "$KLEPSYDRA_DIR/fleet/$AGY_SID.beat" "$KLEPSYDRA_DIR/fleet/$AGY_SID.json" \
       "$KLEPSYDRA_DIR/fleet/$CLA_SID.beat" "$KLEPSYDRA_DIR/fleet/$CLA_SID.json"
 

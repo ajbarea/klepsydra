@@ -824,28 +824,41 @@ mod tests {
             NOW - 300,
             NOW - 300
         );
-        let file =
-            crate::session::parse(&text, "cb9fa591-1514-44d1-a31c-eba4a7cb41ed", NOW - 300).unwrap();
+        let file = crate::session::parse(&text, "cb9fa591-1514-44d1-a31c-eba4a7cb41ed", NOW - 300)
+            .unwrap();
         let e = Entry {
             file,
             modified: NOW - 300,
             beat: None,
         };
         let v = view(&e, NOW).unwrap();
-        assert_eq!(v.status, Status::Working, "a live child is agy's crew, and no beat makes it silent");
+        assert_eq!(
+            v.status,
+            Status::Working,
+            "a live child is agy's crew, and no beat makes it silent"
+        );
         assert_eq!(v.background.shells, 1);
         let mut gone = e.clone();
         gone.file.shells_live = Some(0);
-        assert_eq!(view(&gone, NOW).unwrap().status, Status::Done, "the child ended: the turn is done");
+        assert_eq!(
+            view(&gone, NOW).unwrap().status,
+            Status::Done,
+            "the child ended: the turn is done"
+        );
     }
 
     #[test]
     fn a_claude_file_with_live_shells_but_no_entries_keeps_main_s_reading() {
-        let mut e = entry("a", State::Working, NOW - 300, NOW - 300);
+        // A fresh beat, so the crew decides and not the silence rule.
+        let mut e = entry("a", State::Working, NOW - 300, NOW - 5);
         e.file.reason = Some("background".into());
         e.file.shells_live = Some(1);
-        assert_eq!(view(&e, NOW).unwrap().status, Status::Done, "Claude names its shells; a count alone is no crew");
-        let mut d = entry("a", State::Done, NOW - 300, NOW - 300);
+        assert_eq!(
+            view(&e, NOW).unwrap().status,
+            Status::Done,
+            "Claude names its shells; a count alone is no crew"
+        );
+        let mut d = entry("a", State::Done, NOW - 300, NOW - 5);
         d.file.shells_live = Some(1);
         assert_eq!(view(&d, NOW).unwrap().status, Status::Done);
     }
@@ -856,12 +869,20 @@ mod tests {
         e.beat = Some((NOW - SILENT_AFTER - 10, None));
         e.modified = NOW - SILENT_AFTER - 10;
         assert_eq!(view(&agy(e.clone()), NOW).unwrap().status, Status::Done);
-        assert_eq!(view(&e, NOW).unwrap().status, Status::Silent, "a crashed Claude session reads silent, as on main");
+        assert_eq!(
+            view(&e, NOW).unwrap().status,
+            Status::Silent,
+            "a crashed Claude session reads silent, as on main"
+        );
 
         let mut w = agy(entry("a", State::Working, NOW - 300, NOW - 300));
         w.beat = Some((NOW - SILENT_AFTER - 10, None));
         w.modified = NOW - SILENT_AFTER - 10;
-        assert_eq!(view(&w, NOW).unwrap().status, Status::Silent, "a mid-turn agy whose screen froze goes silent");
+        assert_eq!(
+            view(&w, NOW).unwrap().status,
+            Status::Silent,
+            "a mid-turn agy whose screen froze goes silent"
+        );
     }
 
     #[test]
@@ -869,7 +890,11 @@ mod tests {
         let mut e = entry("a", State::Done, NOW - 300, NOW - 300);
         e.file.shells_live = Some(1);
         let v = view(&agy(e.clone()), NOW).unwrap();
-        assert_eq!((v.status, v.reason.as_deref()), (Status::Working, Some("background")));
+        assert_eq!(
+            (v.status, v.reason.as_deref()),
+            (Status::Working, Some("background"))
+        );
+        e.beat = Some((NOW - 5, None)); // a live Claude: its status line beats
         assert_eq!(view(&e, NOW).unwrap().status, Status::Done);
     }
 
@@ -881,8 +906,13 @@ mod tests {
         e.file.shells_live = Some(0);
         let v = view(&agy(e.clone()), NOW).unwrap();
         assert_eq!((v.status, v.background), (Status::Done, Crew::default()));
+        e.beat = Some((NOW - 5, None)); // a live Claude: its status line beats
         let c = view(&e, NOW).unwrap();
-        assert_eq!((c.status, c.background.tasks), (Status::Working, 1), "Claude's task list is its own word");
+        assert_eq!(
+            (c.status, c.background.tasks),
+            (Status::Working, 1),
+            "Claude's task list is its own word"
+        );
     }
 
     #[test]

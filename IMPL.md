@@ -1,34 +1,41 @@
 # IMPL: #416 agy cards read silent (PR #563, branch agy/silent-416-r2)
 
 Issue: https://github.com/ajbarea/klepsydra/issues/416. Supersedes #508.
+Opus redesign at the free-engine cap; spec: the 9 findings in
+https://github.com/ajbarea/klepsydra/pull/563#issuecomment-7173164692
 
 ## Slice
-Harness-neutral heartbeat from screen changes, and agy task state from the
-pane's live child processes (Heph's rules, 11-24): a live child means working,
-done only at an idle prompt with no live child, a listed task with no process
-is stale.
+agy has no status line and lists no background work, so the resume service
+gives it a heartbeat from screen progress and reads its tasks from the
+pane's live child shells. Claude's readings stay as on main.
 
-## Done
-- agy (rebuild of #508 r2): beat from screen diffs with spinners and timers
-  stripped, numeric names refused, live-child working / done / stale rules in
-  the resume service and `view.rs`.
-- Opus takeover at the free-engine cap (11-25): CI run 45577068501 failed the
-  live-child case because its fixture wrote to the real /proc. Pass 8 now
-  builds a private fake proc root passed only to its own pass, with a setup
-  check naming the path.
-- That fixture hid a real bug: `fleet/lib.sh` `proc_stat` read with
-  `read -d ''`, which returns 1 at EOF on every real stat file, so a zombie
-  child counted as a live task and the ancestor walk stopped at once. It now
-  reads like the hook's `proc_stat` (one line, at least 20 fields). A zombie
-  case goes red on the old reader and green on the new.
+## Done (11-26)
+- B1: `shells_live` is agy's crew in `view.rs` and in lib.sh's `turn_done`,
+  `turn_settled`, `pane_background` (shared `CREW_JQ`, `AGY_IDLE_JQ`); a Rust
+  test parses the exact JSON the service writes.
+- B2: the extglob squeeze is gone; `screen_progress` is one bash pass over
+  `SCR_PLAIN`'s lines. Real captures 2.6/3.2/5.0 KB: old 14.4/30.8/138.7 s,
+  new 7/6/9 ms; a 300x80 timing check in `fleet/test_forks_screen.sh`.
+- S3/S4: the no-child rule and the Done-not-Silent exemption are agy-only, in
+  the hook and `view.rs`; Claude cases on both sides.
+- S5: progress reads the plain screen less spinner, cue and usage lines;
+  seeded property test (60 redraws, 60 one-char edits) + real agy fixtures.
+- S6: only bash/zsh/bwrap children count; agy starts MCP servers as npm, uv
+  or node, so no cmdline match is needed.
+- S7: the service takes the hook's lock (lock_dir block shared with the
+  hooks since #517) and re-reads the file under it.
+- S8: agy rules run every pass; only the beat waits on a screen change.
+- S9: idle comes from `eng_state agy`.
+- The last progress per pane persists in `$FLEET_STATE/screens/` (a restart
+  never beats a frozen screen); closed panes' files are pruned.
 
 ## Verify
-- The #416 block alone (prelude + section, under the heavy lock): 11/11;
-  old `proc_stat`: the zombie case fails.
-- CI runs the whole fleet suite.
+- `bash fleet/test_forks_screen.sh`
+- `make test-fleet FLEET_SHARD=resume` (takes the heavy lock)
+- `flock -o /tmp/fleet-heavy.lock timeout 1500 bash hooks/test_fleet.sh`
+- `cd src-tauri && cargo test -p klepsydra-fleet view`
 
 ## Next
-1. 📋 Fresh Opus review of the whole PR against main, then merge.
-2. Follow-up: `live_shells` now lives in both `fleet/lib.sh` and
-   `hooks/klepsydra-fleet.sh`; one shared copy (as the session-rows block is
-   shared) belongs with the hooks-common work.
+1. 📋 Fresh Opus review rounds (elenchus medium) to clean, CI green, merge,
+   then `fleet install` (touches hooks and fleet scripts).
+2. Follow-up: one shared copy of `live_shells` with the hooks-common work.

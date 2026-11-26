@@ -78,17 +78,27 @@ load_state() {
 }
 
 save_state() {
-  local p tmp server
+  local p tmp server f
+  local -a panes=()
+  local -A alive=()
   server=$(t display-message -p '#{pid}' 2>/dev/null) || return 0
   tmp=$(mktemp "$STATE_FILE.XXXXXX") || return 0
+  mapfile -t panes < <(fleet_panes)
   {
     printf '#server %s\n' "$server"
-    for p in $(fleet_panes); do
+    for p in "${panes[@]}"; do
+      alive[$p]=1
       printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$p" "${due[$p]:-}" "${seen_on[$p]:-}" "${rc_on[$p]:-}" "${last[$p]:-}" \
         "$(printf '%s' "${note[$p]:-}" | base64 -w0)" "${move_failed[$p]:-}" "${move_tries[$p]:-}" "${fresh_failed[$p]:-}" "${asked[$p]:-}" "${held_said[$p]:-}" "${checkpointed[$p]:-}"
     done
   } >"$tmp"
   mv -f -- "$tmp" "$STATE_FILE"
+  # A closed pane's last screen goes with it.
+  for f in "$FLEET_STATE/screens/"_*; do
+    [[ -f $f && ! -L $f ]] || continue
+    p=${f##*/}
+    [[ -n ${alive[%${p#_}]:-} ]] || rm -f -- "$f"
+  done
 }
 
 clock() { printf '%s' "${FLEET_NOW:-$(date +%s)}"; }
@@ -574,7 +584,8 @@ done_move() { # PANE KIND RC NEW CTX
 # leaves the turn its own. `live` is live_shells' count; `st` is eng_state's word.
 agy_state() { # SID LIVE ST
   local f=$KLEPSYDRA_DIR/fleet/$1.json lk new tmp
-  { exec {lk}>>"${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock"; } 2>/dev/null || return 0
+  [[ -n ${LOCK_DIR:-} ]] || lock_dir || return 0
+  { exec {lk}>>"$LOCK_DIR/klepsydra-fleet-$UID.lock"; } 2>/dev/null || return 0
   if flock -w 5 "$lk" && [[ -f $f && ! -L $f ]]; then
     new=$(jq -c --argjson now "$NOW" --argjson live "$2" --arg st "$3" '
       select(.engine == "agy" and (.state == "working" or .state == "done"))
@@ -642,8 +653,14 @@ update_heartbeat() { # PANE SCREEN
     fi
   fi
   screen_progress "$s"
+  # The last progress seen survives a restart of the service (screens/<pane>),
+  # so a frozen screen never beats because the service started again.
+  local seen=$FLEET_STATE/screens/${p//%/_}
+  [[ ${screen_seen[$p]+set} ]] || { IFS= read -r -d '' "screen_seen[$p]" <"$seen"; } 2>/dev/null
   [[ ${screen_seen[$p]+set} && ${screen_seen[$p]} == "$PROGRESS" ]] && return 0
   screen_seen[$p]=$PROGRESS
+  [[ -d ${seen%/*} ]] || mkdir -p -- "${seen%/*}" 2>/dev/null
+  { printf '%s' "$PROGRESS" >"$seen"; } 2>/dev/null
   write_beat "$p" "$sid"
 }
 

@@ -73,7 +73,7 @@ prune_hourly() { # stamp prune dir now
 }
 # --- end prune helpers ---
 
-# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and statusline/klepsydra-statusline.sh ---
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
 # The folder for the locks and stamps every caller must share: one per host and
 # boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
 # used only while it and the folder above it are ours, not symlinks and the
