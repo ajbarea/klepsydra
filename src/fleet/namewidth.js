@@ -16,9 +16,9 @@ export const rangeWidth = () => {
 const nameText = (card) => card.querySelector(".name")?.textContent ?? "";
 
 /**
- * Sets --name-w on each card whose name's text, or `face` (what else sizes
- * its glyphs: the density, a font that loaded), changed since it was last
- * measured; `measured` (a WeakMap) remembers what each card was measured at.
+ * Sets --name-w on each card whose name's text, or `face` (how many fonts
+ * have loaded: the compact name's own font and size never change), changed
+ * since it was last measured; `measured` (a WeakMap) remembers what each card was measured at.
  * Reads every width before writing any, so the wall lays out once. A name
  * measured at 0 px is not drawn yet and waits for the next pass; a card with
  * no name has no floor. Returns how many cards it changed.

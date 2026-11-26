@@ -1640,9 +1640,12 @@ NARROW = """() => {
     const p = l.closest('.pill'), edge = r(p).right - parseFloat(getComputedStyle(p).paddingRight);
     return (w && w.checkVisibility() && w.textContent.trim() && r(w).width > 0.5) || edge - r(l).right > 1;
   }).map((c) => c.querySelector('.name').textContent);
-  // A pill's content stays inside its box: no label running on under Open terminal.
+  // A pill's content stays inside its padding box: no label running on under Open terminal.
+  const inner = (p) => { const b = r(p), st = getComputedStyle(p);
+    return { left: b.left + parseFloat(st.paddingLeft), right: b.right - parseFloat(st.paddingRight) }; };
   const pillSpill = cards.map((c) => c.querySelector('.pill')).filter((p) => p && p.checkVisibility()
-      && [...p.children].some((k) => k.checkVisibility() && r(k).width > 0 && (r(k).right > r(p).right + 0.5 || r(k).left < r(p).left - 0.5)))
+      && [...p.children].some((k) => k.checkVisibility() && r(k).width > 0
+        && (r(k).right > inner(p).right + 0.5 || r(k).left < inner(p).left - 0.5)))
     .map((p) => p.closest('.card').querySelector('.name').textContent);
   const calcRules = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules]; } catch { return []; } })
     .filter((rule) => rule.cssText.includes('calc-size(')).length;

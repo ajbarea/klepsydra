@@ -22,11 +22,15 @@ no comfortable block (the app never shows comfortable under 420 px).
   space left beside it, and no pill content outside its box. 57/57.
 - Mutants, each red: no shrink weight (12), rigid label (2), no floor (4),
   no measuring (4), the flex gap back (12).
-- Shots: fleet-briefing shots/2026-11-25/klepsydra-535-redesign-*.
+- Review round 1 (fresh Opus reader, 11-26): clean, all 4 earlier findings
+  closed. Its two Minors fixed: `pillSpill` compares to the pill's padding
+  edge (a rigid-label mutant now goes red at 880), and namewidth.js's `face`
+  comment says what wall.js passes (the fonts-loaded count).
+- Shots: fleet-briefing shots/2026-11-26/klepsydra-535-compact-*.
 
 ## Verify
 - `node --test src/fleet-namewidth.test.js`
 - `flock -o /tmp/fleet-heavy.lock timeout 1500 uv run -q --no-project --with playwright python -I scripts/test_wall_browser.py narrow_window_keeps_cards_inside`
 
 ## Next
-1. 📋 Fresh Opus review rounds (elenchus medium) to clean, CI green, merge.
+1. 📋 One verify pass on the Minor fixes, CI green, merge.
