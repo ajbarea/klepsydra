@@ -29,15 +29,25 @@ stage_filter() {
 END
 }
 
-# Refuses a Windows stage path the stop or a cd could misuse: the stage name
-# must be valid and be the path's last component, and a quote would end the
-# PowerShell string it is pasted into.
+# Accepts only a Windows stage path the stop and a cd can use safely: absolute
+# (a drive, or \\wsl.localhost\ or \\wsl$\), every part plain ASCII letters,
+# digits, space, dot, dash or underscore (no quote of any kind, no . or ..),
+# ending in the stage name. Anything else is refused, never stopped.
 check_stage_win() { # NAME WINPATH
-  local name=$1 win=${2%[\\/]}
-  if [[ ! $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ || $win == *"'"* || ${win##*[\\/]} != "$name" ]]; then
-    echo "build-windows: refusing Windows stage path '$2' for stage $name" >&2
-    return 2
-  fi
+  local LC_ALL=C name=$1 win=${2%[\\/]} rest part parts=()
+  local ok=1 part_re='^[A-Za-z0-9 ._-]+$'
+  [[ $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ ]] || ok=0
+  if [[ $win =~ ^[A-Za-z]:\\(.+)$ ]]; then rest=${BASH_REMATCH[1]}
+  elif [[ $win =~ ^\\\\wsl(\.localhost|\$)\\(.+)$ ]]; then rest=${BASH_REMATCH[2]}
+  else ok=0; fi
+  # shellcheck disable=SC2141 # the separator is the backslash itself
+  (( ok )) && IFS=$'\\' read -r -a parts <<<"$rest"
+  for part in "${parts[@]}"; do
+    [[ $part =~ $part_re && $part != . && $part != .. ]] || ok=0
+  done
+  (( ok && ${#parts[@]} )) && [[ ${parts[-1]} == "$name" ]] && return 0
+  echo "build-windows: refusing Windows stage path '$2' for stage $name" >&2
+  return 2
 }
 
 # Stops any Windows process whose command line targets this stage folder.
@@ -100,7 +110,7 @@ run_powershell() {
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 stage_name=${KLEPSYDRA_STAGE:-klepsydra-build}
-stage_root=${KLEPSYDRA_STAGE_ROOT:-/mnt/c/Users/$USER}
+stage_root=$(realpath -m -- "${KLEPSYDRA_STAGE_ROOT:-/mnt/c/Users/$USER}")
 stage="$stage_root/$stage_name"
 check_stage "$stage_name" "$stage" || exit 2
 
@@ -118,10 +128,12 @@ run_pid=""
 
 on_signal() {
   local sig=$1
-  if [[ -n $run_pid ]]; then
-    kill -TERM "$run_pid" 2>/dev/null || true
-    wait "$run_pid" 2>/dev/null || true
-  fi
+  # The run, and any job a signal caught before its pid was recorded.
+  local job
+  for job in $run_pid $(jobs -p); do
+    kill -TERM "$job" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
   if (( cleaned_up == 0 )); then
     cleaned_up=1
     stop_windows_stage_processes "$stage_name" "$stage_win"

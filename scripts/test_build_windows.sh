@@ -7,6 +7,29 @@ work=$(mktemp -d)
 # No case may reach the real stage or real Windows, even one that forgets its
 # own settings: every run of the build script defaults to these.
 export KLEPSYDRA_STAGE_ROOT="$work/stage_root" PATH="$work/bin:$PATH"
+# Timeout and cleanup tests with a fake powershell.exe (#560).
+mkdir -p "$work/bin"
+cat <<'EOF' > "$work/bin/powershell.exe"
+#!/usr/bin/env bash
+if [[ "$*" =~ Stop-Process ]]; then
+  echo "$*" >> "${PWSH_LOG:-/dev/null}"
+  exit 0
+fi
+if [[ -n "${PWSH_EXIT:-}" ]]; then
+  exit "$PWSH_EXIT"
+fi
+if [[ -n "${PWSH_IGNORE_TERM:-}" ]]; then
+  trap '' TERM
+fi
+if [[ -n "${PWSH_SLEEP:-}" ]]; then
+  exec sleep "$PWSH_SLEEP"
+fi
+EOF
+chmod +x "$work/bin/powershell.exe"
+# The stage's Windows path is derived by wslpath; this one names a fixed user.
+# shellcheck disable=SC2016 # the fake's own source: it expands when it runs
+printf '%s\n' '#!/usr/bin/env bash' 'printf "C:\\\\Users\\\\testuser\\\\%s\\n" "${2##*/}"' >"$work/bin/wslpath"
+chmod +x "$work/bin/wslpath"
 finished=0
 # An exit before the summary names the command that failed, so CI never ends
 # on a bare exit code (the build script it sources runs under set -e).
@@ -131,26 +154,6 @@ else
   echo "  skip stage_filter and stop_script in pwsh (no pwsh on PATH)"
 fi
 
-# Timeout and cleanup tests with a fake powershell.exe (#560).
-mkdir -p "$work/bin"
-cat <<'EOF' > "$work/bin/powershell.exe"
-#!/usr/bin/env bash
-if [[ "$*" =~ Stop-Process ]]; then
-  echo "$*" >> "${PWSH_LOG:-/dev/null}"
-  exit 0
-fi
-if [[ -n "${PWSH_EXIT:-}" ]]; then
-  exit "$PWSH_EXIT"
-fi
-if [[ -n "${PWSH_SLEEP:-}" ]]; then
-  exec sleep "$PWSH_SLEEP"
-fi
-EOF
-chmod +x "$work/bin/powershell.exe"
-# The stage's Windows path is derived by wslpath; this one names a fixed user.
-# shellcheck disable=SC2016 # the fake's own source: it expands when it runs
-printf '%s\n' '#!/usr/bin/env bash' 'printf "C:\\\\Users\\\\testuser\\\\%s\\n" "${2##*/}"' >"$work/bin/wslpath"
-chmod +x "$work/bin/wslpath"
 
 # A hung powershell is stopped at the time limit and reports the skip line.
 pwsh_hung_log="$work/pwsh_hung.log"
@@ -306,6 +309,37 @@ check "a derived stage path with a quote is refused" "$rc_q $("$work/qbin/wslpat
 # shellcheck disable=SC2016 # PowerShell source text, matched literally
 check "the stop never matches its own process" \
   "$(stop_script X 'C:\Users\x\klepsydra-build' | grep -cF '$_.ProcessId -ne $PID')" 1
+
+# Only an absolute path of plain parts ending in the stage name reaches the stop.
+# Windows PowerShell ends a '...' string at a curly quote too (U+2018, U+2019).
+rsq=$(printf '\342\200\231') lsq=$(printf '\342\200\230')
+# shellcheck disable=SC2016 # a literal $ in a path under test
+for bad in 'klepsydra-build' 'builds\klepsydra-build' '.\klepsydra-build' \
+  'C:\Users\x\..\klepsydra-build' "C:\\Users\\O${rsq}Brien\\klepsydra-build" "C:\\Users\\O${lsq}Brien\\klepsydra-build" \
+  'C:\Users\x"y\klepsydra-build' 'C:\Users\x$y\klepsydra-build' 'C:klepsydra-build' '\\server\share\klepsydra-build'; do
+  check "the stop refuses '$bad'" "$(refused klepsydra-build "$bad")" "2 0"
+done
+for good in 'D:\b\klepsydra-build' '\\wsl.localhost\Ubuntu-24.04\tmp\klepsydra-build' '\\wsl$\Ubuntu\tmp\klepsydra-build' 'C:\Users\a b\klepsydra-build'; do
+  check "the stop accepts '$good'" "$(refused klepsydra-build "$good")" "0 1"
+done
+# A relative stage root is made absolute before wslpath sees it.
+mkdir -p "$work/relbin"
+# shellcheck disable=SC2016 # the fake's own source: it expands when it runs
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$2" >>"$WSLPATH_LOG"; printf "%s\n" "${2##*/}"' >"$work/relbin/wslpath"
+chmod +x "$work/relbin/wslpath"
+rc_rel=0
+(cd "$work" && PATH="$work/relbin:$PATH" WSLPATH_LOG="$work/wslpath.log" KLEPSYDRA_STAGE_ROOT=. \
+  KLEPSYDRA_STAGE=klepsydra-build-test_rel timeout -k 2s 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1) || rc_rel=$?
+check "a relative stage root reaches wslpath absolute, and a relative Windows path is refused" \
+  "$rc_rel $(head -1 "$work/wslpath.log")" "2 $work/klepsydra-build-test_rel"
+# A run that ignores TERM is killed 10 s later and still reported as hung.
+rc_kill=0
+out_kill=$(
+  PWSH_IGNORE_TERM=1 PWSH_SLEEP=9999 FLEET_WINBUILD_TIMEOUT_S=1 PWSH_LOG="$work/pwsh_kill.log" \
+  KLEPSYDRA_STAGE=klepsydra-build-test_kill timeout -k 2s 30s bash "$here/build-windows.sh" --check 2>&1
+) || rc_kill=$?
+check "a run that ignores TERM is killed and reported hung" \
+  "$rc_kill $(grep -c 'hung after 1 min' <<<"$out_kill") $(grep -cF 'Stop-Process' "$work/pwsh_kill.log" 2>/dev/null || echo 0)" "1 1 1"
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 finished=1
