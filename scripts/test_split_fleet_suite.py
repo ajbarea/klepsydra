@@ -336,6 +336,42 @@ def main() -> None:
             "bash fleet/test_fleet.sh",
         )
 
+        # Only FLEET_SHARD= given to make picks a shard; one exported in the shell runs it all.
+        def make_n(*args: str, **env: str) -> str:
+            clean = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("FLEET_SHARD", "MAKEFLAGS")
+            }
+            return subprocess.run(
+                [
+                    "make",
+                    "-s",
+                    "-n",
+                    "-C",
+                    str(repo),
+                    "test-fleet",
+                    "FLEET_HEAVY_HELD=1",
+                    *args,
+                ],
+                capture_output=True,
+                text=True,
+                env={**clean, **env},
+            ).stdout.strip()
+
+        check(
+            "an exported FLEET_SHARD runs the whole suite",
+            make_n(FLEET_SHARD="misc"),
+            "bash fleet/test_fleet.sh",
+        )
+        check(
+            "make test-fleet FLEET_SHARD=misc runs the misc shard",
+            make_n("FLEET_SHARD=misc").endswith(
+                "exec bash fleet/tests/shards/misc.sh'"
+            ),
+            True,
+        )
+
     print(f"\n{'all passed' if not failures else f'{failures} failed'}")
     sys.exit(1 if failures else 0)
 

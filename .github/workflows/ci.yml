@@ -224,7 +224,7 @@ jobs:
           echo "full=$full" >>"$GITHUB_OUTPUT"
 
   # Every shard reports a status, run or not, so the gate never waits on a missing one.
-  # The shard's name is AREA, never SHARD: make reads SHARD from the environment.
+  # The shard's name is AREA, never FLEET_SHARD, so a make inside a shard never reads it.
   fleet-shard:
     name: Fleet shard (${{ matrix.shard }})
     needs: shards
