@@ -110,7 +110,8 @@ const DATES = [
   [/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?,?\s+(\d{1,2})-(\d{1,2})(?![\d-]|:\d)/g, (m) => [Number(m[1]), Number(m[2]), null]],
   // Alone, two digits each ("11-26", "01-05"), so a count range ("2-3 paragraphs", "rounds 1-10") is
   // no date; not glued to a word (r1-10), a time range (9:30-10:00), a number range (1.5-2), an
-  // issue (#12-3) or a range of units.
+  // issue (#12-3) or a range of units. A two-digit range ("pages 12-15") still reads as a date:
+  // the file writes dates this way, so the rare range is the price.
   [new RegExp(String.raw`(?<![\w#.-]|\d:)(\d{2})-(\d{2})(?![\d-]|:\d|${UNIT})`, "g"), (m) => [Number(m[1]), Number(m[2]), null]],
   // A month's name or its short form, capitalised: "Dec 6", "Sept. 9"; not "Decide 3" or "may 2".
   [

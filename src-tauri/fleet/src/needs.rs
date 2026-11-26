@@ -15,7 +15,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::bounded::{read_text, Refused};
+use crate::bounded::{read_text, without_bom, Refused, BOM};
 use crate::queue::MAX_BYTES;
 
 /// What Undo needs to put an item back: its lines, the line above them when
@@ -77,10 +77,14 @@ fn bare(line: &str) -> &str {
         .unwrap_or(line)
 }
 
-/// The block's lines as the wall sent them, less a final empty line.
+/// The block's lines as the wall sent them, less final lines of only spaces
+/// and tabs (the wall's own trim already took any other blank it knows).
 fn block_lines(block: &str) -> Vec<&str> {
     let mut v: Vec<&str> = lines(block).into_iter().map(bare).collect();
-    while v.last().is_some_and(|l| l.trim().is_empty()) {
+    while v
+        .last()
+        .is_some_and(|l| l.trim_matches([' ', '\t']).is_empty())
+    {
         v.pop();
     }
     v
@@ -230,7 +234,9 @@ fn why(r: &Refused) -> String {
 /// Read the file at `path`, edit it with `edit`, and put the result in its
 /// place atomically, checking just before the rename that nobody wrote it
 /// since the read; a changed file is edited afresh, up to `TRIES` times.
-/// `edit` returning the text unchanged writes nothing.
+/// `edit` returning the text unchanged writes nothing. `edit` sees, and this
+/// returns, the text as the wall reads it (no byte-order mark); a file that
+/// had one keeps it.
 pub fn rewrite<T>(
     path: &Path,
     edit: impl Fn(&str) -> Result<(String, T), String>,
@@ -245,10 +251,17 @@ pub fn rewrite<T>(
     let tmp = path.with_file_name(format!(".{name}.klepsydra-{nonce}.tmp"));
     for _ in 0..TRIES {
         let text = read_text(path, MAX_BYTES).map_err(|r| why(&r))?;
-        let (new, out) = edit(&text)?;
-        if new == text {
-            return Ok((out, text));
+        let shown = without_bom(&text);
+        let (new, out) = edit(shown)?;
+        if new == shown {
+            return Ok((out, new));
         }
+        let bom = if shown.len() < text.len() {
+            BOM.to_string()
+        } else {
+            String::new()
+        };
+        let bytes = format!("{bom}{new}");
         // A new file, never one already there: a link planted at the name is removed, not written through.
         match std::fs::remove_file(&tmp) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -266,7 +279,7 @@ pub fn rewrite<T>(
         }
         opts.open(&tmp)
             .and_then(|mut f| {
-                std::io::Write::write_all(&mut f, new.as_bytes())?;
+                std::io::Write::write_all(&mut f, bytes.as_bytes())?;
                 f.sync_all()
             })
             .map_err(|e| {
@@ -394,6 +407,14 @@ mod tests {
         }
         let (out, _) = done("- a\n-\n- b\n", "-", 1).unwrap();
         assert_eq!(out, "- a\n- b\n", "an empty item goes too");
+    }
+
+    #[test]
+    fn a_last_line_the_wall_kept_is_removed_with_the_item() {
+        // U+0085 is whitespace to Rust's trim, not to the wall's: the line is part of the item.
+        let text = "## Today\n- 📋 a\n\u{85}\n- 📋 b\n";
+        let (out, _) = done(text, "- 📋 a\n\u{85}", 1).unwrap();
+        assert_eq!(out, "## Today\n- 📋 b\n");
     }
 
     #[test]
@@ -637,6 +658,33 @@ mod tests {
         assert!(
             after.contains("added by an agent") && after.contains("**One:**"),
             "{after}"
+        );
+    }
+
+    #[test]
+    fn a_file_with_a_byte_order_mark_is_marked_done_and_keeps_it() {
+        let dir = Scratch::new("needs-bom");
+        let path = dir.0.join("needs-you.md");
+        let shown = "- 📋 a\n- 📋 b\n";
+        std::fs::write(&path, format!("\u{feff}{shown}")).unwrap();
+        // The wall reads the file as the queue view gives it: without the mark.
+        assert_eq!(
+            crate::queue::view_of(&Ok(path.clone()), crate::queue::List::Needs)
+                .text
+                .as_deref(),
+            Some(shown)
+        );
+        let d = mark_done(&path, shown, "- 📋 a", 0).unwrap();
+        assert_eq!(
+            d.text, "- 📋 b\n",
+            "Done answers with the text the wall reads"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "\u{feff}- 📋 b\n");
+        assert_eq!(undo_done(&path, &d.undo).unwrap(), shown);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("\u{feff}{shown}"),
+            "the item comes back after the mark, not before it"
         );
     }
 

@@ -280,11 +280,7 @@ pub fn view_of(path: &Result<PathBuf, String>, list: List) -> QueueView {
     };
     let mut missing = false;
     let (text, problem) = match read_text(path, MAX_BYTES) {
-        // A BOM is an editor's, not the list's.
-        Ok(t) => (
-            Some(t.strip_prefix('\u{feff}').unwrap_or(&t).to_owned()),
-            None,
-        ),
+        Ok(t) => (Some(crate::bounded::without_bom(&t).to_owned()), None),
         Err(why) => {
             missing = matches!(why, Refused::Missing);
             (None, Some(say(&why, list)))

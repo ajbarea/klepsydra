@@ -787,46 +787,27 @@ pub fn open_link(url: &str) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        use windows::core::{w, HSTRING, PCWSTR};
-        use windows::Win32::System::Com::{
-            CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        use windows::core::{w, HSTRING};
+        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+        use windows::Win32::UI::Shell::{
+            ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW,
         };
-        use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        /// Balances a CoInitializeEx that succeeded on this thread.
-        struct Com;
-        impl Drop for Com {
-            fn drop(&mut self) {
-                unsafe { CoUninitialize() };
-            }
-        }
-        // ShellExecute's remarks: some shell extensions need a single-threaded apartment.
-        // A pool thread already in another apartment keeps it (the call then fails and is not balanced).
-        let _com =
-            unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }
-                .is_ok()
-                .then_some(Com);
+        // ShellExecuteEx's remarks: some shell extensions need a single-threaded apartment.
+        let _com = crate::jump::Com::enter(COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         let file = HSTRING::from(url);
-        // SAFETY: both strings outlive the call; no window, parameters or folder.
-        let code = unsafe {
-            ShellExecuteW(
-                None,
-                w!("open"),
-                &file,
-                PCWSTR::null(),
-                PCWSTR::null(),
-                SW_SHOWNORMAL,
-            )
+        // NOASYNC: COM is left as soon as this returns, so the launch finishes first.
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
+            lpVerb: w!("open"),
+            lpFile: windows::core::PCWSTR(file.as_ptr()),
+            nShow: SW_SHOWNORMAL.0,
+            ..Default::default()
         };
-        // ShellExecute reports success as a value above 32.
-        if code.0 as isize > 32 {
-            Ok(())
-        } else {
-            Err(format!(
-                "Windows could not open the link (code {}).",
-                code.0 as isize
-            ))
-        }
+        // SAFETY: `info` and the strings it points at outlive the call.
+        unsafe { ShellExecuteExW(&mut info) }
+            .map_err(|e| format!("Windows could not open the link: {}", e.message()))
     }
     #[cfg(not(windows))]
     {

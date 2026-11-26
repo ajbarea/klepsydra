@@ -494,7 +494,7 @@ export function createRooms({
   function written(text) {
     if (typeof text !== "string") return;
     const { model, problem } = modelOf(text);
-    fileState = { ...fileState, text, problem: problem ?? fileState.problem };
+    fileState = { ...fileState, text, problem, calm: problem ? false : fileState.calm };
     needs = model;
   }
 

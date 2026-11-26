@@ -33,6 +33,15 @@ fn open(path: &Path) -> std::io::Result<File> {
     options.open(path)
 }
 
+/// A byte-order mark at the start of a text: an editor's (Windows PowerShell
+/// 5.1 writes one), not the text's.
+pub const BOM: char = '\u{feff}';
+
+/// `text` as its reader sees it: without a leading byte-order mark.
+pub fn without_bom(text: &str) -> &str {
+    text.strip_prefix(BOM).unwrap_or(text)
+}
+
 /// The text of the regular file at `path`, at most `max` bytes. The type is
 /// checked before opening, so a FIFO is never opened and a symlink never
 /// followed, and the open handle must be a regular file too. On Unix a

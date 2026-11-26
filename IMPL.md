@@ -16,9 +16,16 @@ found Should-fix items, now fixed:
 - Wall suite back to green (queue fold spacing, bar-right at the bar's foot), phone wall with
   no lanes, queue-file browser tests ported, problem line outside the fold, dead CSS gone.
 
+Round 3 (fresh Opus reader) found 3 Should-fix, fixed in 901d029: Rust no longer models where
+an item ends (JS sends `seen`, the file it rendered; Done edits only while the file is still
+that text), Undo of the first twin, an empty item no longer throws (room shows a problem line);
+minors: two-digit dates, COM before ShellExecuteW, temp file mode at create, 7-hash scrub;
+plus a lone-CR seam that swallowed a blank line.
+
 ## Next
-- Review round 3: fresh Opus reader on the diff + this list; stop at the first clean round.
-- Scrubbed shots per layout at 1920/390 to fleet-briefing shots/2026-11-25, README line.
+- Review round 4: fresh Opus reader on origin/main...HEAD + round 3 findings (running 11-26).
+- Retake shots per layout at 1920/390 on the final head (`test_rooms_browser.py --shots DIR
+  --needs <file>` scrubs it) into fleet-briefing shots/2026-11-25, README line exists.
 - PR body rewrite (live vs tested), push, CI (flakes #471, #573: rerun once), merge,
   fleet install, Windows build, one live 1920 shot.
 
