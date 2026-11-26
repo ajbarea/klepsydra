@@ -17,6 +17,10 @@ export FLEET_HOOK_DIR="$work/claude" # never the real ~/.claude
 # Never AJ's keryx: the resume service skips voices, and voices.sh finds no keryx
 # and reads a private keryx config, unless a case hands it a stub (#273).
 export FLEET_LIVE_CONF=0 FLEET_VOICES=0 FLEET_BROWSERS=0 FLEET_KERYX="$work/no-keryx" XDG_CONFIG_HOME="$work/xdg"
+# The hooks' lock folder is the suite's, and recover waits for no real user
+# manager unless a case says so (#517).
+printf 'testhost\n' >"$work/hostname"
+export KLEPSYDRA_STATE="$work/klepsydra-state" KLEPSYDRA_HOSTNAME="$work/hostname" FLEET_SYSTEMD_BOOTED="$work/no-systemd"
 real_keryx_config=${HOME}/.config/keryx/config.json
 real_keryx_sum=$(sha256sum "$real_keryx_config" 2>/dev/null | cut -d' ' -f1)
 # A copy as it was, so a change can be told apart from a toggle (#516).
@@ -798,13 +802,14 @@ printf 'Do the thing.\nThen the other thing.\n' >"$work/task.src"
 launch() { # NAME STATE-JSON: launch.sh with a fake claude starting from STATE
   printf '%s' "$2" >"$work/$1.json"; : >"$work/$1.log"
   FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="${LAUNCHER:-$work/launcher.sh}" FLEET_DIR="$work" \
-    FLEET_CLAUDE="python3 -I $fake $work/$1.json $work/$1.log" bash "$here/launch.sh" "$1" "$work/task.src" 2>/dev/null | head -1
+    FLEET_CLAUDE="python3 -I $fake $work/$1.json $work/$1.log" bash "$here/launch.sh" "$1" "${BRIEF:-$work/task.src}" 2>/dev/null | head -1
 }
 cp "$work/task.src" "$FLEET_STATE/task-agent1.src"
 out=$(launch agent1 '{"above":["Claude Code"]}')
-check "delivered: Remote Control settles first, then the brief goes in whole and a turn starts" \
-  "$(events agent1)" $'RC REQUESTED\nRC ON\nPASTE 36\nSUBMIT Do the thing.\\nThen the other thing.\\n'
+check "#315: Remote Control and the whole brief come on claude's command line; nothing is typed or pasted" \
+  "$(events agent1)" $'RC ARG agent1\nRC ON\nSUBMIT Do the thing.\\nThen the other thing.'
 check "reported started" "${out##* }" "brief=started"
+check "#315: Remote Control on, read from the transcript" "$(jq -r 'select(.target == "fleet::launch" and .name == "agent1") | .message' "$FLEET_LOG" | grep -c '^remote control on$')" "1"
 check "#216: it asks the launcher to open behind the window in view" "$(cat "$work/launcher-bg")" "1"
 sid=$(sed -E 's/.*session=([^ ]+).*/\1/' <<<"$out")
 check "registered with its session id and folder" "$(cut -f2,3,4,5 "$REGISTRY")" "agent1	$FLEET_STATE/task-agent1.src	$sid	$work"
@@ -829,6 +834,7 @@ echo 26237 >"$cgr/user.slice/user-1.slice/pids.max"
 # A systemd-run that records its arguments and runs the command after its options.
 cat >"$work/systemd-run" <<EOF
 #!/usr/bin/env bash
+[[ \$1 == --version ]] && { echo "systemd \${SDRUN_VERSION:-255} (255.4-1ubuntu8)"; exit 0; }
 printf '%s\n' "\$*" >>"$work/sdrun.calls"
 while [[ \$1 == --* || \$1 == -p ]]; do [[ \$1 == -p ]] && shift; shift; done
 exec "\$@"
@@ -846,18 +852,21 @@ t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 # #353: the scope in the workers' slice, kept when the kernel kills a job in it,
 # capped hard (no MemoryHigh: it freezes rather than kills); claude at OOM rank
 # 0, and every shell it starts ranked first through BASH_ENV.
-call=$(tail -1 "$work/sdrun.calls")
+call=$(<"$work/sdrun.calls")
 check "#353: a worker's scope sits in the workers' slice and outlives an OOM kill in it" \
   "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]* -p MemoryMax=[^ ]* -p MemorySwapMax=[^ ]*' <<<"$call")" "--slice=fleet-workers.slice -p OOMPolicy=continue -p MemoryMax=5G -p MemorySwapMax=1G"
 check "#353: no MemoryHigh on the scope" "$(grep -c MemoryHigh <<<"$call")" "0"
+check "#316 review: the scope is described by its name alone (the brief stays out of the journal), and \${VAR} in the brief is never expanded" \
+  "$(grep -c -- '--description=fleet scoped --expand-environment=no --slice=' <<<"$call")" "1"
 check "#353: claude starts at OOM rank 0, its shells ranked first by BASH_ENV" \
   "$(grep -c "fleet-oom env .*BASH_ENV=$here/oom-tool.sh KLEPSYDRA_AGENT=scoped" <<<"$call") $(grep -c 'echo 0 >/proc/self/oom_score_adj' <<<"$call")" "1 1"
 : >"$work/sdrun.calls"
-out=$(FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
+out=$(SDRUN_VERSION=249 FLEET_SETTINGS='' FLEET_SCOPE=1 FLEET_SYSTEMD_RUN="$work/systemd-run" FLEET_CGROUP_ROOT="$cgr" FLEET_CGROUP=$leaf FLEET_MIN_AVAIL_MB=0 \
   FLEET_LAUNCHER="$work/launcher.sh" FLEET_DIR="$work" FLEET_CLAUDE="python3 -I $fake $work/scoped.json $work/scoped.log" \
   bash "$here/launch.sh" heph "$work/task.src" 2>/dev/null | head -1)
 check "#353: the orchestrator's scope sits in the fleet's slice, beside the workers'" \
   "$(grep -o -- '--slice=[^ ]* -p OOMPolicy=[^ ]*' "$work/sdrun.calls")" "--slice=fleet.slice -p OOMPolicy=continue"
+check "#316 review: a systemd older than 254 gets no --expand-environment, which it lacks" "$(grep -c -- '--expand-environment' "$work/sdrun.calls")" "0"
 check "#353: and the launch logs which" "$(jq -r 'select(.message == "window opened" and .name == "heph") | .slice' "$FLEET_LOG")" "orchestrator"
 t kill-pane -t "$(sed -E 's/^pane=([^ ]+).*/\1/' <<<"$out")" 2>/dev/null
 # Placed by name, not by missing settings: a bare launch under another name is a worker.
@@ -920,18 +929,43 @@ rm -f "$KLEPSYDRA_DIR/picks.json"
 
 out=$(launch agent2 '{"above":["Claude Code"],"on_submit":"limit"}')
 check "blocked by a limit" "${out##* }" "brief=blocked-by-limit"
+out=$(launch agent2b '{"above":["Claude Code"],"on_submit":"limit","limit_delay":1.5}')
+check "#316 review 2: a limit that spins first, then writes its error record and banner, is still a limit" "${out##* }" "brief=blocked-by-limit"
+out=$(launch agent2c '{"above":["Claude Code"],"on_submit":"limit","limit_delay":0.4}')
+check "#316 review 3: and so is one that settles in 0.4 s, the usual time" "${out##* }" "brief=blocked-by-limit"
 
-out=$(launch agent3 '{"above":["Claude Code"],"on_submit":"none"}')
-check "not delivered when no turn ever starts" "${out##* }" "brief=NOT-DELIVERED"
-check "and the retries never sent Escape" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent3.log")" "0"
+out=$(FLEET_READY_WAIT=4 launch agent3 '{"above":["Claude Code"],"on_submit":"none","meta_first":true}')
+check "not delivered when no turn ever starts (a meta prompt record is not the brief)" "${out##* }" "brief=NOT-DELIVERED"
+check "and no key was sent to the pane" "$(grep -cE 'ESC|INTERRUPTED|^PASTE|RC REQUESTED' "$work/agent3.log")" "0"
+out=$(FLEET_TURN_WAIT=4 launch agent3b '{"above":["Claude Code"],"on_submit":"taken"}')
+check "#316 review: a brief taken but never answered is not delivered" "${out##* }" "brief=NOT-DELIVERED"
+out=$(cd "$work" && BRIEF=task.src launch agent3c '{"above":["Claude Code"]}')
+check "#316 review: a relative brief is read from where launch ran, not the pane's folder" "${out##* } $(grep -c '^SUBMIT Do the thing' "$work/agent3c.log")" "brief=started 1"
 
-out=$(launch agent4 '{"above":["Claude Code"],"rc":"on","rc_delay":6}')
-check "10-28 2c: a slow Remote Control menu is answered before the brief is pasted" "$(events agent4)" \
-  $'RC REQUESTED\nRC CONTINUE\nPASTE 36\nSUBMIT Do the thing.\\nThen the other thing.\\n'
-check "reported started" "${out##* }" "brief=started"
+: >"$FLEET_LOG"
+out=$(launch agent4 '{"above":["Claude Code"],"rc_delay":30}')
+check "#315: a Remote Control slow to come up never holds the brief" "${out##* } $(grep -c '^SUBMIT' "$work/agent4.log")" "brief=started 1"
+check "#315: and its absence is logged" "$(jq -r 'select(.name == "agent4") | .message' "$FLEET_LOG" | grep -c '^remote control not in the transcript$')" "1"
+printf -- '-p do this\n' >"$work/dash.src"
+check "#315: a brief claude would read as an option is refused" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" dash "$work/dash.src" >/dev/null 2>&1; echo $?)" "2"
+: >"$work/empty.src"
+check "#315: so is an empty one" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" empty "$work/empty.src" >/dev/null 2>&1; echo $?)" "2"
+printf ' \n\t\n' >"$work/blank.src"
+check "#316 review 3: a brief whose folder is missing is refused by its own name, logged, exit 2" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" nodir "$work/no/such/b.src" --model x 2>&1 >/dev/null | grep -c "^error: no brief at $work/no/such/b.src$"; echo $?) $(jq -r 'select(.message | startswith("launch refused: no brief")) | .name' "$FLEET_LOG" | tail -1)" "1
+2 nodir"
+check "#316 review 2: a refused brief is in the fleet log too" "$(jq -r 'select(.message | startswith("launch refused: a brief cannot start with -")) | .name' "$FLEET_LOG" | tail -1)" "dash"
+check "#316 review: and one of whitespace alone" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" blank "$work/blank.src" >/dev/null 2>&1; echo $?)" "2"
+head -c 120001 /dev/zero | tr '\0' x >"$work/big.src"
+check "#316 review: and one over the 120000 bytes a command line argument holds, with a reason (exit 2)" \
+  "$(FLEET_SCOPE=0 FLEET_MIN_AVAIL_MB=0 FLEET_LAUNCHER="$work/launcher.sh" bash "$here/launch.sh" big "$work/big.src" 2>&1 >/dev/null | grep -c '^error: .*over the 120000'; echo $?)" "1
+2"
 
 out=$(FLEET_START_WAIT=1 launch agent5 '{"above":["Claude Code"],"busy_delay":2}')
-check "a turn whose spinner shows late is never interrupted by a retry" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
+check "a turn whose spinner shows late is never interrupted" "$(grep -cE 'ESC|INTERRUPTED' "$work/agent5.log") ${out##* }" "0 brief=started"
 check "nor submitted twice" "$(grep -c '^SUBMIT' "$work/agent5.log")" "1"
 # The cause, with the screen mocked: the wait after Enter ends, the log line after it takes
 # long enough for the box to empty, and the second Enter must not be pressed on the old reading.
@@ -947,20 +981,15 @@ check "a box that emptied while the retry's log line ran gets no second Enter (t
 
 echo "launch.sh: a slow or stuck start (#187)"
 : >"$FLEET_LOG"
-out=$(launch agent6 '{"above":["Claude Code"],"enter_ignore":1}')
-check "#187: an Enter lost after the paste is pressed again, and the brief starts once" \
-  "${out##* } $(grep -c '^SUBMIT' "$work/agent6.log") $(grep -c 'lost after a paste' "$work/agent6.log")" "brief=started 1 1"
-check "the second press is logged" "$(jq -r 'select(.message | startswith("the brief is still in the prompt")) | .try' "$FLEET_LOG")" "1"
-: >"$FLEET_LOG"
 began=$SECONDS
 out=$(FLEET_LAUNCH_DEADLINE=8 launch agent7 '{"above":["Claude Code"],"stall":120}')
 check "#187: a session that takes no Enter fails within the launch's deadline, not 9 min later" \
   "${out##* } $(( SECONDS - began < 25 ))" "brief=NOT-DELIVERED 1"
-check "with no Escape sent, and Remote Control's unsent command backed out before the paste" \
-  "$(grep -cE 'ESC|INTERRUPTED' "$work/agent7.log") $(grep -c '^PASTE' "$work/agent7.log")" "0 1"
+check "with no key sent to the pane" \
+  "$(grep -cE 'ESC|INTERRUPTED|^PASTE|RC REQUESTED' "$work/agent7.log")" "0"
 check "each step is logged with its time" \
   "$(jq -r 'select(.target == "fleet::launch" and .took_s != null) | .message' "$FLEET_LOG" | tr '\n' '|')" \
-  "window opened|prompt showed|remote control did not settle before the brief|brief not delivered|"
+  "window opened|remote control on|brief not delivered|"
 cat >"$work/launcher-hold.sh" <<EOF
 #!/usr/bin/env bash
 tmux -L "\$KLEPSYDRA_TMUX_SOCKET" new-window -d -t fleet: -c "\$3" "\$KLEPSYDRA_CLAUDE"
@@ -1444,6 +1473,29 @@ check "#263: the resume loop line says what its last pass saw" "$(doctor | grep 
 printf '# 10-29 copy\n' >>"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "#244: a hook copy older than the checkout fails, and only it is named" \
   "$(doctor | grep '^FAIL installed copies')" "FAIL installed copies: make install-fleet: differ from $(tilde "$root"): klepsydra-fleet.sh"
+cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
+# #518: the lock folder, from the installed hook's own block.
+lkrun="$KLEPSYDRA_STATE/run-testhost-$(</proc/sys/kernel/random/boot_id)"
+check "#518: a lock folder the hooks can use is ok, and named" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"
+ln -s "$KLEPSYDRA_STATE" "$work/lk-link"
+check "#518: one they cannot use fails with the reason" "$(KLEPSYDRA_STATE="$work/lk-link" doctor | grep 'lock folder' | cut -d: -f1-2)" \
+  "FAIL lock folder: $(tilde "$work/lk-link") is a symlink"
+rm -f -- "$work/lk-link"
+lknow=$(date +%s)
+printf 'btime %s\n' $((lknow - 600)) >"$work/dproc/stat"
+printf '%s %s\n' $((lknow - 60)) "cannot make x: No space left on device" >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: a refusal the hook traced in the last hour is a warning, with its reason" \
+  "$(doctor | grep 'lock folder' | grep -c '^warn lock folder: the fleet hook could not lock at [0-9:]* (cannot make x: No space left on device), so it recorded no session then; it can now')" "1"
+printf '%s old\n' $((lknow - 900)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: one from before this boot is not" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+printf 'btime %s\n' $((lknow - 7200)) >"$work/dproc/stat"
+printf '%s old\n' $((lknow - 3700)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: nor one over an hour old" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+printf '%s future\n' $((lknow + 600)) >"$KLEPSYDRA_DIR/lock-refused"
+check "#518: nor one stamped in the future" "$(doctor | grep 'lock folder' | cut -c1-4)" "ok  "
+rm -f -- "$KLEPSYDRA_DIR/lock-refused" "$work/dproc/stat"
+printf '#!/usr/bin/env bash\n# an old hook with no lock folder of its own\n' >"$FLEET_HOOK_DIR/klepsydra-fleet.sh"
+check "#518: an installed hook with no lock_dir is checked with the checkout's" "$(doctor | grep 'lock folder')" "ok   lock folder: $(tilde "$lkrun")"
 cp "$root/hooks/klepsydra-fleet.sh" "$FLEET_HOOK_DIR/klepsydra-fleet.sh"
 check "the phone wall and its Tailscale twin answer" "$(grep -c '^ok   phone wall.*: answers at ' <<<"$out")" "2"
 check "#246: and the usage readings are fresh" "$(grep -c '^ok   usage readings: observed 3[0-9] s ago' <<<"$out")" "1"
@@ -2591,6 +2643,194 @@ check "#445: with nothing waiting it is ok" "$(doctor | grep -c '^ok  *done repo
 t kill-window -t "$h" 2>/dev/null; t kill-window -t "$w2" 2>/dev/null; t kill-window -t "$w3" 2>/dev/null
 t kill-window -t "$w4" 2>/dev/null; t kill-window -t "$w5" 2>/dev/null
 : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$KLEPSYDRA_DIR/fleet/$SID.json"
+
+echo "fleet done reports must reach the orchestrator (durable inbox: #367)"
+export FLEET_CLOSE_QUIET=1 FLEET_CLOSE_EXIT_WAIT=5
+printf '# Fleet queue\n\n## Running now\nChecked: Tue.\n\n- ✅ **other:** unchanged.\n\n## Next\n1. 📋 later\n' >"$FLEET_QUEUE_MD"
+rm -f "$DONE_REPORTS" "$FLEET_STATE/finished.tsv"
+: >"$REGISTRY"
+h367=$(pane hph367 '{"above":["idle"],"on_submit":"none"}')
+printf '%s\n' "$h367" >"$FLEET_STATE/orchestrator.pane"
+
+# 1. busy pane: orchestrator pane busy (AJ typing in box), fleet done cannot paste -> recorded in done-reports.tsv (mode 0600, result not-pasted, report in col 5)
+w_busy=$(dpane wrk_busy)
+t send-keys -t "$h367" -l "AJ: busy working"; settle
+out=$(fdone "$w_busy" "PR #301 open, CI green" 2>&1); rc=$?
+check "#367: fleet done into busy orchestrator pane reports not-pasted" \
+  "$rc $(tail -1 <<<"$out" | cut -c1-40)" "0 report: not-pasted; written to the queue"
+check "#367: undelivered report is written to done-reports.tsv (mode 0600, result not-pasted, col 5 report)" \
+  "$(stat -c %a "$DONE_REPORTS") $(awk -F'\t' '$2 == "wrk_busy" { print $4 "\t" $5 }' "$DONE_REPORTS")" \
+  "600 not-pasted	PR #301 open, CI green"
+check "#367: fleet inbox lists the unread report" \
+  "$(bash "$here/fleet" inbox | grep -c 'wrk_busy .*not-pasted.*: PR #301 open, CI green')" "1"
+check "#367: doctor flags the undelivered report" \
+  "$(doctor | grep '^warn  *done reports' | sed -E 's/.*not delivered to the orchestrator: ([^:]*):.*/\1/')" "wrk_busy (not-pasted)"
+
+# 2. limited pane: orchestrator pane at usage limit
+w_lim=$(dpane wrk_lim)
+t send-keys -t "$h367" C-u; settle
+state hph367 "{\"above\":[\"work\",\"$LIMIT\"],\"on_submit\":\"none\"}"; settle
+out=$(fdone "$w_lim" "PR #302 open" 2>&1); rc=$?
+check "#367: fleet done into limited orchestrator pane reports limited" \
+  "$rc $(tail -1 <<<"$out" | cut -c1-40)" "0 report: limited; written to the queue fi"
+check "#367: limited report written to done-reports.tsv" \
+  "$(awk -F'\t' '$2 == "wrk_lim" { print $4 "\t" $5 }' "$DONE_REPORTS")" "limited	PR #302 open"
+
+# 3. gone pane: orchestrator pane is gone / dead
+w_gone=$(dpane wrk_gone)
+rm -f "$FLEET_STATE/orchestrator.pane"
+out=$(fdone "$w_gone" "PR #303 open" 2>&1); rc=$?
+check "#367: fleet done with gone orchestrator pane reports no-orchestrator-pane" \
+  "$rc $(tail -1 <<<"$out" | cut -c1-48)" "0 report: no-orchestrator-pane; written to the que"
+check "#367: gone pane report written to done-reports.tsv" \
+  "$(awk -F'\t' '$2 == "wrk_gone" { print $4 }' "$DONE_REPORTS")" "no-orchestrator-pane"
+
+# Restore orchestrator.pane for subsequent tests
+printf '%s\n' "$h367" >"$FLEET_STATE/orchestrator.pane"
+state hph367 '{"above":["idle"],"on_submit":"none"}'; settle
+: >"$work/hph367.log"
+
+# 4. concurrent reports: six workers call fleet done concurrently while orchestrator cannot paste
+t send-keys -t "$h367" -l "AJ: typing again"; settle
+panes_c=()
+for n in 1 2 3 4 5 6; do
+  pw=$(dpane "wrk_c$n")
+  panes_c+=("$pw")
+  fdone "$pw" "concurrent report $n" >/dev/null 2>&1 &
+done
+wait
+check "#367: concurrent fleet done calls all land atomically in done-reports.tsv (mode 0600)" \
+  "$(stat -c %a "$DONE_REPORTS") $(awk -F'\t' '$2 ~ /^wrk_c[1-6]$/ && $4 == "not-pasted" { c++ } END { print c + 0 }' "$DONE_REPORTS")" "600 6"
+
+# 5. ack: fleet inbox ack acknowledges individual reports and --all
+check "#367: fleet inbox ack NAME acknowledges the report" \
+  "$(bash "$here/fleet" inbox ack wrk_busy)" "acknowledged: wrk_busy"
+check "#367: acked report has status acked in done-reports.tsv and no longer appears in unread list" \
+  "$(awk -F'\t' '$2 == "wrk_busy" { print $4 }' "$DONE_REPORTS") $(bash "$here/fleet" inbox | grep -c 'wrk_busy')" "acked 0"
+check "#367: fleet inbox ack unknown name fails with exit 1" \
+  "$(bash "$here/fleet" inbox ack wrk_busy >/dev/null 2>&1; echo $?)" "1"
+check "#367: fleet inbox ack --all acknowledges all remaining unread reports" \
+  "$(bash "$here/fleet" inbox ack --all | sed -E 's/[0-9]+/N/g')" "acknowledged: all (N reports)"
+check "#367: fleet inbox shows no unread reports" \
+  "$(bash "$here/fleet" inbox)" "no unread reports"
+check "#367: doctor reports ok once all reports are acked" \
+  "$(doctor | grep -c '^ok  *done reports')" "1"
+
+# 6. a later successful paste of a pending item marks the earlier row delivered, never leaving an unread warning
+t send-keys -t "$h367" -l "AJ: busy again"; settle
+w_ret=$(dpane wrk_ret)
+fdone "$w_ret" "PR #304 open" >/dev/null 2>&1
+check "#367: report waiting in inbox as unread" \
+  "$(bash "$here/fleet" inbox | grep -c 'wrk_ret')" "1"
+t send-keys -t "$h367" C-u; settle
+state hph367 '{"above":["idle"],"on_submit":"none"}'; settle
+: >"$work/hph367.log"
+out_ret=$(bash "$here/fleet" "done" wrk_ret "PR #304 open" 2>&1)
+check "#367: successful retry delivers report to orchestrator" \
+  "$(grep -c 'already finished: wrk_ret' <<<"$out_ret") $(grep -c 'report: sent' <<<"$out_ret") $(grep -c '^SUBMIT wrk_ret finished: PR #304 open$' "$work/hph367.log")" \
+  "1 1 1"
+check "#367: earlier undelivered row in done-reports.tsv is marked delivered; doctor is ok" \
+  "$(awk -F'\t' '$2 == "wrk_ret" && $4 != "sent" && $4 != "delivered" { c++ } END { print c + 0 }' "$DONE_REPORTS") $(doctor | grep -c '^ok  *done reports')" "0 1"
+bash "$here/fleet" "done" wrk_ret "PR #304 open" >/dev/null 2>&1
+check "#367: fleet inbox shows 0 unread reports after retry" \
+  "$(bash "$here/fleet" inbox)" "no unread reports"
+
+# 7. Finding 2: an acked report must not hide a newer pending one from the same agent (even in the same second)
+t send-keys -t "$h367" -l "AJ: busy again"; settle
+w_reup=$(dpane wrk_reup)
+fdone "$w_reup" "first report" >/dev/null 2>&1
+bash "$here/fleet" inbox ack wrk_reup >/dev/null 2>&1
+check "#367: first report is acked" \
+  "$(awk -F'\t' '$2 == "wrk_reup" { print $4 }' "$DONE_REPORTS")" "acked"
+check "#367: doctor reports ok with first report acked" \
+  "$(doctor | grep -c '^ok  *done reports')" "1"
+# Second report from same agent while orchestrator pane is still busy (runs within the same second)
+bash "$here/fleet" "done" wrk_reup "second report" >/dev/null 2>&1
+check "#367: second report appears as unread in fleet inbox" \
+  "$(bash "$here/fleet" inbox --json | jq -r 'select(.name == "wrk_reup") | .report')" "second report"
+check "#367: doctor flags the newer pending report despite earlier acked one" \
+  "$(doctor | grep '^warn  *done reports' | sed -E 's/.*not delivered to the orchestrator: ([^:]*):.*/\1/')" "wrk_reup (not-pasted)"
+bash "$here/fleet" inbox ack wrk_reup >/dev/null 2>&1
+check "#367: both reports are now acked and doctor is ok" \
+  "$(awk -F'\t' '$2 == "wrk_reup" { print $4 }' "$DONE_REPORTS" | sort -u) $(doctor | grep -c '^ok  *done reports')" "acked 1"
+
+# 8. Finding 3: fleet inbox deliver sends the whole multi-line report (and preserves backslashes/tabs)
+t send-keys -t "$h367" C-u; settle
+state hph367 '{"above":["idle"],"on_submit":"none"}'; settle
+: >"$work/hph367.log"
+w_ml=$(dpane wrk_ml)
+printf '%s\twrk_ml\t%s\t%s\t/w\t%s\t2026-11-02T20:00:00-05:00\n' "$w_ml" "$work/brief.src" "$SID" "$work/cfg-a" >>"$FLEET_STATE/finished.tsv"
+with_registry dr_append "$(date +%s)" wrk_ml "$w_ml" not-pasted $'line 1\nline 2\\nlit'
+check "#367: multi-line report in inbox preserves newlines and literal backslashes in JSON" \
+  "$(bash "$here/fleet" inbox --json | jq -r 'select(.name == "wrk_ml") | .report')" $'line 1\nline 2\\nlit'
+out_ml=$(bash "$here/fleet" inbox deliver wrk_ml 2>&1)
+check "#367: fleet inbox deliver succeeds for multi-line report" \
+  "$(grep -c 'delivered: wrk_ml (sent)' <<<"$out_ml")" "1"
+check "#367: whole multi-line report was submitted to orchestrator pane" \
+  "$(grep '^SUBMIT wrk_ml' "$work/hph367.log")" \
+  'SUBMIT wrk_ml finished: line 1\nline 2\nlit'
+
+# 9. Finding 4: done-reports.tsv is the single source of delivery state and prunes on fleet close
+check "#367: no second inbox.jsonl copy exists" \
+  "$(test -e "$FLEET_STATE/inbox.jsonl" && echo exists || echo single)" "single"
+check "#367: done-reports.tsv tracks delivered status in column 4 and report in column 5" \
+  "$(awk -F'\t' '$2 == "wrk_ml" { print $2 "\t" $4 "\t" $5 }' "$DONE_REPORTS")" \
+  'wrk_ml	sent	line 1\nline 2\\nlit'
+done_live "$w_ml"
+bash "$here/fleet" close wrk_ml >/dev/null 2>&1
+check "#367: fleet close prunes wrk_ml from done-reports.tsv and fleet inbox --all" \
+  "$(awk -F'\t' '$2 == "wrk_ml"' "$DONE_REPORTS" | wc -l) $(bash "$here/fleet" inbox --all --json | jq -s '[.[] | select(.name == "wrk_ml")] | length')" "0 0"
+
+# 10. 4-column row written by older fleet versions delivers pointing to queue file
+now_4col=$(date +%s)
+: >"$work/hph367.log"
+printf '%s\twrk_4col\t%%99\tnot-pasted\n' "$now_4col" >>"$DONE_REPORTS"
+out_4col=$(bash "$here/fleet" inbox deliver wrk_4col 2>&1)
+check "#367: 4-column row delivers message pointing to queue file" \
+  "$(grep -c 'delivered: wrk_4col (sent)' <<<"$out_4col") $(grep -c "^SUBMIT wrk_4col finished (see $FLEET_QUEUE_MD)$" "$work/hph367.log")" \
+  "1 1"
+check "#367: 4-column row marked sent in done-reports.tsv" \
+  "$(awk -F'\t' '$2 == "wrk_4col" { print $4 }' "$DONE_REPORTS")" "sent"
+
+# 11. failed paste keeps row pending
+t send-keys -t "$h367" -l "AJ: typing"; settle
+with_registry dr_append "$now_4col" wrk_fail %99 not-pasted "keep pending"
+rc_fail=0
+bash "$here/fleet" inbox deliver wrk_fail >/dev/null 2>&1 || rc_fail=$?
+check "#367: failed delivery to busy pane exits non-zero and keeps row status not-pasted" \
+  "$rc_fail $(awk -F'\t' '$2 == "wrk_fail" { print $4 }' "$DONE_REPORTS")" "1 not-pasted"
+t send-keys -t "$h367" C-u; settle
+
+# 12. same-second dr_set picks pending row over acked
+now_same=$(date +%s)
+with_registry dr_append "$now_same" wrk_same %99 acked "first"
+with_registry dr_append "$now_same" wrk_same %99 pending "second"
+with_registry dr_set "$now_same" wrk_same not-pasted
+check "#367: same-second dr_set updates pending row, leaving acked intact" \
+  "$(awk -F'\t' '$2 == "wrk_same" { printf "%s,", $4 }' "$DONE_REPORTS")" "acked,not-pasted,"
+
+# 13. concurrency lock on inbox ack --all
+now_conc=$(date +%s)
+for i in $(seq 1 20); do
+  ( with_registry dr_append "$now_conc" "ack_c$i" %99 not-pasted "rep $i" ) &
+  ( bash "$here/fleet" inbox ack --all >/dev/null 2>&1 ) &
+done
+wait
+check "#367: concurrent appends and inbox ack --all lose no rows" \
+  "$(awk -F'\t' '$2 ~ /^ack_c[0-9]+$/' "$DONE_REPORTS" | wc -l)" "20"
+
+# 14. a row whose time jq cannot format does not hide the inbox
+printf '99999999999999999999999\tbadtime\t%%9\tnot-pasted\tx\n' >>"$DONE_REPORTS"
+with_registry dr_append "$(date +%s)" wrk_late %98 not-pasted "late report"
+check "#367: a corrupt row's neighbour is still listed" \
+  "$(bash "$here/fleet" inbox 2>&1 | grep -c 'wrk_late .*late report')" "1"
+
+t kill-window -t "$h367" 2>/dev/null; t kill-window -t "$w_busy" 2>/dev/null
+t kill-window -t "$w_lim" 2>/dev/null; t kill-window -t "$w_gone" 2>/dev/null
+t kill-window -t "$w_ret" 2>/dev/null; t kill-window -t "$w_reup" 2>/dev/null
+t kill-window -t "$w_ml" 2>/dev/null
+for cp in "${panes_c[@]}"; do t kill-window -t "$cp" 2>/dev/null; done
+: >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS"
 
 : >"$work/moved"
 p=$(backpane bgwork); done_live "$p" working '[{"id": "t1", "kind": "agent"}]'
@@ -4588,6 +4828,21 @@ flock "$FLEET_STATE/.recover.lock" sleep 3 &
 sleep 0.3
 check "a second run while one holds the lock refuses" "$(bash "$here/recover.sh" --no-orchestrator 2>&1; echo "rc=$?")" $'error: another fleet recover is running\nrc=1'
 wait
+# At a boot the wait for the runtime folder runs under the lock (#517), so a
+# second run is refused at once, not after the wait.
+XDG_RUNTIME_DIR="$work/rec-not-yet" FLEET_RUNTIME_WAIT=10 FLEET_RUNTIME_TICK=0.1 LAUNCH=/bin/false \
+  bash "$here/recover.sh" --no-orchestrator >/dev/null 2>"$work/rec-wait.err" &
+rw=$!
+for _ in $(seq 100); do grep -q 'waiting for the runtime folder' "$work/rec-wait.err" && break; sleep 0.1; done
+s=$EPOCHREALTIME
+out=$(XDG_RUNTIME_DIR="$work/rec-not-yet" FLEET_RUNTIME_WAIT=10 LAUNCH=/bin/false bash "$here/recover.sh" --no-orchestrator 2>&1; echo "rc=$?")
+e=$EPOCHREALTIME
+check "#517: a second run while one waits for the runtime folder is refused at once" \
+  "$out|$(( (${e/./} - ${s/./}) < 2000000 ))" $'error: another fleet recover is running\nrc=1|1'
+mkdir -m 700 "$work/rec-not-yet"
+wait "$rw"
+check "#517: and the first goes on once the folder comes, after one log line" \
+  "$(grep -c 'waiting for the runtime folder' "$work/rec-wait.err") $(grep -c 'did not appear' "$work/rec-wait.err")" "1 0"
 rm -f "$FLEET_STATE/orchestrator.pane" "$FLEET_STATE/orchestrator.session"; : >"$REGISTRY"; unset FLEET_BOOT_ID FLEET_PROC FLEET_PROJECTS
 
 echo "the orchestrator's identity across /clear and tmux restarts (#173 review)"
@@ -5336,12 +5591,147 @@ check "#515: two repos' items warn, naming both" \
 check "#515: and the brief is still written" "$(test -s "$FLEET_STATE/task-two-repo.src" && echo yes)" "yes"
 rm -f -- "$FLEET_STATE/task-one-repo.src" "$FLEET_STATE/task-two-repo.src"
 
+echo "a pane open with its agent dead (#288)"
+: >"$FLEET_LOG"
+# A crash: tmux keeps the pane (the fleet's remain-on-exit failed) once its process aborts.
+dp=$(t new-window -d -P -F '#{pane_id}' -t fleet: "sh -c 'sleep 0.5; kill -ABRT \$\$'")
+t set -p -t "$dp" remain-on-exit failed
+sleep 1.5
+check "#288: a crashed pane is open and dead, with its signal" "$(pane_dead_why "$dp")" "its process ended on signal 6"
+IDLE_S=0 WATCH_TICK=0.1 timeout 20 bash "$here/watch-panes.sh" "$dp" >"$work/wdead.out" 2>/dev/null
+check "#288: the watcher wakes on it at once (03:07 on 11-03 woke nobody)" "$(cat "$work/wdead.out")" "DEAD $dp (its process ended on signal 6)"
+check "#288: logged with its reason" "$(jq -r 'select(.message | startswith("watched pane'"'"'s agent is dead")) | .pane + " " + .reason' "$FLEET_LOG")" "$dp its process ended on signal 6"
+# A shell in front where claude ran: dead on the second look in a row.
+sp=$(t new-window -d -P -F '#{pane_id}' -t fleet: "bash --norc --noprofile -i"); sleep 0.5
+check "#288: a shell in front reads as dead" "$(pane_dead_why "$sp")" "a bash prompt is in front where its claude ran"
+IDLE_S=0 WATCH_TICK=0.1 timeout 20 bash "$here/watch-panes.sh" "$sp" >"$work/wdead.out" 2>/dev/null
+check "#288: the watcher wakes on a shell in front after a second look" \
+  "$(cat "$work/wdead.out") | $(grep -c 'looking again next tick' "$FLEET_LOG")" "DEAD $sp (a bash prompt is in front where its claude ran) | 1"
+# A command that shows a shell for a moment as it starts wakes nobody.
+rm -f -- "$work/gate288"
+gp=$(t new-window -d -P -F '#{pane_id}' -t fleet: "bash --norc --noprofile -c 'until [ -e $work/gate288 ]; do read -rt 0.05 _; done; exec sleep 600'")
+: >"$FLEET_LOG"
+IDLE_S=600 WATCH_TICK=0.4 timeout 20 bash "$here/watch-panes.sh" "$gp" >"$work/wdead.out" 2>/dev/null &
+wjob=$!
+for _ in $(seq 50); do grep -q 'looking again next tick' "$FLEET_LOG" 2>/dev/null && break; sleep 0.05; done
+touch "$work/gate288"; sleep 1.5
+check "#288: a shell seen once, then the agent's command, wakes nobody" \
+  "$(grep -c 'looking again next tick' "$FLEET_LOG") $(kill -0 "$wjob" 2>/dev/null && echo watching || echo "woke: $(cat "$work/wdead.out")")" "1 watching"
+kill "$wjob" 2>/dev/null; wait "$wjob" 2>/dev/null
+check "#288: a live pane and a gone one are not dead" "$(pane_dead_why "$gp" || echo alive) $(pane_dead_why %9999 || echo none)" "alive none"
+# #290's pane-died hook starts a dead pane again on its saved screen and marks it
+# "<viewer pid> <reason>"; a mark another pid left (the pane started again by hand) is stale.
+t set -p -t "$gp" @klepsydra_dead "1 its process ended on signal 6"
+check "#314 review: a mark left by another pid does not make a live pane dead" "$(pane_dead_why "$gp" || echo alive)" "alive"
+t set -p -t "$gp" @klepsydra_dead "$(t display -p -t "$gp" '#{pane_pid}') its process ended on signal 6"
+check "#314 review: the viewer's own mark reads dead, its pid left out" "$(pane_dead_why "$gp")" "its process ended on signal 6"
+IDLE_S=600 WATCH_TICK=0.1 timeout 20 bash "$here/watch-panes.sh" "$gp" >"$work/wdead.out" 2>/dev/null
+check "#288: a pane the pane-died hook marked is dead at once, with the hook's reason" "$(cat "$work/wdead.out")" "DEAD $gp (its process ended on signal 6)"
+t set -p -t "$gp" @klepsydra_dead "1 its process ended on signal 6"
+IDLE_S=600 WATCH_TICK=0.2 timeout 1 bash "$here/watch-panes.sh" "$gp" >"$work/wdead.out" 2>/dev/null
+check "#314 review: the watcher wakes on no stale mark" "$(cat "$work/wdead.out")" ""
+# The doctor: a row whose session file still reads alive, in a dead pane, is
+# gone with the pane named; Heph dead in his pane is his remote control FAIL.
+# The recover section's fake /proc and boot id: process 4242 started at tick 777.
+export FLEET_BOOT_ID="$work/boot_id" FLEET_PROC="$work/proc"
+SD=aaaaaaaa-0000-4000-8000-0000000000d1
+sfile "$SD" 4242 777 "$NOWBOOT" "$dp"
+cp -p -- "$REGISTRY" "$work/reg-before-288"
+printf '%s\tdeadone\t%s\t%s\t/w\n' "$dp" "$work/bc.src" "$SD" >>"$REGISTRY"
+check "#288: the row's own session reads alive by its file" "$(row_state "$dp" "$SD")" "running"
+cp -p -- "$FLEET_STATE/orchestrator.pane" "$work/orch-before-288" 2>/dev/null
+printf '%s\n' "$sp" >"$FLEET_STATE/orchestrator.pane"
+doc=$(FLEET_DEAD_RECHECK_S=0 bash "$here/doctor.sh" 2>/dev/null)
+check "#288: doctor counts the dead pane's agent as gone, naming the pane" \
+  "$(grep '^FAIL agents' <<<"$doc" | grep -o "deadone (pane $dp open, its process ended on signal 6)")" "deadone (pane $dp open, its process ended on signal 6)"
+check "#288: Heph dead in his pane fails his remote control check; the worker gets no remote control line" \
+  "$(grep "^FAIL remote control $sp (orchestrator)" <<<"$doc") | $(grep -c "remote control $dp " <<<"$doc")" \
+  "FAIL remote control $sp (orchestrator): the pane is open but its agent is dead: a bash prompt is in front where its claude ran | 0"
+# An agent that finished and then exited leaves a dead pane too: still finished, never gone.
+SF=aaaaaaaa-0000-4000-8000-0000000000d2
+sfile "$SF" 4243 778 "$NOWBOOT" "$dp"
+jq '. + {ended: {reason: "prompt_input_exit"}}' "$KLEPSYDRA_DIR/fleet/$SF.json" >"$work/sf.json" && mv -- "$work/sf.json" "$KLEPSYDRA_DIR/fleet/$SF.json"
+printf '%s\tdoneone\t%s\t%s\t/w\n' "$dp" "$work/bc.src" "$SF" >>"$REGISTRY"
+doc=$(FLEET_DEAD_RECHECK_S=0 bash "$here/doctor.sh" 2>/dev/null)
+check "#288: a finished agent in a dead pane is a finished warn, not a gone FAIL" \
+  "$(grep '^FAIL agents' <<<"$doc" | grep -c doneone) $(grep -cE '^warn (finished )?agents: .*doneone' <<<"$doc")" "0 1"
+rm -f -- "$KLEPSYDRA_DIR/fleet/$SF.json"
+rm -f -- "$FLEET_STATE/orchestrator.pane" "$KLEPSYDRA_DIR/fleet/$SD.json"
+[[ -e $work/orch-before-288 ]] && cp -p -- "$work/orch-before-288" "$FLEET_STATE/orchestrator.pane"
+cp -p -- "$work/reg-before-288" "$REGISTRY"
+for w in "$dp" "$sp" "$gp"; do t kill-pane -t "$w" 2>/dev/null; done
+unset FLEET_BOOT_ID FLEET_PROC
+
 echo "the fleet log"
 check "every line is one JSON object with ts, level, target and message" \
   "$(jq -s 'all(has("ts") and has("level") and has("target") and has("message"))' "$FLEET_LOG")" "true"
 FLEET_LOG_MAX=200 FLEET_TARGET=fleet::test bash -c ". '$here/lib.sh'; for i in 1 2 3 4 5 6 7 8; do flog INFO line\$i; done"
 check "past its cap the log is renamed, and only the newest four are kept" \
   "$(find "${FLEET_LOG%/*}" -name 'fleet_*.log' | wc -l)" "4"
+
+echo "wait_runtime_dir: recover's wait for the boot's runtime folder (#517)"
+# wr VAR=value...: "rc|stderr lines joined by ;|now (under 0.9 s), 1-3s or slow"
+wr() {
+  local s e rc
+  s=$EPOCHREALTIME
+  # shellcheck disable=SC2016 # the inner shell expands its own $1
+  env "$@" bash -c '. "$1"; wait_runtime_dir' _ "$here/lib.sh" 2>"$work/wr.err"; rc=$?
+  e=$EPOCHREALTIME
+  local us=$(( ${e/./} - ${s/./} )) took=slow
+  if (( us < 900000 )); then took=now; elif (( us >= 1000000 && us < 3000000 )); then took=1-3s; fi
+  printf '%s|%s|%s' "$rc" "$(sed -E 's/^[^ ]+ [^ ]+ //' "$work/wr.err" | paste -sd';')" "$took"
+}
+mkdir -m 700 "$work/wr-own"
+check "#517: unset XDG_RUNTIME_DIR: nothing to wait for" "$(wr -u XDG_RUNTIME_DIR)" "0||now"
+check "#517: a folder of ours: no wait, no line" "$(wr XDG_RUNTIME_DIR="$work/wr-own/")" "0||now"
+( sleep 0.4; mkdir -m 700 "$work/wr-late" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-late" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517: a folder made while it waits: one line, then on" "${out%|*}" "0|INFO waiting for the runtime folder before launching dir=$work/wr-late timeout_s=5"
+check "#517: as soon as it comes" "${out##*|}" "now"
+out=$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1)
+check "#517: never made: gives up at its timeout with a warning" "$out" \
+  "1|INFO waiting for the runtime folder before launching dir=$work/wr-never timeout_s=1;WARN the runtime folder did not appear; launching anyway dir=$work/wr-never timeout_s=1|1-3s"
+check "#517: FLEET_RUNTIME_WAIT=0 gives up at once" "$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=0)" \
+  "1|WARN the runtime folder did not appear; launching anyway dir=$work/wr-never timeout_s=0|now"
+# Waiting cannot make a folder ours: warned at once, whatever the timeout.
+check "#517 N4: a foreign folder is no runtime folder, and no wait" "$(wr XDG_RUNTIME_DIR=/usr FLEET_RUNTIME_WAIT=5)" \
+  "1|WARN the runtime folder is not this user's own; launching anyway dir=/usr|now"
+( sleep 0.3; ln -s "$work/wr-own" "$work/wr-late-link" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-late-link" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517 N4: one that comes as a symlink ends the wait at once, warned" "${out#*;}" \
+  "WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-late-link|now"
+ln -s "$work/wr-own" "$work/wr-link"
+# Where systemd booted, the user manager's socket ends the wait, not the folder.
+mkdir -p "$work/wr-sd" "$work/wr-own/systemd"
+( sleep 0.4; python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$work/wr-own/systemd/private" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_SYSTEMD_BOOTED="$work/wr-sd" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1)
+wait
+check "#517 review: with systemd, the folder alone is not enough: waits for the user manager" "$out" \
+  "0|INFO waiting for the runtime folder before launching dir=$work/wr-own timeout_s=5 user_manager=$work/wr-own/systemd/private|now"
+rm -f -- "$work/wr-own/systemd/private"
+check "#517 review: and a user manager that never starts is warned about at the timeout" \
+  "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_SYSTEMD_BOOTED="$work/wr-sd" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1)" \
+  "1|INFO waiting for the runtime folder before launching dir=$work/wr-own timeout_s=1 user_manager=$work/wr-own/systemd/private;WARN the user manager did not start; launching anyway dir=$work/wr-own timeout_s=1|1-3s"
+rm -rf -- "${work:?}/wr-own/systemd" "${work:?}/wr-sd"
+check "#517 N4: nor a symlink, even to a folder of ours" "$(wr XDG_RUNTIME_DIR="$work/wr-link" FLEET_RUNTIME_WAIT=5)" \
+  "1|WARN the runtime folder is not this user's own; launching anyway dir=$work/wr-link|now"
+for v in abc 1.5 -3 1234567; do
+  check "#517 N1: FLEET_RUNTIME_WAIT=$v is warned about and taken as 180" "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_RUNTIME_WAIT="$v")" \
+    "0|WARN FLEET_RUNTIME_WAIT is not a whole number of seconds; waiting 180 value=$v|now"
+done
+check "#517 N1: a leading zero is still seconds" "$(wr XDG_RUNTIME_DIR="$work/wr-own" FLEET_RUNTIME_WAIT=08)" "0||now"
+# #518 N2: the wait runs on the time since boot (/proc/uptime), which a WSL
+# clock step does not move: uptime jumping 200 s ends a 5 s wait at once.
+printf '1000.00 5.00\n' >"$work/wr-uptime"
+( sleep 0.3; printf '1200.00 5.00\n' >"$work/wr-uptime" ) &
+out=$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=5 FLEET_RUNTIME_TICK=0.1 FLEET_UPTIME="$work/wr-uptime")
+wait
+check "#518 N2: the deadline is uptime's, not the wall clock's" "${out%%|*}|${out##*|}" "1|now"
+check "#518 N2: without /proc/uptime it counts its ticks, still to the timeout" \
+  "$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1 FLEET_UPTIME="$work/no-uptime" | sed 's/.*|//')" "1-3s"
+rm -rf -- "${work:?}/wr-own" "${work:?}/wr-late" "${work:?}/wr-link" "${work:?}/wr-late-link"
 
 echo "the suite's own isolation"
 check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""

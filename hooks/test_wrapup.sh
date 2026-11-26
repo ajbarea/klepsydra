@@ -19,6 +19,9 @@ check() {
 }
 
 export KLEPSYDRA_DIR="$work/kl" KLEPSYDRA_WRAPUP_SKILL="$here/klepsydra-wrapup.md"
+# Its own lock folder, boot and host, never the caller's live ones (#518 N4).
+printf '%s\n' 5170c0de-1111-4222-8333-444455556666 >"$work/boot_id"; printf 'testhost\n' >"$work/hostname"
+export KLEPSYDRA_STATE="$work/state" KLEPSYDRA_BOOT_ID="$work/boot_id" KLEPSYDRA_HOSTNAME="$work/hostname"
 mkdir -p "$KLEPSYDRA_DIR/wrapup"
 S1=4ce1be96-f12f-4c66-87eb-4ab36e451dc5
 S2=0b6f0f3e-1111-4c66-87eb-4ab36e451dc5

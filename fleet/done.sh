@@ -106,14 +106,14 @@ finish_now() { # NAME PANE SID
   rm -f -- "${fin:?}"
   echo "$moved"
 }
-# Sends the report and keeps its record (done-reports.tsv: time, name, pane, result).
+# Sends the report and keeps its record (done-reports.tsv: time, name, pane, result, report).
 deliver_report() {
   local orch got msg at
   msg="$label finished: $report"
   orch=$(orchestrator)
   at=$(date +%s)
   # Recorded before the send: a call the tool's timeout kills mid-send still leaves a row the doctor flags.
-  with_registry dr_append "$at" "$label" "$rpane" pending ||
+  with_registry dr_append "$at" "$label" "$rpane" pending "$report" ||
     flog ERROR "done: done-reports.tsv cannot be written" file="$DONE_REPORTS"
   if [[ $orch =~ ^%[0-9]+$ && $orch == "${TMUX_PANE:-}" && ${TMUX:-} == *"/$FLEET_SOCK,"* ]]; then
     # The orchestrator closing an agent itself needs no message to itself.
@@ -130,6 +130,8 @@ deliver_report() {
   if [[ $got == sent || $got == queued ]]; then
     flog INFO "done: report delivered to the orchestrator" name="$label" result="$got"
     [[ $orch == "${TMUX_PANE:-}" ]] || echo "report: $got"
+    with_registry dr_mark_delivered "$label" "$report" "$at" ||
+      flog ERROR "done: done-reports.tsv cannot be updated" file="$DONE_REPORTS"
     return 0
   fi
   flog WARN "done: report not delivered; written to the queue file" name="$label" result="$got"

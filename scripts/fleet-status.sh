@@ -7,8 +7,11 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 # The hook resolves KLEPSYDRA_DIR as Claude Code would run it.
+# The hook is not written for set -e: a refused lock it cannot record must not end this.
+set +e
 # shellcheck source=hooks/klepsydra-fleet.sh
 source "$repo/hooks/klepsydra-fleet.sh"
+set -e
 fleet="$KLEPSYDRA_DIR/fleet"
 printf -v now '%(%s)T' -1
 
