@@ -109,6 +109,73 @@ screen() { t capture-pane -e -p -t "$1" 2>/dev/null; }
 # Text with its escapes removed: SGR and other CSI, and OSC 8 links.
 plain() { sed -E $'s/\e\\][^\a\e]*(\a|\e\\\\)//g; s/\e\\[[0-9;?]*[A-Za-z]//g'; }
 
+# wait_runtime_dir: what fleet recover does before it launches anyone. A WSL
+# boot sets XDG_RUNTIME_DIR before logind makes the folder and starts the user
+# manager the fleet's scopes run under (#517), so wait up to FLEET_RUNTIME_WAIT
+# seconds (180) for the folder to exist as ours and, where systemd booted, for
+# the user manager's socket in it, with one log line while it waits and a
+# warning if they never come. A folder that is there but not ours, or a
+# symlink, will not change by waiting: warned at once. Unset: no wait. Fails
+# when it gave up; the launches go ahead either way. Polling, since
+# `systemctl --user is-system-running --wait` has no timeout of its own.
+# uptime_cs: sets UPTIME_CS to the centiseconds since boot. /proc/uptime runs
+# on CLOCK_BOOTTIME, which a WSL clock step does not move, unlike
+# EPOCHREALTIME; read by a builtin. Fails when it does not read (FLEET_UPTIME:
+# tests' file).
+uptime_cs() {
+  local up=""
+  { read -r up _ <"${FLEET_UPTIME:-/proc/uptime}"; } 2>/dev/null
+  [[ $up =~ ^([0-9]{1,12})\.([0-9]{2})$ ]] || return 1
+  UPTIME_CS=$((10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]}))
+}
+runtime_state() { # DIR BUS: sets RT_STATE to ready, missing, foreign or nobus
+  if [[ -L $1 || ( -e $1 && ! ( -d $1 && -O $1 ) ) ]]; then RT_STATE=foreign
+  elif [[ ! -e $1 ]]; then RT_STATE=missing
+  elif [[ -n $2 && ! -S $2 ]]; then RT_STATE=nobus
+  else RT_STATE=ready; fi
+}
+wait_runtime_dir() {
+  local d=${XDG_RUNTIME_DIR:-} wait=${FLEET_RUNTIME_WAIT:-180} tick=${FLEET_RUNTIME_TICK:-1} deadline left tick_ms bus=""
+  [[ $tick =~ ^[0-9]{1,3}(\.[0-9]{1,3})?$ && ! $tick =~ ^0+(\.0+)?$ ]] || tick=1
+  [[ $tick =~ ^([0-9]+)(\.([0-9]+))?$ ]]
+  local frac=${BASH_REMATCH[3]}000
+  tick_ms=$(( 10#${BASH_REMATCH[1]} * 1000 + 10#${frac:0:3} ))
+  while [[ $d == */ ]]; do d=${d%/}; done
+  [[ -n $d ]] || return 0
+  if [[ ! $wait =~ ^[0-9]{1,6}$ ]]; then
+    flog WARN "FLEET_RUNTIME_WAIT is not a whole number of seconds; waiting 180" value="$wait"
+    wait=180
+  fi
+  wait=$((10#$wait))
+  [[ -d ${FLEET_SYSTEMD_BOOTED:-/run/systemd/system} ]] && bus=$d/systemd/private
+  runtime_state "$d" "$bus"
+  if [[ $RT_STATE == missing || $RT_STATE == nobus ]] && (( wait > 0 )); then
+    flog INFO "waiting for the runtime folder before launching" dir="$d" timeout_s="$wait" ${bus:+user_manager="$bus"}
+    if uptime_cs; then
+      deadline=$(( UPTIME_CS + wait * 100 ))
+      while [[ $RT_STATE == missing || $RT_STATE == nobus ]] && uptime_cs && (( UPTIME_CS < deadline )); do
+        sleep "$tick"
+        runtime_state "$d" "$bus"
+      done
+    else # no /proc/uptime: count the ticks instead, never the wall clock
+      deadline=$(( wait * 1000 ))
+      left=$deadline
+      while [[ $RT_STATE == missing || $RT_STATE == nobus ]] && (( left > 0 )); do
+        sleep "$tick"
+        runtime_state "$d" "$bus"
+        left=$(( left - tick_ms ))
+      done
+    fi
+  fi
+  case $RT_STATE in
+    ready) return 0 ;;
+    foreign) flog WARN "the runtime folder is not this user's own; launching anyway" dir="$d" ;;
+    nobus) flog WARN "the user manager did not start; launching anyway" dir="$d" timeout_s="$wait" ;;
+    *) flog WARN "the runtime folder did not appear; launching anyway" dir="$d" timeout_s="$wait" ;;
+  esac
+  return 1
+}
+
 # screen_parse SCREEN: what the helpers below read from a capture (with its
 # escapes), worked out by one awk and kept until a different SCREEN comes:
 #   SCR_PLAIN  the screen with its escapes removed (plain's output)
@@ -596,31 +663,133 @@ registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGIST
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 # Reports `fleet done` sent: time, name, pane, send result (pending while the
-# send runs, then sent, queued or why not); `fleet close` removes them. Every
-# write goes through the registry lock (with_registry).
-# shellcheck disable=SC2034 # read by done.sh, close.sh and doctor.sh
+# send runs, then sent, queued, delivered, acked or why not), and optional
+# escaped report text in column 5; `fleet close` removes them. Every write goes
+# through the registry lock (with_registry) and keeps mode 0600.
+# shellcheck disable=SC2034 # read by done.sh, close.sh, inbox.sh and doctor.sh
 DONE_REPORTS=${FLEET_DONE_REPORTS:-$FLEET_STATE/done-reports.tsv}
-dr_append() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$DONE_REPORTS"; } # AT NAME PANE RESULT
-dr_set() { # AT NAME RESULT: the result of the row AT and NAME name
-  local tmp
+dr_escape() { # TEXT -> single-line TSV-safe string
+  local rep=$1
+  rep=${rep//\\/\\\\}
+  rep=${rep//$'\n'/\\n}
+  rep=${rep//$'\r'/}
+  rep=${rep//$'\t'/\\t}
+  printf '%s' "$rep"
+}
+_dr_rewrite() { # stdin: AWK program
+  local tmp prog
+  [[ -e $DONE_REPORTS ]] || return 0
+  prog=$(cat)
   tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
-  if awk -F'\t' -v OFS='\t' -v a="$1" -v n="$2" -v r="$3" '$1 == a && $2 "" == n "" && !d { $4 = r; d = 1 } { print }' "$DONE_REPORTS" >"$tmp"; then
-    mv -f -- "$tmp" "$DONE_REPORTS"
+  if awk -F'\t' -v OFS='\t' "$prog" "$DONE_REPORTS" >"$tmp"; then
+    chmod 0600 "$tmp" 2>/dev/null || true
+    if mv -f -- "$tmp" "$DONE_REPORTS"; then
+      return 0
+    fi
+  fi
+  rm -f -- "${tmp:?}"
+  return 1
+}
+dr_append() { # AT NAME PANE RESULT [REPORT]
+  local rep
+  mkdir -p -- "$(dirname "$DONE_REPORTS")"
+  if [[ ! -e $DONE_REPORTS ]]; then
+    ( umask 077 && touch "$DONE_REPORTS" )
+  fi
+  chmod 0600 "$DONE_REPORTS" 2>/dev/null || true
+  if (( $# >= 5 )); then
+    rep=$(dr_escape "$5")
+    printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$rep" >>"$DONE_REPORTS"
   else
-    rm -f -- "${tmp:?}"
-    return 1
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$DONE_REPORTS"
   fi
 }
+dr_set() { # AT NAME RESULT: update the pending (or undelivered) row for AT and NAME
+  DR_AT=$1 DR_NAME=$2 DR_RES=$3 _dr_rewrite <<'AWK'
+    BEGIN { a = ENVIRON["DR_AT"]; n = ENVIRON["DR_NAME"]; r = ENVIRON["DR_RES"] }
+    { lines[NR] = $0; f1[NR] = $1; f2[NR] = $2; f4[NR] = $4 }
+    END {
+      pick = 0
+      for (i = 1; i <= NR; i++) {
+        if (f1[i] == a && f2[i] "" == n "" && f4[i] == "pending") { pick = i; break }
+      }
+      if (!pick) {
+        for (i = NR; i >= 1; i--) {
+          if (f1[i] == a && f2[i] "" == n "" && f4[i] != "sent" && f4[i] != "queued" && f4[i] != "delivered" && f4[i] != "acked") { pick = i; break }
+        }
+      }
+      if (!pick) {
+        for (i = 1; i <= NR; i++) {
+          if (f1[i] == a && f2[i] "" == n "") { pick = i; break }
+        }
+      }
+      for (i = 1; i <= NR; i++) {
+        if (i == pick) {
+          $0 = lines[i]
+          $4 = r
+          print
+        } else {
+          print lines[i]
+        }
+      }
+    }
+AWK
+}
+dr_deliver_row() { # AT NAME OLD_RESULT REPORT NEW_RESULT
+  local rep
+  rep=$(dr_escape "$4")
+  DR_AT=$1 DR_NAME=$2 DR_OLD=$3 DR_REP=$rep DR_NEW=$5 _dr_rewrite <<'AWK'
+    BEGIN {
+      a = ENVIRON["DR_AT"]; n = ENVIRON["DR_NAME"]
+      old = ENVIRON["DR_OLD"]; rep = ENVIRON["DR_REP"]; r = ENVIRON["DR_NEW"]
+      d = 0
+    }
+    $1 == a && $2 "" == n "" && $4 "" == old "" && (rep == "" || $5 "" == rep "") && !d {
+      $4 = r
+      d = 1
+    }
+    { print }
+    END { if (!d) exit 2 }
+AWK
+}
+dr_mark_delivered() { # NAME REPORT [AT]
+  local rep
+  rep=$(dr_escape "$2")
+  DR_NAME=$1 DR_REP=$rep DR_AT=${3:-0} _dr_rewrite <<'AWK'
+    BEGIN { n = ENVIRON["DR_NAME"]; rep = ENVIRON["DR_REP"]; at = ENVIRON["DR_AT"] + 0 }
+    $2 "" == n "" && $4 != "sent" && $4 != "queued" && $4 != "delivered" && $4 != "acked" &&
+      ($4 != "pending" || (at > 0 && $1 + 0 < at)) && $5 "" == rep "" { $4 = "delivered" }
+    { print }
+AWK
+}
 dr_drop() { # NAME: forget its reports
-  local tmp
-  [[ -e $DONE_REPORTS ]] || return 0
-  tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
-  if awk -F'\t' -v n="$1" '$2 "" != n ""' "$DONE_REPORTS" >"$tmp"; then
-    mv -f -- "$tmp" "$DONE_REPORTS"
-  else
-    rm -f -- "${tmp:?}"
+  DR_NAME=$1 _dr_rewrite <<'AWK'
+    BEGIN { n = ENVIRON["DR_NAME"] }
+    $2 "" != n ""
+AWK
+}
+dr_ack() { # TARGET [--all or NAME] [NOW]
+  local target=$1 now=${2:-$(date +%s)} count_file count
+  [[ -f $DONE_REPORTS ]] || return 1
+  count_file=$(mktemp "$DONE_REPORTS.cnt.XXXXXX") || return 1
+  if ! DR_TARGET=$target DR_NOW=$now DR_CF=$count_file _dr_rewrite <<'AWK'; then
+    BEGIN { target = ENVIRON["DR_TARGET"]; now = ENVIRON["DR_NOW"] + 0; cf = ENVIRON["DR_CF"]; c = 0 }
+    $1 ~ /^[0-9]+$/ && (target == "--all" || $2 "" == target "") &&
+      $4 != "sent" && $4 != "queued" && $4 != "delivered" && $4 != "acked" &&
+      ($4 != "pending" || (now - $1) > 300) {
+      $4 = "acked"
+      c++
+    }
+    { print }
+    END { print c > cf; close(cf) }
+AWK
+    rm -f -- "${count_file:?}"
     return 1
   fi
+  count=$(cat "$count_file" 2>/dev/null)
+  rm -f -- "${count_file:?}"
+  [[ $count =~ ^[0-9]+$ ]] && (( count > 0 )) || return 1
+  echo "$count"
 }
 # The briefing's queue file (not FLEET_QUEUE: ci_watch.py reads that name as needs-you.md).
 FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-$FLEET_BRIEFING/queue.md}
@@ -642,7 +811,8 @@ queue_note_now() {
     limited) line="the orchestrator's pane is at a usage limit; send it after the reset" ;;
     *) line="the orchestrator did not get it" ;;
   esac
-  line="- 📋 **$1 (fleet done, report not delivered: $2):** $3 ($line.) $(date '+%a %m-%d %H:%M')"
+  local rep=${3//$'\n'/ }
+  line="- 📋 **$1 (fleet done, report not delivered: $2):** $rep ($line.) $(date '+%a %m-%d %H:%M')"
   tmp=$(mktemp "$FLEET_QUEUE_MD.XXXXXX") || return 1
   # Before the section's trailing blank lines.
   QLINE=$line awk 'BEGIN { line = ENVIRON["QLINE"] }
@@ -753,6 +923,48 @@ fleet_sessions_tsv() {
 # successor opens behind and comes forward only in place of a window AJ was
 # looking at, so a replacement never moves him off the agent he is watching.
 in_view() { [[ $(t display-message -p -t "$1" '#{window_active}' 2>/dev/null) == 1 ]]; }
+
+# Why PANE is open with no agent in it (#288): its process ended and tmux kept
+# the pane (remain-on-exit failed keeps a crash on screen), or a shell is in
+# front where claude ran, or the pane-died hook (#290) marked it. Prints the
+# reason; fails while the pane looks alive or is gone. A shell in front is also
+# what a pane shows for a moment while its command starts, so callers confirm
+# that one on a second look.
+SHELLS=" sh bash dash zsh fish ksh "
+# The fields pane_dead_reason reads, tab-separated (tmux prints other control
+# characters as octal) with "-" for a field that can be empty (tab is IFS
+# whitespace, so an empty field would shift the rest; tmux 3.8 prints no pid
+# for a dead pane), @klepsydra_dead last since it holds spaces.
+PANE_DEAD_FMT=$'#{pane_dead}\t#{?pane_dead_status,#{pane_dead_status},-}\t#{?pane_dead_signal,#{pane_dead_signal},-}\t#{?pane_pid,#{pane_pid},-}\t#{pane_current_command}\t#{@klepsydra_dead}'
+# Sets DEAD_WHY and returns 0 when the fields read from tmux say the pane's
+# agent is dead (pane_dead, @klepsydra_dead, or a shell in front); 1 otherwise.
+pane_dead_reason() { # DEAD ST SIG PID CMD MARK
+  local dead=$1 st=$2 sig=$3 pid=$4 cmd=$5 mark=$6
+  [[ $st == - ]] && st=""
+  [[ $sig == - ]] && sig=""
+  DEAD_WHY=""
+  # Started again on its saved screen by the pane-died hook (#290), which marks
+  # it "<viewer pid> <reason>". Only that viewer's own mark counts: one left
+  # behind after the pane was started again by hand is the hook's to clear.
+  if [[ -n $mark && ${mark%% *} == "$pid" ]]; then
+    DEAD_WHY=${mark#* }
+    return 0
+  fi
+  if [[ $dead == 1 ]]; then
+    if [[ -n $sig ]]; then DEAD_WHY="its process ended on signal $sig"
+    else DEAD_WHY="its process exited with status ${st:-unknown}"; fi
+    return 0
+  fi
+  [[ -n $cmd && $SHELLS == *" ${cmd#-} "* ]] || return 1
+  DEAD_WHY="a ${cmd#-} prompt is in front where its claude ran"
+}
+
+pane_dead_why() { # PANE
+  local dead st sig pid cmd mark
+  IFS=$'\t' read -r dead st sig pid cmd mark < <(t display-message -p -t "$1" "$PANE_DEAD_FMT" 2>/dev/null) || return 1
+  pane_dead_reason "$dead" "$st" "$sig" "$pid" "$cmd" "$mark" || return 1
+  printf '%s' "$DEAD_WHY"
+}
 
 # Whether the session live in PANE is one finished.tsv names (`fleet done`,
 # or a finish the doctor or recover recorded; the registry's columns, pane

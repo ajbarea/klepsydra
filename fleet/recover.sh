@@ -23,6 +23,7 @@ done
 if (( ! dry )); then
   exec 9>"$FLEET_STATE/.recover.lock"
   flock -n 9 || { err "another fleet recover is running"; exit 1; }
+  wait_runtime_dir # under the lock, so a second recover is refused at once
 fi
 
 # Every session alive before any launch, as "pane<TAB>session<TAB>in-fleet"
