@@ -998,7 +998,7 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 .wall[data-density="compact"] { grid-auto-rows: 1fr; }
 .wall[data-density="compact"] .card {
   display: grid;
-  grid-template-columns: var(--wall-face) minmax(0, 1fr) auto auto auto;
+  grid-template-columns: var(--wall-face) minmax(var(--name-floor), 1fr) auto max-content max-content;
   grid-template-rows: auto auto auto auto 1fr auto;
   grid-template-areas:
     "face name pill clear jump"
@@ -1009,6 +1009,11 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
     "menu note note note note";
   gap: 0;
 }
+/* Who gives way when the header row runs short (#535): first the name, down to
+   its own width or 90 px, whichever is less (--name-w is the name's measured
+   width, set by fleet/namewidth.js in every engine); then the pill's time, then
+   its label, down to its mark. Open terminal and Clear never give way. */
+.wall[data-density="compact"] .card { --name-floor: calc(min(var(--name-w, 0px), 90px) + var(--head-gap)); }
 [data-density="compact"] .card header,
 [data-density="compact"] .card .actions,
 [data-density="compact"] .card .foot { display: contents; }
@@ -1032,9 +1037,15 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
 [data-density="compact"] .herald-name { font-size: 19px; /* large text (WCAG: 14 pt bold), so the character's 3:1 tone reads */ color: var(--on-card, var(--text)); text-shadow: none; }
 [data-density="compact"] .herald-cry { font-size: 12px; color: var(--text); }
 [data-density="compact"] .herald-epithet { flex-basis: 100%; margin-top: 2px; }
-[data-density="compact"] .pill { position: static; grid-area: pill; align-self: center; margin-left: var(--space-3); gap: 6px; padding: 3px 8px 3px 6px; font-size: 12px; }
+[data-density="compact"] .pill { position: static; grid-area: pill; align-self: center; margin-left: var(--space-3); gap: 0; padding: 3px 8px 3px 6px; font-size: 12px; min-width: calc(6px + 14px + 8px); /* its padding and mark */ }
+[data-density="compact"] .pill :is(.label, .when) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The space before the time is inside the time's box, so a time cut to nothing leaves the label no gap to lose. */
+[data-density="compact"] .pill .mark { margin-right: 6px; }
+[data-density="compact"] .pill .when:not(:empty)::before { content: ""; display: inline-block; width: 6px; }
 [data-density="compact"] .pill .badge { width: 14px; height: 14px; }
 [data-density="compact"] .pill .age { display: none; }
+/* The time's share of any shortfall dwarfs the label's, so the label is cut only once the time is gone. */
+[data-density="compact"] .pill .when { display: inline; flex-shrink: 100000; }
 /* A compact card too narrow for name, pill and Open terminal on one line (#505)
    gives the name its own: the pill and the buttons take a line under the task,
    beside the portrait, so an arrival's herald still covers just name and task.
@@ -1057,11 +1068,8 @@ a.branch[href]:hover, a.branch[href]:focus-visible { color: var(--text); }
       "menu note note note note";
   }
   /* The pill keeps to its share of the line: its time gives way first ("12m qu…"). */
-  :root:not(.served) [data-density="compact"] .pill { justify-self: start; min-width: 0; max-width: calc(100% - var(--head-gap)); margin-left: var(--head-gap); }
-  :root:not(.served) [data-density="compact"] .pill :is(.mark, .label) { flex-shrink: 0; }
-  :root:not(.served) [data-density="compact"] .pill .when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  :root:not(.served) [data-density="compact"] .pill { justify-self: start; max-width: calc(100% - var(--head-gap)); margin-left: var(--head-gap); }
 }
-[data-density="compact"] .pill .when { display: inline; }
 [data-density="compact"] .jump,
 [data-density="compact"] .clear {
   grid-area: jump;

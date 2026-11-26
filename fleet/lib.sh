@@ -641,31 +641,133 @@ registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGIST
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
 # Reports `fleet done` sent: time, name, pane, send result (pending while the
-# send runs, then sent, queued or why not); `fleet close` removes them. Every
-# write goes through the registry lock (with_registry).
-# shellcheck disable=SC2034 # read by done.sh, close.sh and doctor.sh
+# send runs, then sent, queued, delivered, acked or why not), and optional
+# escaped report text in column 5; `fleet close` removes them. Every write goes
+# through the registry lock (with_registry) and keeps mode 0600.
+# shellcheck disable=SC2034 # read by done.sh, close.sh, inbox.sh and doctor.sh
 DONE_REPORTS=${FLEET_DONE_REPORTS:-$FLEET_STATE/done-reports.tsv}
-dr_append() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$DONE_REPORTS"; } # AT NAME PANE RESULT
-dr_set() { # AT NAME RESULT: the result of the row AT and NAME name
-  local tmp
+dr_escape() { # TEXT -> single-line TSV-safe string
+  local rep=$1
+  rep=${rep//\\/\\\\}
+  rep=${rep//$'\n'/\\n}
+  rep=${rep//$'\r'/}
+  rep=${rep//$'\t'/\\t}
+  printf '%s' "$rep"
+}
+_dr_rewrite() { # stdin: AWK program
+  local tmp prog
+  [[ -e $DONE_REPORTS ]] || return 0
+  prog=$(cat)
   tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
-  if awk -F'\t' -v OFS='\t' -v a="$1" -v n="$2" -v r="$3" '$1 == a && $2 "" == n "" && !d { $4 = r; d = 1 } { print }' "$DONE_REPORTS" >"$tmp"; then
-    mv -f -- "$tmp" "$DONE_REPORTS"
+  if awk -F'\t' -v OFS='\t' "$prog" "$DONE_REPORTS" >"$tmp"; then
+    chmod 0600 "$tmp" 2>/dev/null || true
+    if mv -f -- "$tmp" "$DONE_REPORTS"; then
+      return 0
+    fi
+  fi
+  rm -f -- "${tmp:?}"
+  return 1
+}
+dr_append() { # AT NAME PANE RESULT [REPORT]
+  local rep
+  mkdir -p -- "$(dirname "$DONE_REPORTS")"
+  if [[ ! -e $DONE_REPORTS ]]; then
+    ( umask 077 && touch "$DONE_REPORTS" )
+  fi
+  chmod 0600 "$DONE_REPORTS" 2>/dev/null || true
+  if (( $# >= 5 )); then
+    rep=$(dr_escape "$5")
+    printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$rep" >>"$DONE_REPORTS"
   else
-    rm -f -- "${tmp:?}"
-    return 1
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$DONE_REPORTS"
   fi
 }
+dr_set() { # AT NAME RESULT: update the pending (or undelivered) row for AT and NAME
+  DR_AT=$1 DR_NAME=$2 DR_RES=$3 _dr_rewrite <<'AWK'
+    BEGIN { a = ENVIRON["DR_AT"]; n = ENVIRON["DR_NAME"]; r = ENVIRON["DR_RES"] }
+    { lines[NR] = $0; f1[NR] = $1; f2[NR] = $2; f4[NR] = $4 }
+    END {
+      pick = 0
+      for (i = 1; i <= NR; i++) {
+        if (f1[i] == a && f2[i] "" == n "" && f4[i] == "pending") { pick = i; break }
+      }
+      if (!pick) {
+        for (i = NR; i >= 1; i--) {
+          if (f1[i] == a && f2[i] "" == n "" && f4[i] != "sent" && f4[i] != "queued" && f4[i] != "delivered" && f4[i] != "acked") { pick = i; break }
+        }
+      }
+      if (!pick) {
+        for (i = 1; i <= NR; i++) {
+          if (f1[i] == a && f2[i] "" == n "") { pick = i; break }
+        }
+      }
+      for (i = 1; i <= NR; i++) {
+        if (i == pick) {
+          $0 = lines[i]
+          $4 = r
+          print
+        } else {
+          print lines[i]
+        }
+      }
+    }
+AWK
+}
+dr_deliver_row() { # AT NAME OLD_RESULT REPORT NEW_RESULT
+  local rep
+  rep=$(dr_escape "$4")
+  DR_AT=$1 DR_NAME=$2 DR_OLD=$3 DR_REP=$rep DR_NEW=$5 _dr_rewrite <<'AWK'
+    BEGIN {
+      a = ENVIRON["DR_AT"]; n = ENVIRON["DR_NAME"]
+      old = ENVIRON["DR_OLD"]; rep = ENVIRON["DR_REP"]; r = ENVIRON["DR_NEW"]
+      d = 0
+    }
+    $1 == a && $2 "" == n "" && $4 "" == old "" && (rep == "" || $5 "" == rep "") && !d {
+      $4 = r
+      d = 1
+    }
+    { print }
+    END { if (!d) exit 2 }
+AWK
+}
+dr_mark_delivered() { # NAME REPORT [AT]
+  local rep
+  rep=$(dr_escape "$2")
+  DR_NAME=$1 DR_REP=$rep DR_AT=${3:-0} _dr_rewrite <<'AWK'
+    BEGIN { n = ENVIRON["DR_NAME"]; rep = ENVIRON["DR_REP"]; at = ENVIRON["DR_AT"] + 0 }
+    $2 "" == n "" && $4 != "sent" && $4 != "queued" && $4 != "delivered" && $4 != "acked" &&
+      ($4 != "pending" || (at > 0 && $1 + 0 < at)) && $5 "" == rep "" { $4 = "delivered" }
+    { print }
+AWK
+}
 dr_drop() { # NAME: forget its reports
-  local tmp
-  [[ -e $DONE_REPORTS ]] || return 0
-  tmp=$(mktemp "$DONE_REPORTS.XXXXXX") || return 1
-  if awk -F'\t' -v n="$1" '$2 "" != n ""' "$DONE_REPORTS" >"$tmp"; then
-    mv -f -- "$tmp" "$DONE_REPORTS"
-  else
-    rm -f -- "${tmp:?}"
+  DR_NAME=$1 _dr_rewrite <<'AWK'
+    BEGIN { n = ENVIRON["DR_NAME"] }
+    $2 "" != n ""
+AWK
+}
+dr_ack() { # TARGET [--all or NAME] [NOW]
+  local target=$1 now=${2:-$(date +%s)} count_file count
+  [[ -f $DONE_REPORTS ]] || return 1
+  count_file=$(mktemp "$DONE_REPORTS.cnt.XXXXXX") || return 1
+  if ! DR_TARGET=$target DR_NOW=$now DR_CF=$count_file _dr_rewrite <<'AWK'; then
+    BEGIN { target = ENVIRON["DR_TARGET"]; now = ENVIRON["DR_NOW"] + 0; cf = ENVIRON["DR_CF"]; c = 0 }
+    $1 ~ /^[0-9]+$/ && (target == "--all" || $2 "" == target "") &&
+      $4 != "sent" && $4 != "queued" && $4 != "delivered" && $4 != "acked" &&
+      ($4 != "pending" || (now - $1) > 300) {
+      $4 = "acked"
+      c++
+    }
+    { print }
+    END { print c > cf; close(cf) }
+AWK
+    rm -f -- "${count_file:?}"
     return 1
   fi
+  count=$(cat "$count_file" 2>/dev/null)
+  rm -f -- "${count_file:?}"
+  [[ $count =~ ^[0-9]+$ ]] && (( count > 0 )) || return 1
+  echo "$count"
 }
 # The briefing's queue file (not FLEET_QUEUE: ci_watch.py reads that name as needs-you.md).
 FLEET_QUEUE_MD=${FLEET_QUEUE_MD:-$FLEET_BRIEFING/queue.md}
@@ -687,7 +789,8 @@ queue_note_now() {
     limited) line="the orchestrator's pane is at a usage limit; send it after the reset" ;;
     *) line="the orchestrator did not get it" ;;
   esac
-  line="- 📋 **$1 (fleet done, report not delivered: $2):** $3 ($line.) $(date '+%a %m-%d %H:%M')"
+  local rep=${3//$'\n'/ }
+  line="- 📋 **$1 (fleet done, report not delivered: $2):** $rep ($line.) $(date '+%a %m-%d %H:%M')"
   tmp=$(mktemp "$FLEET_QUEUE_MD.XXXXXX") || return 1
   # Before the section's trailing blank lines.
   QLINE=$line awk 'BEGIN { line = ENVIRON["QLINE"] }
