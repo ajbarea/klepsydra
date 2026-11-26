@@ -58,6 +58,8 @@ check() {
     pass=$((pass + 1)); printf '  ok   %s\n' "$name"
   else
     fail=$((fail + 1)); printf '  FAIL %s\n       want: %s\n       got:  %s\n' "$name" "$want" "$got"
+    [[ -z ${GITHUB_ACTIONS:-} ]] ||
+      printf '::error file=scripts/test_build_windows.sh,line=%s::FAIL %s: want %s, got %s\n' "${BASH_LINENO[0]}" "$name" "$want" "${got//$'\n'/ }"
   fi
 }
 
@@ -202,17 +204,17 @@ timeout -k 2s 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 || rc_cl
 check "clippy error exits with powershell exit code" "$rc_clippy" 101
 check "clippy error does not run cleanup" "$(grep -cF 'Stop-Process' "$pwsh_clippy_log" 2>/dev/null || echo 0)" 0
 
-# Signal handling: SIGTERM cleans up and exits 143.
+# Signal handling: a TERM to the script's whole process group, as Ctrl-C sends,
+# cleans up and exits 143. The script leads its own group (setsid), so its exit
+# code is read directly, never through timeout's; a watchdog bounds the wait.
 pwsh_sig_log="$work/pwsh_sig.log"
-PATH="$work/bin:$PATH" \
-PWSH_SLEEP=9999 \
-PWSH_LOG="$pwsh_sig_log" \
-KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
-KLEPSYDRA_STAGE="klepsydra-build-test_sig" \
-timeout -k 2s 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 &
+PWSH_SLEEP=9999 PWSH_LOG="$pwsh_sig_log" KLEPSYDRA_STAGE="klepsydra-build-test_sig" \
+  setsid bash "$here/build-windows.sh" --check >/dev/null 2>&1 &
 build_pid=$!
 sleep 0.5
-kill -TERM "$build_pid" 2>/dev/null || true
+kill -TERM -- "-$build_pid" 2>/dev/null || kill -TERM "$build_pid" 2>/dev/null
+for ((i = 0; i < 100; i++)); do kill -0 "$build_pid" 2>/dev/null || break; sleep 0.1; done
+kill -0 "$build_pid" 2>/dev/null && kill -KILL -- "-$build_pid" 2>/dev/null
 rc_sig=0
 wait "$build_pid" 2>/dev/null || rc_sig=$?
 
