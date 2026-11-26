@@ -262,6 +262,8 @@ pub fn rewrite<T>(
             String::new()
         };
         let bytes = format!("{bom}{new}");
+        // The text as the wall will read it back: a stray mark now at the top reads as the file's BOM.
+        let read_back = without_bom(&bytes).to_owned();
         // A new file, never one already there: a link planted at the name is removed, not written through.
         match std::fs::remove_file(&tmp) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -295,7 +297,7 @@ pub fn rewrite<T>(
             continue;
         }
         return std::fs::rename(&tmp, path)
-            .map(|()| (out, new))
+            .map(|()| (out, read_back))
             .map_err(|e| {
                 let _ = std::fs::remove_file(&tmp);
                 format!("The Needs you file could not be saved: {e}")
@@ -685,6 +687,21 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             format!("\u{feff}{shown}"),
             "the item comes back after the mark, not before it"
+        );
+    }
+
+    #[test]
+    fn done_answers_with_the_text_the_wall_reads_back() {
+        let dir = Scratch::new("needs-stray-bom");
+        let path = dir.0.join("needs-you.md");
+        let text = "- 📋 a\n\u{feff}\n- 📋 b\n";
+        std::fs::write(&path, text).unwrap();
+        let d = mark_done(&path, text, "- 📋 a", 0).unwrap();
+        let read = crate::queue::view_of(&Ok(path.clone()), crate::queue::List::Needs).text;
+        assert_eq!(
+            Some(d.text),
+            read,
+            "the next Done's `seen` matches the file"
         );
     }
 

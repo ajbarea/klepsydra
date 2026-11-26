@@ -48,7 +48,7 @@ const lines = (t) => t.split('\\n');
 window.__sent = null;
 window.__republish = () => { window.__sent = window.__needsText; send(window.__needs, { path: 'C:/demo/needs-you.md', text: window.__needsText, problem: null }); };
 let settle = 0;
-const follow = () => { clearTimeout(settle); settle = setTimeout(() => { if (window.__needsText !== window.__sent) window.__republish(); }, 250); };
+const follow = () => { if (window.__noFollow) return; clearTimeout(settle); settle = setTimeout(() => { if (window.__needsText !== window.__sent) window.__republish(); }, 250); };
 window.__TAURI__ = { core: {
   Channel: class { },
   invoke: (cmd, args) => {
@@ -304,6 +304,15 @@ def flow_b(run, page, needs):
     s = state(page)
     run.check(page.evaluate("window.__needsText") == edited and s["toast"] and "changed since" in s["toast"], f"{tag}: Done on a file changed since it was shown writes nothing and says so", s["toast"])
     page.evaluate("(t) => { window.__needsText = t; window.__republish(); }", needs)
+    page.wait_for_timeout(200)
+    # A problem from the last read clears as soon as Done writes a file the room reads, not at the next read.
+    page.evaluate("window.__noFollow = true; window.__needs.onmessage({ path: 'C:/demo/needs-you.md', text: window.__needsText, problem: 'The Needs you file could not be read: test' })")
+    shown = page.evaluate("!document.querySelector('#needs-room .ny-problem').hidden")
+    page.locator(".ny-item .ny-done").first.click()
+    page.wait_for_timeout(150)
+    gone = page.evaluate("document.querySelector('#needs-room .ny-problem').hidden")
+    run.check(shown and gone, f"{tag}: Done's written file clears the last read's problem line", [shown, gone])
+    page.evaluate("(t) => { window.__noFollow = false; window.__needsText = t; window.__republish(); }", needs)
     page.wait_for_timeout(200)
     # N, A and Esc do nothing behind a dialog.
     page.evaluate("document.getElementById('portrait').showModal()")
