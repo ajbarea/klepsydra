@@ -2,7 +2,8 @@
 # watch-panes.sh PANE...: exit with a reason once any pane sits at its prompt
 # with no turn running for IDLE_S (default 300) after printing a "done" line,
 # stops on a usage limit (a pane already limited when the watcher starts is
-# watched once its limit clears), or is gone, or once the CI watch logs a red run for
+# watched once its limit clears), is gone, or is open with its agent dead
+# (DEAD: the process ended, or a shell is in front), or once the CI watch logs a red run for
 # the orchestrator (ci/alerts.jsonl: main, a branch no agent is on, or one
 # still red 30 min after it was routed). Run it in the background so the
 # orchestrator is woken when an agent finishes or CI needs him.
@@ -12,7 +13,7 @@ here=$(dirname "$(readlink -f "$0")")
 # shellcheck source=fleet/lib.sh
 . "$here/lib.sh"
 IDLE_S=${IDLE_S:-300}
-declare -A since
+declare -A since shell_seen
 ALERTS=$FLEET_STATE/ci/alerts.jsonl SEEN=$FLEET_STATE/ci/alerts.seen
 # The alert lines read so far, kept across watchers so none is missed between
 # two; the first watcher starts at the end, so old alerts wake nobody.
@@ -86,10 +87,30 @@ while :; do
     put_seen "$WAKE_SEEN"
     exit 0
   fi
+  panes_info=$(t list-panes -s -t "$FLEET_SESSION" -F "#{pane_id}"$'\t'"$PANE_DEAD_FMT" 2>/dev/null)
+  declare -A pane_lines=()
+  while IFS= read -r _line; do
+    [[ -n $_line ]] && pane_lines[${_line%%$'\t'*}]=$_line
+  done <<<"$panes_info"
   for p in "$@"; do
-    if ! fleet_panes | grep -qx "$p"; then
+    if [[ -z ${pane_lines[$p]+set} ]]; then
       flog INFO "watched pane gone" pane="$p"; echo "GONE $p"; exit 0
     fi
+    # Open but with no agent in it (#288): a crash at once, a shell in front on
+    # the second look in a row (a starting command shows one for a moment).
+    if [[ ${pane_lines[$p]} == *$'\t'* ]]; then
+      IFS=$'\t' read -r _ dead st sig pid cmd mark <<<"${pane_lines[$p]}"
+      if pane_dead_reason "$dead" "$st" "$sig" "$pid" "$cmd" "$mark"; then
+        if [[ $DEAD_WHY == *prompt* && -z ${shell_seen[$p]:-} ]]; then
+          shell_seen[$p]=1
+          flog INFO "watched pane shows a shell in front; looking again next tick" pane="$p" reason="$DEAD_WHY"
+          continue
+        fi
+        flog WARN "watched pane's agent is dead: the pane is open with nothing running" pane="$p" reason="$DEAD_WHY"
+        echo "DEAD $p ($DEAD_WHY)"; exit 0
+      fi
+    fi
+    unset "shell_seen[$p]"
     s=$(screen "$p")
     screen_parse "$s"
     ps=$SCR_PLAIN
