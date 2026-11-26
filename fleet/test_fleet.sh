@@ -507,6 +507,13 @@ check "#416: ... and so does a 1000 s timer" "$(beat "$AGY_SID")" "agy-worker"$'
 claproc=$work/claproc
 mkdir -p "$claproc/78920"
 printf '78920 (claude) S 1 %s\n' "$(seq -s ' ' 2 18) 4343 $(seq -s ' ' 20 48)" >"$claproc/78920/stat"
+# The Claude session file as the hook writes it, its process in the fake /proc:
+# the first pass resolves the pane and remembers that process (r3 S1).
+jq -c '.claude = {pid: 78920, start: 4343}' "$KLEPSYDRA_DIR/fleet/$CLA_SID.json" >"$work/cla.json" &&
+  mv -f "$work/cla.json" "$KLEPSYDRA_DIR/fleet/$CLA_SID.json"
+# shellcheck disable=SC2016 # expanded by the inner bash
+check "#416: a Claude pane's process is remembered from its own session file" \
+  "$(FLEET_PROC=$claproc bash -c '. "$1/resume-at-reset.sh"; NOW=$2; update_heartbeat "$3" x; echo "${pane_claude[$3]:-none}"' _ "$here" "$noon" "$p_cla" 2>/dev/null)" "78920 4343"
 # shellcheck disable=SC2016 # expanded by the inner bash
 hbreach() { # PROC_ROOT: "looked up" when update_heartbeat went past its Claude cache
   FLEET_PROC=$1 bash -c '. "$1/resume-at-reset.sh"; NOW=$2
@@ -517,14 +524,13 @@ check "#416: a pane whose Claude still runs is not looked up again" "$(hbreach "
 check "#416 r2: once that Claude process is gone, the pane is looked up again" "$(hbreach "$work/noproc")" "looked up"
 if command -v strace >/dev/null; then
   # shellcheck disable=SC2016 # expanded by the inner bash
-  hbforks() { # COMMAND
+  hbforks() { # PASSES: the forks of that many update_heartbeat passes on the Claude pane
     FLEET_PROC=$claproc strace -f -qq -e trace=clone,clone3,fork,vfork -o "$work/hb.st" bash -c \
-      '. "$1/resume-at-reset.sh"; NOW=$2; pane_claude[$3]="78920 4343"; '"$1" _ "$here" "$noon" "$p_cla" 2>/dev/null
+      '. "$1/resume-at-reset.sh"; NOW=$2; for ((i = 0; i < $4; i++)); do update_heartbeat "$3" x; done' \
+      _ "$here" "$noon" "$p_cla" "$1" 2>/dev/null
     grep -cE '^[0-9]+ +(clone|clone3|fork|vfork)\(' "$work/hb.st"
   }
-  # shellcheck disable=SC2016 # expanded by the inner bash
-  check "#416: update_heartbeat on a known Claude pane forks nothing" \
-    "$(( $(hbforks 'update_heartbeat "$3" x') - $(hbforks ':') ))" 0
+  check "#416: after its first pass, a Claude pane forks nothing a pass" "$(( $(hbforks 3) - $(hbforks 1) ))" 0
 else
   echo "  skip #416 fork budget: no strace"
 fi

@@ -40,6 +40,10 @@ pane's live child shells. Claude's readings stay as on main.
   `ended` test never matched the hook's `{reason, at}` object. Now the fast
   path holds only while the pane's Claude process (pid + start, read from
   /proc, no fork) runs; tests: still running = not looked up, gone = looked up.
+- Review r3 (on a781016): the r2 fix holds and opened nothing new; 1
+  Should-fix (test only): the cache was hand-filled in every test. Now the
+  first pass fills it from a session file in the hook's format, and the fork
+  count is 3 passes less 1; deleting the fill line turns both red.
 
 ## Verify
 - `make test-delegate` (takes the heavy lock)
@@ -49,6 +53,6 @@ pane's live child shells. Claude's readings stay as on main.
 - `cd src-tauri && cargo test -p klepsydra-fleet view`
 
 ## Next
-1. 📋 Review r3 (fresh Opus) on the r2 fix, CI green, merge,
+1. 📋 Verify pass on the r3 test fix, CI green, merge,
    then `fleet install` (touches hooks and fleet scripts).
 2. Follow-up: one shared copy of `live_shells` with the hooks-common work.
