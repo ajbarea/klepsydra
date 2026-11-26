@@ -36,6 +36,10 @@ pane's live child shells. Claude's readings stay as on main.
   `live_shells` array renamed (`callers`); resume-at-reset.sh finds its
   folder from BASH_SOURCE so sourcing it never runs a pass. Mutants: no fast
   path, no status-line footer: each red.
+- Review r2 (on 78060e0): 1 Should-fix (vacuous-guard): the fast path's
+  `ended` test never matched the hook's `{reason, at}` object. Now the fast
+  path holds only while the pane's Claude process (pid + start, read from
+  /proc, no fork) runs; tests: still running = not looked up, gone = looked up.
 
 ## Verify
 - `make test-delegate` (takes the heavy lock)
@@ -45,6 +49,6 @@ pane's live child shells. Claude's readings stay as on main.
 - `cd src-tauri && cargo test -p klepsydra-fleet view`
 
 ## Next
-1. 📋 Review r2 (fresh Opus) on the r1 fixes, CI green, merge,
+1. 📋 Review r3 (fresh Opus) on the r2 fix, CI green, merge,
    then `fleet install` (touches hooks and fleet scripts).
 2. Follow-up: one shared copy of `live_shells` with the hooks-common work.

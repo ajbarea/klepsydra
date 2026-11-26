@@ -720,23 +720,20 @@ test("the Ledger is a labelled side panel dialog with a Close button that links 
     assert.match(dialog, new RegExp(`class="ledger-${part}[" ]`), `the shared panel's ${part}`);
   }
   assert.match(html, /<button type="button" id="ledger-open" aria-controls="ledger" aria-expanded="false">Ledger<\/button>/);
-  // The shut panel's tab, outside the dialog, and before the Queue's so the two read in the edge's order.
+  // The shut panel's tab, outside the dialog.
   assert.match(html, /<\/dialog>\s*<button type="button" id="ledger-tab" class="ledger-tab" aria-label="Open Ledger" aria-controls="ledger"[^>]*>Ledger<\/button>/);
-  assert.ok(html.indexOf('id="ledger-tab"') < html.indexOf('id="queue-tab"'));
   const drawer = read("src/fleet/drawer.js");
-  assert.match(drawer, /createSidePanel\(\{\s*name: "ledger"/, "the Queue's panel, not a copy");
+  assert.match(drawer, /createSidePanel\(\{\s*name: "ledger"/, "the shared side panel, not a copy");
   assert.match(drawer, /returnTo: \(\) => \(usable\(opener\) \? opener : button\)/, "focus returns to the opener, else the button");
   assert.match(read("src/fleet/sidepanel.js"), /dialog\.showModal\(\)/, "modal below the dock width and in full, so the wall behind it is inert");
   assert.doesNotMatch(drawer, /innerHTML|insertAdjacentHTML|href|<a\b|https?:/, "text nodes only, and no link to follow");
   assert.doesNotMatch(dialog, /<a\b|href/);
 });
 
-test("the side panel module writes no markup, and the Queue and the Ledger both run on it", () => {
+test("the side panel module writes no markup, and the Ledger runs on it", () => {
   const side = "src/fleet/sidepanel.js";
   assert.ok(FRONTEND.includes(side), `${side} is scanned`);
   assert.deepEqual(writesMarkup(read(side)), [], side);
-  const queue = read("src/fleet/queuepanel.js");
-  assert.match(queue, /createSidePanel\(\{ name: "queue"/);
   // One implementation: the snap, separator and text-size code lives in sidepanel.js alone.
   for (const f of ["src/fleet/queuepanel.js", "src/fleet/drawer.js", "src/fleet/wall.js"]) {
     assert.doesNotMatch(read(f), /setPointerCapture|function separatorKey|function snap\(|TEXT_SIZES\s*=|matchMedia\(`\(min-width/, f);
@@ -918,7 +915,7 @@ test("the listen check catches each way to listen elsewhere, and a bind that ski
 
 // The Queue panel renders a file other programs write. Its modules build
 // elements and text nodes only: no markup, no address to follow, no script.
-const QUEUE_RENDER = ["src/fleet/queue.js", "src/fleet/queuepanel.js"];
+const QUEUE_RENDER = ["src/fleet/queue.js", "src/fleet/queuepanel.js", "src/fleet/needs.js", "src/fleet/rooms.js"];
 const MARKUP = [
   /\binnerHTML\b/,
   /\bouterHTML\b/,
@@ -963,16 +960,13 @@ test("the queue renderer never writes markup, follows an address or uses markdow
   }
   assert.deepEqual(writesMarkup('b.setAttribute("aria-label", name); el.textContent = t; doc.createElement("pre")'), []);
   const html = read("src/wall.html");
-  const dialog = html.slice(html.indexOf('<dialog id="queue"'), html.indexOf("</dialog>", html.indexOf('<dialog id="queue"')));
-  assert.match(dialog, /^<dialog id="queue" class="queue" aria-label="Needs you and Queue">/);
-  assert.match(dialog, /role="separator" aria-orientation="horizontal" aria-label="Split between Needs you and Queue" aria-controls="needs-list queue-list" tabindex="0"/);
-  assert.ok(dialog.indexOf('id="needs-list"') < dialog.indexOf('id="queue-list"'), "Needs you over Queue");
-  assert.equal(dialog.match(/class="queue-content"/g).length, 2, "one content per list");
-  assert.match(dialog, /role="separator" aria-orientation="vertical" aria-label="Queue panel width"/);
-  assert.doesNotMatch(dialog, /<a\b|href|\u2014/);
-  assert.match(html, /id="ledger-open"[^>]*>Ledger<\/button>\s*<button type="button" id="queue-open" aria-controls="queue" aria-expanded="false"[^>]*>Queue<\/button>/, "beside Ledger");
-  // The shut panel's tab, outside the dialog.
-  assert.match(html, /<\/dialog>\s*<button type="button" id="queue-tab" class="queue-tab" aria-label="Open Queue" aria-controls="queue"[^>]*>Queue<\/button>/);
+  // The queue file folds under the Agents wall; the Needs you room is its own section (#386).
+  const file = html.slice(html.indexOf('<section id="queue-file"'), html.indexOf("</section>", html.indexOf('<section id="queue-file"')));
+  assert.match(file, /^<section id="queue-file" class="queue-file" aria-labelledby="queue-file-title" hidden>/);
+  assert.equal(file.match(/class="queue-content"/g).length, 1);
+  const room = html.slice(html.indexOf('<section id="needs-room"'), html.indexOf("</section>", html.indexOf('<section id="needs-room"')));
+  assert.match(room, /aria-labelledby="needs-title"/);
+  for (const part of [file, room]) assert.doesNotMatch(part, /<a\b|href|\u2014/);
 });
 
 test("the queue sample is never reachable inside the app, and the panel reads the file through one command", async () => {

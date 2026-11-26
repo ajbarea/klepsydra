@@ -25,8 +25,6 @@ session that stops answering reads as silent, never as working.
   until the next prompt, or reads "working?" at 10 minutes.
 - Name a session that keeps Claude Code's default display name (`my-app-3f`),
   which reaches no hook; it is named by its folder for now.
-- Queue panel, phase 2 (#86): tick a Needs you item from the panel, written
-  as an atomic replace refused when the file changed since it was read.
 
 ## Completed
 - 2026-11-16: Working cards show the latest thing the agent said mid-turn

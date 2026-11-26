@@ -777,6 +777,47 @@ pub async fn open_github(
     .into())
 }
 
+/// Open `url`, an https link already checked by `needs::link_in`, in the
+/// default browser: on Windows through the shell's URL association (an
+/// in-process call, as the jump's UI Automation is); on Linux through the
+/// launcher's `link`.
+pub fn open_link(url: &str) -> Result<(), String> {
+    if !klepsydra_fleet::needs::safe_url(url) {
+        return Err("Only an https link is opened.".into());
+    }
+    #[cfg(windows)]
+    {
+        use windows::core::{w, HSTRING};
+        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
+        use windows::Win32::UI::Shell::{
+            ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        // ShellExecuteEx's remarks: some shell extensions need a single-threaded apartment.
+        let _com = crate::jump::Com::enter(COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        let file = HSTRING::from(url);
+        // NOASYNC: COM is left as soon as this returns, so the launch finishes first.
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
+            lpVerb: w!("open"),
+            lpFile: windows::core::PCWSTR(file.as_ptr()),
+            nShow: SW_SHOWNORMAL.0,
+            ..Default::default()
+        };
+        // SAFETY: `info` and the strings it points at outlive the call.
+        unsafe { ShellExecuteExW(&mut info) }
+            .map_err(|e| format!("Windows could not open the link: {}", e.message()))
+    }
+    #[cfg(not(windows))]
+    {
+        logged("open link", None, || {
+            run_open("link", url, &[], JUMP_TIMEOUT, jump_timed_out)
+        })
+        .map(drop)
+    }
+}
+
 /// End session `id` as if /exit were typed in its terminal. The wall asks
 /// first and waits out its undo window before calling this.
 #[tauri::command]

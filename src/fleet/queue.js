@@ -131,6 +131,8 @@ export function toTree(tokens) {
       } else {
         n = node(BLOCK[t.type.replace(/_open$/, "")] ?? "div");
       }
+      // A list item's source lines, [first, past last): what Done removes from the file.
+      if (t.type === "list_item_open" && Array.isArray(t.map)) n.lines = [t.map[0], t.map[1]];
       const start = t.type === "ordered_list_open" ? Number(t.attrGet("start") ?? 1) : 1;
       if (Number.isInteger(start) && start !== 1) n.start = start;
       const align = ALIGN.exec(t.attrGet?.("style") ?? "");
@@ -198,64 +200,61 @@ export function sections(nodes, opened = () => undefined) {
   return out;
 }
 
+const isList = (n) => typeof n !== "string" && (n.tag === "ol" || n.tag === "ul");
+
+/** The items of the lists among `kids` that do not read as done; null when none is a list. */
+function openItemNodes(kids) {
+  let items = null;
+  for (const list of kids) {
+    if (!isList(list)) continue;
+    items ??= [];
+    for (const item of list.kids) if (typeof item !== "string" && item.tag === "li" && item.cls !== "q-done") items.push(item);
+  }
+  return items;
+}
+
+/**
+ * The Needs you file's open asks, in file order, each `{node, section}`
+ * (the section's title, null above the first): its Needs you section's
+ * items, else the top-level items, less those done, of every list at the top
+ * or directly in a section, as under "# Needs you" then "## Today". Null
+ * when it has neither. The header count is their number.
+ */
+export function asks(nodes) {
+  const needs = nodes.find((n) => typeof n !== "string" && n.tag === "details" && n.cls === "q-needs");
+  if (needs) return (openItemNodes(needs.kids) ?? []).map((node) => ({ node, section: needs.key }));
+  let out = null;
+  for (const n of nodes) {
+    if (typeof n === "string") continue;
+    const inIt = isList(n) ? openItemNodes([n]) : n.tag === "details" ? openItemNodes(n.kids) : null;
+    if (inIt === null) continue;
+    out ??= [];
+    for (const node of inIt) out.push({ node, section: n.tag === "details" ? n.key : null });
+  }
+  return out;
+}
+
+/** The number of `asks`, null when the file has no list to ask from. */
+export const asksCount = (nodes) => asks(nodes)?.length ?? null;
+
 /**
  * The visible top-level items of the first Needs you section that do not
- * read as done: counted from the nodes the panel shows, so the two agree.
- * Null when the file has no such section.
+ * read as done. Null when the file has no such section.
  */
 export function needsYouCount(nodes) {
   const needs = nodes.find((n) => typeof n !== "string" && n.tag === "details" && n.cls === "q-needs");
   if (!needs) return null;
-  return openItems(needs.kids) ?? 0;
+  return openItemNodes(needs.kids)?.length ?? 0;
 }
-
-const isList = (n) => typeof n !== "string" && (n.tag === "ol" || n.tag === "ul");
-
-/** The items of the lists among `kids` that do not read as done; null when none is a list. */
-function openItems(kids) {
-  let count = null;
-  for (const list of kids) {
-    if (!isList(list)) continue;
-    count ??= 0;
-    for (const item of list.kids) if (typeof item !== "string" && item.tag === "li" && item.cls !== "q-done") count++;
-  }
-  return count;
-}
-
-/**
- * The Needs you file's open asks: its Needs you section's, as
- * `needsYouCount`, else the top-level items, less those done, of every list
- * at the top or directly in a section, as under "# Needs you" then "## Today".
- * Null when it has neither.
- */
-export function asksCount(nodes) {
-  const inSection = needsYouCount(nodes);
-  if (inSection !== null) return inSection;
-  let count = openItems(nodes);
-  for (const n of nodes) {
-    if (typeof n === "string" || n.tag !== "details") continue;
-    const inIt = openItems(n.kids);
-    if (inIt !== null) count = (count ?? 0) + inIt;
-  }
-  return count;
-}
-
-/**
- * The header count: the Needs you file's asks while it is shown, else the
- * queue file's own Needs you section, as one file held both before the two
- * panels.
- */
-export const headerCount = (needs, queue) => (needs === null || needs === undefined ? queue ?? null : needs);
-
-/** The header button's text: never "needs you", which the session tally owns. */
-export const queueLabel = (count) => (count === null || count === undefined ? "Queue" : `Queue · ${count} for you`);
 
 /**
  * Build the tree with `doc`'s createElement and text nodes. `copy(text,
- * button, label)` runs for a Copy click; `label` is the button's own text. Only tags from the tree and the attributes
- * named here are ever set.
+ * button, label)` runs for a Copy click; `label` is the button's own text.
+ * `linkButtons` false leaves a link's Copy button out, for a list that
+ * offers its links itself. Only tags from the tree and the attributes named
+ * here are ever set.
  */
-export function build(nodes, doc, { copy }) {
+export function build(nodes, doc, { copy, linkButtons = true }) {
   const out = [];
   for (const n of nodes) {
     if (typeof n === "string") {
@@ -269,10 +268,10 @@ export function build(nodes, doc, { copy }) {
     if (n.key !== undefined) el.dataset.key = n.key;
     if (n.tag === "details") el.open = Boolean(n.open);
     if (n.text !== undefined) el.textContent = n.text;
-    else for (const k of build(n.kids, doc, { copy })) el.append(k);
+    else for (const k of build(n.kids, doc, { copy, linkButtons })) el.append(k);
     out.push(el);
     if (n.copy !== undefined) el.append(copyButton(doc, "Copy", "Copy code", n.copy, copy));
-    if (n.link) out.push(copyButton(doc, "Copy link", `Copy link: ${n.link}`, n.link, copy));
+    if (n.link && linkButtons) out.push(copyButton(doc, "Copy link", `Copy link: ${n.link}`, n.link, copy));
   }
   return out;
 }
@@ -293,17 +292,8 @@ export function render(text, opened) {
   return { nodes, count: needsYouCount(nodes) };
 }
 
-/** The Needs you file's markdown as its panel shows it: its nodes and its open asks (0 with no list). */
-export function renderAsks(text, opened) {
-  const nodes = sections(toTree(parse(text)), opened);
-  // A Needs you file with no list asks nothing of you.
-  return { nodes, count: asksCount(nodes) ?? 0 };
-}
-
 /** The empty state's line: a path with no file yet is not a fault. */
 export const EMPTY = "No queue yet. It shows here once this file is written.";
-/** The Needs you panel's: nothing asked of you yet. */
-export const EMPTY_NEEDS = "Nothing needs you yet. Asks show here once this file is written.";
 
 /**
  * What the panel shows for `view`: its elements, the count, and the problem

@@ -936,6 +936,11 @@ github() { # url
   open_on_desktop "$1"
 }
 
+link() { # url: an https link from the Needs you file, checked by the app first
+  [[ $1 == https://* && $1 != *[[:space:]]* ]] || fail "Only an https link opens."
+  open_on_desktop "$1"
+}
+
 case ${1:-} in
   new)
     if (( $# == 4 )) && [[ $3 == agy ]]; then new "$2" agy "$4"
@@ -947,6 +952,7 @@ case ${1:-} in
   voices) (( $# == 1 )) || fail "usage: klepsydra-launch.sh voices"; voices ;;
   folder) (( $# == 2 )) || fail "usage: klepsydra-launch.sh folder DIR"; folder "$2" ;;
   github) (( $# == 2 )) || fail "usage: klepsydra-launch.sh github URL"; github "$2" ;;
+  link) (( $# == 2 )) || fail "usage: klepsydra-launch.sh link URL"; link "$2" ;;
   jump) (( $# == 5 )) || fail "usage: klepsydra-launch.sh jump SOCKET PANE PID START"; jump "$2" "$3" "$4" "$5" ;;
   end) (( $# == 5 )) || fail "usage: klepsydra-launch.sh end SOCKET PANE PID START"; end_session "$2" "$3" "$4" "$5" ;;
   wrapup) (( $# == 5 )) || fail "usage: klepsydra-launch.sh wrapup SOCKET PANE PID START"; wrapup "$2" "$3" "$4" "$5" ;;
