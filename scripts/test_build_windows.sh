@@ -144,6 +144,10 @@ if [[ -n "${PWSH_SLEEP:-}" ]]; then
 fi
 EOF
 chmod +x "$work/bin/powershell.exe"
+# The stage's Windows path is derived by wslpath; this one names a fixed user.
+# shellcheck disable=SC2016 # the fake's own source: it expands when it runs
+printf '%s\n' '#!/usr/bin/env bash' 'printf "C:\\\\Users\\\\testuser\\\\%s\\n" "${2##*/}"' >"$work/bin/wslpath"
+chmod +x "$work/bin/wslpath"
 
 # A hung powershell is stopped at the time limit and reports the skip line.
 pwsh_hung_log="$work/pwsh_hung.log"
@@ -155,8 +159,7 @@ out_hung=$(
   PWSH_LOG="$pwsh_hung_log" \
   KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
   KLEPSYDRA_STAGE="klepsydra-build-test_hung" \
-  KLEPSYDRA_STAGE_WIN='C:\Users\testuser\klepsydra-build-test_hung' \
-  timeout 10s bash "$here/build-windows.sh" --check 2>&1
+  timeout -k 2s 10s bash "$here/build-windows.sh" --check 2>&1
 ) || rc_hung=$?
 
 check "hung run exits non-zero" "$rc_hung" 1
@@ -173,7 +176,7 @@ out_normal=$(
   PWSH_LOG="$pwsh_normal_log" \
   KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
   KLEPSYDRA_STAGE="klepsydra-build-test_normal" \
-  timeout 10s bash "$here/build-windows.sh" --check 2>&1
+  timeout -k 2s 10s bash "$here/build-windows.sh" --check 2>&1
 ) || rc_normal=$?
 
 check "normal run exits zero" "$rc_normal" 0
@@ -188,7 +191,7 @@ PWSH_EXIT=101 \
 PWSH_LOG="$pwsh_clippy_log" \
 KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
 KLEPSYDRA_STAGE="klepsydra-build-test_clippy" \
-timeout 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 || rc_clippy=$?
+timeout -k 2s 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 || rc_clippy=$?
 
 check "clippy error exits with powershell exit code" "$rc_clippy" 101
 check "clippy error does not run cleanup" "$(grep -cF 'Stop-Process' "$pwsh_clippy_log" 2>/dev/null || echo 0)" 0
@@ -200,7 +203,7 @@ PWSH_SLEEP=9999 \
 PWSH_LOG="$pwsh_sig_log" \
 KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
 KLEPSYDRA_STAGE="klepsydra-build-test_sig" \
-timeout 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 &
+timeout -k 2s 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 &
 build_pid=$!
 sleep 0.5
 kill -TERM "$build_pid" 2>/dev/null || true
@@ -215,12 +218,12 @@ pwsh_build_log="$work/pwsh_build.log"
 rc_build=0
 out_build=$(
   PATH="$work/bin:$PATH" \
-  FLEET_WINBUILD_TIMEOUT_S=1 \
+  FLEET_WINBUILD_BUILD_TIMEOUT_S=1 \
   PWSH_SLEEP=9999 \
   PWSH_LOG="$pwsh_build_log" \
   KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
   KLEPSYDRA_STAGE="klepsydra-build-test_bld" \
-  timeout 10s bash "$here/build-windows.sh" 2>&1
+  timeout -k 2s 10s bash "$here/build-windows.sh" 2>&1
 ) || rc_build=$?
 
 check "build timeout exits non-zero" "$rc_build" 1
@@ -237,9 +240,69 @@ PWSH_SLEEP="" \
 PWSH_LOG="$pwsh_neg_log" \
 KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
 KLEPSYDRA_STAGE="klepsydra-build-test_neg" \
-timeout 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 || rc_neg=$?
+timeout -k 2s 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 || rc_neg=$?
 
 check "negative timeout sanitized, normal run exits zero" "$rc_neg" 0
+
+# The --check limit does not cut the release build short (#560 scoped it to --check).
+pwsh_split_log="$work/pwsh_split.log"
+rc_split=0
+out_split=$(
+  PATH="$work/bin:$PATH" \
+  FLEET_WINBUILD_TIMEOUT_S=1 \
+  PWSH_SLEEP=2 \
+  PWSH_LOG="$pwsh_split_log" \
+  KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
+  KLEPSYDRA_STAGE="klepsydra-build-test_split" \
+  timeout -k 2s 20s bash "$here/build-windows.sh" 2>&1
+) || rc_split=$?
+# Its fake build makes no klepsydra.exe, so it ends at that check, not at a limit.
+check "the --check limit leaves the release build alone" \
+  "$rc_split $(grep -c 'hung after' <<<"$out_split") $(grep -c 'did not produce klepsydra.exe' <<<"$out_split")" "1 0 1"
+
+# A TERM to the script alone (not its process group) stops it at once.
+pwsh_term_log="$work/pwsh_term.log"
+PATH="$work/bin:$PATH" PWSH_SLEEP=30 PWSH_LOG="$pwsh_term_log" \
+  KLEPSYDRA_STAGE_ROOT="$work/stage_root" KLEPSYDRA_STAGE="klepsydra-build-test_term" \
+  bash "$here/build-windows.sh" --check >/dev/null 2>&1 &
+term_pid=$!
+sleep 1
+term_start=$SECONDS
+kill -TERM "$term_pid" 2>/dev/null
+for ((i = 0; i < 50; i++)); do kill -0 "$term_pid" 2>/dev/null || break; sleep 0.1; done
+kill -0 "$term_pid" 2>/dev/null && kill -KILL "$term_pid" 2>/dev/null
+rc_term=0
+wait "$term_pid" 2>/dev/null || rc_term=$?
+check "a TERM to the script alone exits 143 within 5 s and stops its stage" \
+  "$rc_term $(grep -cF 'Stop-Process' "$pwsh_term_log" 2>/dev/null || echo 0) $(( SECONDS - term_start < 5 ))" "143 1 1"
+
+# The stop refuses a path that is not this stage's folder, or carries a quote,
+# and never reaches powershell for it.
+refuse_log="$work/pwsh_refuse.log"
+refused() { # NAME WINPATH: rc, then how many stops reached powershell
+  local rc=0
+  : >"$refuse_log"
+  PATH="$work/bin:$PATH" PWSH_LOG="$refuse_log" stop_windows_stage_processes "$1" "$2" 2>/dev/null || rc=$?
+  echo "$rc $(grep -cF 'Stop-Process' "$refuse_log")"
+}
+check "the stop refuses a drive root" "$(refused klepsydra-build "C:\\")" "2 0"
+check "the stop refuses a home folder" "$(refused klepsydra-build 'C:\Users\x')" "2 0"
+check "the stop refuses another stage's folder" "$(refused klepsydra-build 'C:\Users\x\klepsydra-build-foo')" "2 0"
+check "the stop refuses a quote" "$(refused klepsydra-build "C:\\Users\\x'\\klepsydra-build")" "2 0"
+check "the stop refuses a stage name the stage check refuses" "$(refused Documents 'C:\Users\x\Documents')" "2 0"
+check "the stop accepts its own stage" "$(refused klepsydra-build "C:\\Users\\x\\klepsydra-build\\")" "0 1"
+# A stage whose derived Windows path carries a quote never reaches powershell.
+mkdir -p "$work/qbin"
+printf '%s\n' '#!/usr/bin/env bash' "printf 'C:\\\\Users\\\\it'\"'\"'s\\\\%s\\n' \"\${2##*/}\"" >"$work/qbin/wslpath"
+chmod +x "$work/qbin/wslpath"
+q_log="$work/pwsh_q.log"
+rc_q=0
+PATH="$work/qbin:$work/bin:$PATH" PWSH_LOG="$q_log" KLEPSYDRA_STAGE_ROOT="$work/stage_root" \
+  KLEPSYDRA_STAGE=klepsydra-build-test_q timeout -k 2s 10s bash "$here/build-windows.sh" --check >/dev/null 2>&1 || rc_q=$?
+check "a derived stage path with a quote is refused" "$rc_q $("$work/qbin/wslpath" -w /x/klepsydra-build-test_q)" "2 C:\\Users\\it's\\klepsydra-build-test_q"
+# shellcheck disable=SC2016 # PowerShell source text, matched literally
+check "the stop never matches its own process" \
+  "$(stop_script X 'C:\Users\x\klepsydra-build' | grep -cF '$_.ProcessId -ne $PID')" 1
 
 printf '%d passed, %d failed\n' "$pass" "$fail"
 finished=1

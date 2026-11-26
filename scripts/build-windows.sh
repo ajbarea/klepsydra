@@ -29,14 +29,22 @@ stage_filter() {
 END
 }
 
+# Refuses a Windows stage path the stop or a cd could misuse: the stage name
+# must be valid and be the path's last component, and a quote would end the
+# PowerShell string it is pasted into.
+check_stage_win() { # NAME WINPATH
+  local name=$1 win=${2%[\\/]}
+  if [[ ! $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ || $win == *"'"* || ${win##*[\\/]} != "$name" ]]; then
+    echo "build-windows: refusing Windows stage path '$2' for stage $name" >&2
+    return 2
+  fi
+}
+
 # Stops any Windows process whose command line targets this stage folder.
 stop_windows_stage_processes() {
-  local name=$1
-  local stage_target=${2:-C:\\Users\\$USER\\$name}
-  if [[ ! $name =~ ^klepsydra-build(-[A-Za-z0-9._]+)?$ ]]; then
-    return 0
-  fi
-  timeout 15s powershell.exe -NoProfile -Command \
+  local name=$1 stage_target=$2
+  check_stage_win "$name" "$stage_target" || return 2
+  timeout -k 5s 15s powershell.exe -NoProfile -Command \
     "$(stop_script 'Get-CimInstance Win32_Process' "$stage_target")" 2>/dev/null || true
 }
 
@@ -49,23 +57,34 @@ stop_script() {
     "$1" "$(stage_filter "$2")"
 }
 
-# Runs powershell under a time limit, stopping stage processes on timeout.
+# Runs powershell under a time limit, stopping stage processes on timeout:
+# FLEET_WINBUILD_TIMEOUT_S (1800) for --check, FLEET_WINBUILD_BUILD_TIMEOUT_S
+# (3600) for the release build, whose first run in a new stage starts cold.
+# The run waits in the background, so a TERM or Ctrl-C reaches the trap at once.
 run_powershell() {
-  local timeout_s=${FLEET_WINBUILD_TIMEOUT_S:-1800}
+  local timeout_s default=1800
+  if [[ ${check_mode:-0} == 1 ]]; then
+    timeout_s=${FLEET_WINBUILD_TIMEOUT_S:-1800}
+  else
+    timeout_s=${FLEET_WINBUILD_BUILD_TIMEOUT_S:-3600} default=3600
+  fi
   if [[ ! $timeout_s =~ ^[0-9]+$ ]] || (( timeout_s <= 0 )); then
-    timeout_s=1800
+    timeout_s=$default
   fi
   local min=$(( (timeout_s + 59) / 60 ))
   local stage=${stage_name:-${KLEPSYDRA_STAGE:-klepsydra-build}}
   local win=${stage_win:-C:\\Users\\$USER\\$stage}
 
   local rc=0
-  timeout --foreground -k 10s "${timeout_s}s" powershell.exe "$@" || rc=$?
+  timeout --foreground -k 10s "${timeout_s}s" powershell.exe "$@" &
+  run_pid=$!
+  wait "$run_pid" || rc=$?
+  run_pid=""
 
   if (( rc == 124 || rc == 137 )); then
     cleaned_up=1
     stop_windows_stage_processes "$stage" "$win"
-    if [[ ${check_mode:-0} == 1 || ${*:-} =~ --check|cargo\ (clippy|test) ]]; then
+    if [[ ${check_mode:-0} == 1 ]]; then
       echo "build-windows: hung after $min min; skip the local Windows check, CI windows-latest covers it" >&2
     else
       echo "build-windows: hung after $min min" >&2
@@ -85,19 +104,24 @@ stage_root=${KLEPSYDRA_STAGE_ROOT:-/mnt/c/Users/$USER}
 stage="$stage_root/$stage_name"
 check_stage "$stage_name" "$stage" || exit 2
 
-if [[ -n ${KLEPSYDRA_STAGE_WIN:-} ]]; then
-  stage_win=$KLEPSYDRA_STAGE_WIN
-elif [[ -n ${KLEPSYDRA_STAGE_ROOT:-} ]]; then
+# The Windows path of the stage, derived from the stage itself, never given.
+if [[ -n ${KLEPSYDRA_STAGE_ROOT:-} ]]; then
   stage_win=$(wslpath -w "$stage" 2>/dev/null || printf 'C:\\Users\\%s\\%s\n' "$USER" "$stage_name")
 else
   stage_win="C:\\Users\\$USER\\$stage_name"
 fi
+check_stage_win "$stage_name" "$stage_win" || exit 2
 
 cleaned_up=0
 build_log=""
+run_pid=""
 
 on_signal() {
   local sig=$1
+  if [[ -n $run_pid ]]; then
+    kill -TERM "$run_pid" 2>/dev/null || true
+    wait "$run_pid" 2>/dev/null || true
+  fi
   if (( cleaned_up == 0 )); then
     cleaned_up=1
     stop_windows_stage_processes "$stage_name" "$stage_win"
