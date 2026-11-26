@@ -106,7 +106,7 @@ finish_now() { # NAME PANE SID
   rm -f -- "${fin:?}"
   echo "$moved"
 }
-# Sends the report and keeps its record (done-reports.tsv: time, name, pane, result).
+# Sends the report and keeps its record (done-reports.tsv: time, name, pane, result, report).
 deliver_report() {
   local orch got msg at
   msg="$label finished: $report"

@@ -2618,6 +2618,8 @@ t kill-window -t "$w4" 2>/dev/null; t kill-window -t "$w5" 2>/dev/null
 : >"$REGISTRY"; rm -f "$FLEET_STATE/finished.tsv" "$FLEET_STATE/orchestrator.pane" "$DONE_REPORTS" "$KLEPSYDRA_DIR/fleet/$SID.json"
 
 echo "fleet done reports must reach the orchestrator (durable inbox: #367)"
+export FLEET_CLOSE_QUIET=1 FLEET_CLOSE_EXIT_WAIT=5
+printf '# Fleet queue\n\n## Running now\nChecked: Tue.\n\n- ✅ **other:** unchanged.\n\n## Next\n1. 📋 later\n' >"$FLEET_QUEUE_MD"
 rm -f "$DONE_REPORTS" "$FLEET_STATE/finished.tsv"
 : >"$REGISTRY"
 h367=$(pane hph367 '{"above":["idle"],"on_submit":"none"}')
@@ -2789,6 +2791,12 @@ done
 wait
 check "#367: concurrent appends and inbox ack --all lose no rows" \
   "$(awk -F'\t' '$2 ~ /^ack_c[0-9]+$/' "$DONE_REPORTS" | wc -l)" "20"
+
+# 14. a row whose time jq cannot format does not hide the inbox
+printf '99999999999999999999999\tbadtime\t%%9\tnot-pasted\tx\n' >>"$DONE_REPORTS"
+with_registry dr_append "$(date +%s)" wrk_late %98 not-pasted "late report"
+check "#367: a corrupt row's neighbour is still listed" \
+  "$(bash "$here/fleet" inbox 2>&1 | grep -c 'wrk_late .*late report')" "1"
 
 t kill-window -t "$h367" 2>/dev/null; t kill-window -t "$w_busy" 2>/dev/null
 t kill-window -t "$w_lim" 2>/dev/null; t kill-window -t "$w_gone" 2>/dev/null

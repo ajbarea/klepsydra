@@ -52,7 +52,7 @@ read_reports_json() { # SHOW_ALL (0|1)
   jq -Rsc --argjson now "$now" --argjson all "$show_all" '
     split("\n")
     | map(select(length > 0) | split("\t"))
-    | map(select((.[0] // "") | test("^[0-9]+$")))
+    | map(select((.[0] // "") | test("^[0-9]{1,12}$")))
     | map(
         (.[0] | tonumber) as $at
         | (.[3] // "") as $res
@@ -71,12 +71,12 @@ read_reports_json() { # SHOW_ALL (0|1)
           }
       )
     | if $all == 1 then . else map(select(.status == "pending")) end
-  ' "$DONE_REPORTS" 2>/dev/null
+  ' "$DONE_REPORTS" || { err "fleet inbox: $DONE_REPORTS could not be read"; return 1; }
 }
 
 case $cmd in
   list)
-    items=$(read_reports_json "$all")
+    items=$(read_reports_json "$all") || exit 1
     count=$(jq 'length' <<<"$items" 2>/dev/null || echo 0)
     if (( count == 0 )); then
       if (( json )); then
@@ -114,7 +114,7 @@ case $cmd in
       err "no orchestrator pane"
       exit 1
     fi
-    items=$(read_reports_json 0)
+    items=$(read_reports_json 0) || exit 1
     targets=("$@")
     if (( ${#targets[@]} == 0 )) || [[ ${targets[0]} == --all ]]; then
       mapfile -t targets < <(jq -r '.[].name' <<<"$items" 2>/dev/null | sort -u)

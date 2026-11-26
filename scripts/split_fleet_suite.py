@@ -125,6 +125,7 @@ TABLE = [
         [
             r"^a finished agent is never relaunched",
             r"^fleet done reports the finish",
+            r"^fleet done reports must reach the orchestrator",
             r"^relaunch never leaves two agents on one row",
         ],
     ),
