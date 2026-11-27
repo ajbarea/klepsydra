@@ -40,6 +40,7 @@ import pathlib
 import sys
 import threading
 import time
+import traceback
 
 from playwright.sync_api import sync_playwright
 
@@ -2611,6 +2612,12 @@ def reply_buttons(wall):
     plays, Play again once it ends or is pressed; a card without one has none."""
     page = open_app(wall)
     page.evaluate(f"window.__clip = {WAV_JS}")
+    page.evaluate("""() => {
+      const audio = document.getElementById('reply-audio');
+      window.__audioPlayed = false;
+      audio.play = () => { window.__audioPlayed = true; return Promise.resolve(); };
+      audio.pause = () => {};
+    }""")
     want = sorted(s["session_id"] for s in page.snapshot["sessions"] if "reply_at" in s)
     shown = page.evaluate("[...document.querySelectorAll('.card')].filter((c) => c.querySelector('.play').checkVisibility()).map((c) => c.dataset.key).sort()")
     wall.check(shown == want and len(want) == 10, "a play button on exactly the cards keryx kept a reply for", [len(shown), len(want)])
@@ -2619,14 +2626,20 @@ def reply_buttons(wall):
     name = page.locator(f'.card[data-key="{key}"] .name').text_content()
     before = button.get_attribute("aria-label")
     button.click()
+    page.wait_for_function("window.__audioPlayed")
     page.wait_for_selector(f'.card[data-key="{key}"] .play.playing')
     during = button.get_attribute("aria-label")
     sent = page.evaluate("window.__calls.filter(([c]) => c === 'reply_clip')")
-    page.wait_for_selector(f'.card[data-key="{key}"] .play:not(.playing)', timeout=5000)
+    src = page.evaluate("document.getElementById('reply-audio').src")
+    page.evaluate("document.getElementById('reply-audio').dispatchEvent(new Event('ended'))")
+    page.wait_for_selector(f'.card[data-key="{key}"] .play:not(.playing)')
     wall.check(
-        before == f"Play {name}'s last reply" and during == f"Stop {name}'s reply" and sent == [["reply_clip", {"id": key}]],
+        before == f"Play {name}'s last reply"
+        and during == f"Stop {name}'s reply"
+        and sent == [["reply_clip", {"id": key}]]
+        and src.startswith("blob:"),
         "a press reads that session's clip and plays it, Stop while it plays, Play once it ends",
-        [before, during, sent],
+        [before, during, sent, src],
     )
     page.evaluate("window.__clip = null")
     button.click()
@@ -4953,7 +4966,16 @@ def main() -> int:
         )
         for case in cases:
             if not only or case.__name__ in only:
-                case(wall)
+                try:
+                    case(wall)
+                except Exception as exc:
+                    traceback.print_exc(file=sys.stderr)
+                    wall.check(False, f"{case.__name__} raised {type(exc).__name__}", str(exc))
+                finally:
+                    for ctx in list(browser.contexts):
+                        for pg in list(ctx.pages):
+                            if not pg.is_closed():
+                                pg.close()
         browser.close()
     server.shutdown()
     print(f"{wall.passed} passed, {wall.failed} failed")
