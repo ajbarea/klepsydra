@@ -68,7 +68,7 @@ check "with no cgroup limit, a machine short of memory does the same" \
   "$(grep -c 'extended-analysis=false' <<<"$out") $(grep -c '1953 MiB of room' <<<"$out")" "1 1"
 check "FLEET_SHELLCHECK_ALL=1 runs it in full regardless" "$(run FLEET_SHELLCHECK_ALL=1 -- -x "$big")" "checked: -x -- $big
 rc=0"
-check "so does CI" "$(run CI=true -- -x "$big")" "checked: -x -- $big
+check "so does CI (and requests json for GitHub annotations)" "$(run CI=true -- -x "$big")" "checked: -f json -x -- $big
 rc=0"
 check "small and big files each go to their own run" "$(run -- -x "$small" "$big" | grep -c '^checked:')" "2"
 cp "$small" "$work/bad.sh"
@@ -105,6 +105,40 @@ check "a missing file is quiet: no shell error before the checker's own" "$(run 
 check "after --, every word is a file, and the reduced flags stay before it" \
   "$(run -- -x -- "$big" | grep -c "^checked: $R -x -- $big\$")" "1"
 check "no file at all goes to shellcheck, which reports it" "$(run -- -x)" "checked: -x
+rc=0"
+
+# In CI (CI or GITHUB_ACTIONS set), JSON findings become GitHub ::error annotations;
+# an explicit -f/--format keeps the caller's format.
+cat >"$work/json-shellcheck" <<'STUB'
+#!/usr/bin/env bash
+for a; do
+  if [[ $a == *bad* ]]; then
+    printf '[{"file":"%s","line":2,"endLine":2,"column":6,"endColumn":10,"level":"warning","code":2154,"message":"100%% bad: a, b\\nline2"}]\n' "$a"
+    exit 1
+  fi
+done
+printf '[]\n'
+STUB
+chmod +x "$work/json-shellcheck"
+weird="$work/a,b:c.sh"
+printf 'echo hi\n' >"$weird"
+bad_weird="$work/bad,a:b.sh"
+printf 'echo hi\n' >"$bad_weird"
+esc_bad_weird=${bad_weird//,/\%2C}
+esc_bad_weird=${esc_bad_weird//:/\%3A}
+out=$(run SHELLCHECK_BIN="$work/json-shellcheck" CI=true -- -x "$bad_weird")
+check "CI turns JSON findings into escaped ::error annotations and keeps exit code" "$out" \
+  "::error title=shellcheck (SC2154),file=${esc_bad_weird},line=2,col=6,endLine=2,endColumn=10::${bad_weird}:2:6: warning: 100%25 bad: a, b%0Aline2 [SC2154]
+rc=1"
+out=$(run SHELLCHECK_BIN="$work/json-shellcheck" GITHUB_ACTIONS=true -- -x "$weird")
+check "GITHUB_ACTIONS with clean JSON emits nothing and exits 0" "$out" "rc=0"
+check "CI respects explicit -f gcc" "$(run CI=true -- -x -f gcc "$small")" "checked: -x -f gcc -- $small
+rc=0"
+check "CI respects grouped -xf gcc" "$(run CI=true -- -xf gcc "$small")" "checked: -xf gcc -- $small
+rc=0"
+check "CI respects --format=tty" "$(run CI=true -- --format=tty "$small")" "checked: --format=tty -- $small
+rc=0"
+check "CI respects -P/tmp/f (f in value, not format)" "$(run CI=true -- -P/tmp/f "$small")" "checked: -f json -P/tmp/f -- $small
 rc=0"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

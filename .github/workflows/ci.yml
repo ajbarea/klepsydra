@@ -120,7 +120,9 @@ jobs:
       - name: Briefing mirror refusal tests
         run: bash fleet/test_sync_mirror.sh
       - name: Shell lint
-        run: make shellcheck SHELLCHECK=shellcheck FLEET_HEAVY_HELD=1
+        env:
+          SHELLCHECK_BIN: shellcheck
+        run: make shellcheck FLEET_HEAVY_HELD=1
       - name: Shell lint runner tests
         run: make test-shellcheck
       # The install dir is writable only because the NSIS mode is currentUser;

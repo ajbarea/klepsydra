@@ -11,8 +11,9 @@
 # runs, and CI runs them all. SC2086 is left out of those runs too: it reads values
 # through dataflow (ShellCheck 0.9.0 changelog), and without it flagged 73 safe
 # expansions in this tree (11-24), all of which the full check clears. Full analysis
-# always on CI (CI or GITHUB_ACTIONS set) or with FLEET_SHELLCHECK_ALL=1. The exit
-# status is the checker's own: no file is skipped.
+# always on CI (CI or GITHUB_ACTIONS set) or with FLEET_SHELLCHECK_ALL=1;
+# in CI (unless -f/--format is passed), findings emit GitHub ::error annotations.
+# The exit status is the checker's own: no file is skipped.
 set -uo pipefail
 
 read -r -a sc <<<"${SHELLCHECK_BIN:-uvx --from shellcheck-py shellcheck}"
@@ -45,7 +46,19 @@ long_takes_next() { # OPTION
   return 1
 }
 
-opts=() small=() big=() ends=0
+# Whether a grouped short option includes -f before any value-taking option.
+short_has_format() { # GROUP
+  local g=${1#-} i
+  for (( i = 0; i < ${#g}; i++ )); do
+    case ${g:i:1} in
+      f) return 0 ;;
+      [CeioPsSW]) return 1 ;;
+    esac
+  done
+  return 1
+}
+
+opts=() small=() big=() ends=0 user_format=0
 while (( $# )); do
   f=$1; shift
   if (( !ends )) && [[ $f == -- ]]; then
@@ -53,8 +66,14 @@ while (( $# )); do
   elif (( !ends )) && [[ $f == -?* ]]; then
     opts+=("$f")
     case $f in
-      --*) long_takes_next "$f" && (( $# )) && { opts+=("$1"); shift; } ;;
-      *) short_takes_next "$f" && (( $# )) && { opts+=("$1"); shift; } ;;
+      --*)
+        [[ ${f%%=*} == --f* && --format == "${f%%=*}"* ]] && user_format=1
+        long_takes_next "$f" && (( $# )) && { opts+=("$1"); shift; }
+        ;;
+      *)
+        short_has_format "$f" && user_format=1
+        short_takes_next "$f" && (( $# )) && { opts+=("$1"); shift; }
+        ;;
     esac
   elif (( $( { wc -l <"$f"; } 2>/dev/null || echo 0) > big_lines )); then
     big+=("$f")
@@ -90,25 +109,50 @@ room_mib() {
   printf '%s' "${least:-unknown}"
 }
 
-full_room=0 room=""
-if [[ ${FLEET_SHELLCHECK_ALL:-} == 1 || -n ${CI:-} || -n ${GITHUB_ACTIONS:-} ]]; then
+full_room=0 ci_mode=0 room=""
+[[ -n ${CI:-} || -n ${GITHUB_ACTIONS:-} ]] && ci_mode=1
+if [[ ${FLEET_SHELLCHECK_ALL:-} == 1 ]] || (( ci_mode )); then
   full_room=1
 elif (( ${#small[@]} + ${#big[@]} )); then
   room=$(room_mib) # read once: the two runs follow one another
 fi
 
+run_sc() { # [FLAGS_AND_FILES...]
+  if (( !ci_mode || user_format )); then
+    "${sc[@]}" "$@"
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    "${sc[@]}" -f gcc "$@"
+    return
+  fi
+  local out rc
+  out=$("${sc[@]}" -f json "$@")
+  rc=$?
+  if [[ -n $out ]] && jq -e 'type == "array"' <<<"$out" >/dev/null 2>&1; then
+    jq -r '
+      def esc_data: tostring | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+      def esc_prop: esc_data | gsub(":"; "%3A") | gsub(","; "%2C");
+      .[] | "::error title=shellcheck (SC\(.code)),file=\(.file | esc_prop),line=\(.line),col=\(.column),endLine=\(.endLine),endColumn=\(.endColumn)::\("\(.file):\(.line):\(.column): \(.level): \(.message) [SC\(.code)]" | esc_data)"
+    ' <<<"$out"
+  elif [[ -n $out ]]; then
+    printf '%s\n' "$out"
+  fi
+  return "$rc"
+}
+
 check() { # NEED FILE...: in full when the room covers NEED, else without dataflow
   local need=$1 what; shift
   what=$*; (( $# > 3 )) && what="$# files"
   if (( full_room )) || { [[ $room =~ ^[0-9]+$ ]] && (( room >= need )); }; then
-    "${sc[@]}" "${opts[@]}" -- "$@"
+    run_sc "${opts[@]}" -- "$@"
   else
     local left="room unknown"
     [[ $room =~ ^[0-9]+$ ]] && left="$room MiB of room"
     printf 'note: %s checked without dataflow analysis or SC2086: %s, under the %s MiB it needs; CI runs the full check (FLEET_SHELLCHECK_ALL=1 runs it here)\n' \
       "$what" "$left" "$need" >&2
     # Before the caller's options, so an explicit --extended-analysis of theirs wins.
-    "${sc[@]}" --extended-analysis=false --exclude=SC2086 "${opts[@]}" -- "$@"
+    run_sc --extended-analysis=false --exclude=SC2086 "${opts[@]}" -- "$@"
   fi
 }
 
