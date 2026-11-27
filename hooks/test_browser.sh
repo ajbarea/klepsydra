@@ -293,6 +293,10 @@ check "settings: pre-tool only on the Playwright browser tools, never blocking, 
 m=$(jq -r '.hooks.PreToolUse[0].matcher' <<<"$settings")
 check "the matcher takes the plugin's and a plain server's browser tools, not another browser server's" \
   "$(for n in mcp__plugin_playwright_playwright__browser_click mcp__playwright__browser_navigate mcp__chrome__browser_navigate Bash; do [[ $n =~ $m ]] && echo y || echo n; done | paste -sd,)" "y,y,n,n"
+names="mcp__plugin_playwright_playwright__browser_click mcp__playwright__browser_navigate mcp__chrome__browser_navigate Bash mcp__plugin_playwright_playwright__browser_close mcp__x__browser_playwright_y"
+check "the hook's own tool test agrees with the matcher read as Claude Code reads it (a JavaScript RegExp, unanchored)" \
+  "$(node -e 'const m = new RegExp(process.argv[1]); console.log(process.argv.slice(2).map((n) => (m.test(n) ? "y" : "n")).join(","))' "$m" $names)" \
+  "$(for n in $names; do [[ $n =~ ^mcp__.*playwright.*__browser_ ]] && echo y || echo n; done | paste -sd,)"
 check "settings: the browser script, not async, a timeout that covers its wait" \
   "$(jq -c '.hooks.SessionEnd[0].hooks[0] | [(.command | ltrimstr("~")), has("async"), (.timeout >= 2)]' <<<"$settings")" '["/.claude/klepsydra-browser.sh",false,true]'
 check "make install-hooks installs it" "$(grep -c '"hooks/klepsydra-browser.sh klepsydra-browser.sh"' "$here/../fleet/lib.sh")" "1"
