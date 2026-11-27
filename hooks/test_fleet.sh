@@ -1797,6 +1797,7 @@ A10=aaaaaaaa-0000-4000-8000-000000000010 # an earlier boot, claude unknown
 A11=aaaaaaaa-0000-4000-8000-000000000011 # an earlier boot, idle over a day: left to the prune
 put $A1 working $OLD Ubuntu 500 8717628
 put $A2 'done' $B Ubuntu 4999 1
+jq -c '.browser = "open"' "$dir/fleet/$A2.json" >"$dir/fleet/$A2.t" && mv "$dir/fleet/$A2.t" "$dir/fleet/$A2.json"
 put $A3 working $B Ubuntu 500 8717628
 put $A4 working $B Debian 4999 1
 put $A5 working $B Ubuntu 500 1
@@ -1825,6 +1826,7 @@ check "this boot, claude unknown: unchanged" "$(state_of $A9)" "working/-"
 check "earlier boot, claude unknown: gone" "$(state_of $A10)" "ended/gone"
 check "idle over a day: left to the prune" "$(state_of $A11)|$(jq -c .written_at "$dir/fleet/$A11.json")" "working/-|$((now - 2 * 86400))"
 check "gone clears needs" "$(jq -c .needs "$dir/fleet/$A1.json")" "null"
+check "#533: gone drops the browser mark (no chip on an ended card)" "$(jq -c .browser "$dir/fleet/$A2.json")" "null"
 check "gone stamps when" "$(jq -c '[.ended.at, .state_at]' "$dir/fleet/$A1.json")" "[$now,$now]"
 rm -f "$dir"/fleet/aaaaaaaa-*.json
 # The firing session's own file is never marked, even with a dead pid on record

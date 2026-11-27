@@ -582,7 +582,7 @@ mark_gone() { # dir now self
     [[ $last =~ ^[0-9]+$ ]] || continue
     (( now - last > PRUNE_AFTER )) && continue
     new=$(jq -c --argjson now "$now" \
-      '.state = "ended" | .reason = "gone" | .needs = null | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now' \
+      '.state = "ended" | .reason = "gone" | .needs = null | .ended = {reason: "gone", at: $now} | .state_at = $now | .written_at = $now | del(.browser)' \
       "$dir/fleet/$f" 2>/dev/null) || continue
     [[ -n $new ]] && write_atomic "$dir/fleet/$f" "$new"
   done < <(fleet_rows "$dir/fleet" '[(.state | or_q), (.host.boot | or_q), (.host.distro | or_q),

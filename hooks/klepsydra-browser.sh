@@ -381,32 +381,52 @@ holds_browser() { # pid [walk]
   return 1
 }
 
-# Sets FILE's mark to STATE ("open" or "closed", or "" for none) under the
-# fleet hook's lock, only while the file is a live session's and its mark is
-# still FROM; a change to "closed" or none first checks again (a walk) that
-# claude PID holds no browser. Never waits past KLEPSYDRA_LOCK_WAIT_S (5).
-set_mark() { # file state from [pid]
-  local f=$1 lock new
+# Puts FILE's mark in step under the fleet hook's lock, deciding there from
+# the mark as it is now and claude PID (started at START) as it is now, so no
+# caller's earlier read can write a stale mark. MODE sync: "open" while PID
+# holds its MCP browser (a children walk), else "closed" for an "open" mark
+# and none for a "used" one; none once PID is gone. MODE tell: as sync, but a
+# confirmed mark ("open" or "closed") whose live PID holds none is dropped,
+# and only then does it succeed (the caller tells Claude). MODE close: none.
+# An ended session's file is never written; a write moves written_at (and
+# turns_at with it, as the fleet hook does). Never waits past
+# KLEPSYDRA_LOCK_WAIT_S (5).
+reconcile() { # file pid start sync|tell|close
+  local f=$1 pid=$2 start=$3 mode=$4 lock cur to told=1 now new
   if (( !MARK_LOCK_SET )); then
     MARK_LOCK_SET=1
     lock_dir && MARK_LOCK=$LOCK_DIR/klepsydra-fleet-$UID.lock
   fi
-  [[ -n $MARK_LOCK && -f $f && ! -L $f ]] || return 0
-  { exec {lock}>>"$MARK_LOCK"; } 2>/dev/null || return 0
-  if flock -w "${KLEPSYDRA_LOCK_WAIT_S:-5}" "$lock"; then
-    if [[ -z ${4:-} ]] || ! holds_browser "$4" walk; then
-      new=$(jq -c --arg to "$2" --arg from "$3" 'select(.ended == null and ((.browser | strings) // "") == $from)
-        | if $to == "" then del(.browser) else .browser = $to end' "$f") &&
-        [[ -n $new ]] && printf '%s\n' "$new" >"$f.$$.tmp" && mv -f -- "$f.$$.tmp" "$f"
+  [[ -n $MARK_LOCK && -f $f && ! -L $f ]] || return 1
+  { exec {lock}>>"$MARK_LOCK"; } 2>/dev/null || return 1
+  if flock -w "${KLEPSYDRA_LOCK_WAIT_S:-5}" "$lock" &&
+     cur=$(jq -r 'if .ended == null then "live " + ((.browser | strings) // "") else "ended" end' "$f") &&
+     [[ $cur == "live "* ]]; then
+    cur=${cur#live }
+    if [[ $mode == close ]] || ! proc_is "$pid" "$start"; then to=""
+    elif holds_browser "$pid" walk; then to=open
+    elif [[ $mode == tell && ( $cur == open || $cur == closed ) ]]; then to="" told=0
+    elif [[ $cur == open ]]; then to=closed
+    elif [[ $cur == used ]]; then to=""
+    else to=$cur; fi
+    if [[ $to != "$cur" ]]; then
+      now=${KLEPSYDRA_NOW:-}
+      [[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
+      new=$(jq -c --arg to "$to" --argjson now "$now" '(if $to == "" then del(.browser) else .browser = $to end)
+        | (if .turns_at == .written_at then .turns_at = $now else . end) | .written_at = $now' "$f") &&
+        [[ -n $new ]] && printf '%s\n' "$new" >"$f.$$.tmp" && mv -f -- "$f.$$.tmp" "$f" || told=1
       rm -f -- "$f.$$.tmp"
     fi
+  else
+    told=1
   fi
   exec {lock}>&-
-  return 0
+  return "$told"
 }
 
 # Every live session's mark in step with the open browsers: only for a session
-# of this boot and distro, whose pids this /proc shows.
+# of this boot and distro, whose pids this /proc shows. One scan picks the
+# sessions whose mark looks out of step; reconcile decides each under the lock.
 sync_marks() {
   local -A held=()
   local pid start ppid server claude dir name ended boot distro cpid cstart mark
@@ -419,14 +439,13 @@ sync_marks() {
     [[ $ended == 0 && $cpid =~ ^[0-9]+$ ]] || continue
     on_this_host "$boot" "$distro" || continue
     if ! proc_is "$cpid" "$cstart"; then
-      [[ -z $mark ]] || set_mark "$SESSIONS/$name" "" "$mark"
+      [[ -z $mark ]] && continue
     elif [[ -n ${held[$cpid]:-} ]]; then
-      [[ $mark == open ]] || set_mark "$SESSIONS/$name" open "$mark"
-    elif [[ $mark == open ]]; then
-      set_mark "$SESSIONS/$name" closed open "$cpid"
-    elif [[ $mark == used ]]; then
-      set_mark "$SESSIONS/$name" "" used "$cpid"
+      [[ $mark == open ]] && continue
+    else
+      [[ $mark == open || $mark == used ]] || continue
     fi
+    reconcile "$SESSIONS/$name" "$cpid" "$cstart" sync
   done < <(fleet_rows "$SESSIONS" "$MARK_FIELDS")
 }
 
@@ -451,16 +470,16 @@ pre_tool() {
   { IFS= read -r text <"$file"; } 2>/dev/null
   [[ $text =~ \"browser\":\"(used|open|closed)\" ]] || return 0
   mark=${BASH_REMATCH[1]}
-  [[ $tool == *__browser_close ]] && { set_mark "$file" "" "$mark"; return 0; }
+  [[ $tool == *__browser_close ]] && { reconcile "$file" "" "" close; return 0; }
   [[ $text =~ \"claude\":\{\"pid\":([0-9]+),\"start\":([0-9]+)\} ]] || return 0
   pid=${BASH_REMATCH[1]} start=${BASH_REMATCH[2]}
   proc_is "$pid" "$start" || return 0
   if [[ $mark == used ]]; then
-    holds_browser "$pid" walk && set_mark "$file" open used
+    holds_browser "$pid" walk && reconcile "$file" "$pid" "$start" sync
     return 0
   fi
   holds_browser "$pid" && return 0
-  set_mark "$file" "" "$mark" "$pid"
+  reconcile "$file" "$pid" "$start" tell || return 0
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$CLOSED_NOTE"
 }
 # --- end browser holders ---

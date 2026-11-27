@@ -367,7 +367,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         orchestrator: f.orchestrator,
         orchestrator_face: f.orchestrator_face.clone(),
         reply_at: None,
-        browser: f.browser,
+        browser: f.browser && f.ended.is_none(),
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
@@ -1678,5 +1678,10 @@ mod tests {
         assert!(json(&e).get("browser").is_none());
         e.file.browser = true;
         assert_eq!(json(&e)["browser"], serde_json::Value::Bool(true));
+        e.file.ended = Some(crate::session::Ended { at: NOW - 10 });
+        assert!(
+            json(&e).get("browser").is_none(),
+            "an ended card never shows the chip"
+        );
     }
 }

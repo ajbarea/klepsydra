@@ -203,8 +203,9 @@ blocked() { # pid
 }
 # A sync that read a mark, then waits for the lock while the file changes
 # under it: RACE-SETUP runs while it waits; it never writes a stale change.
-raced() { # SETUP
-  tree; sessions; sess $S1 100 1000 open; rm -rf -- "${P:?}/300"
+raced() { # SETUP [MARK (open)] [WINDOW: gone (default) or up]
+  tree; sessions; sess $S1 100 1000 "${2-open}"
+  [[ ${3:-gone} == up ]] || rm -rf -- "${P:?}/300"
   exec {held}>>"$lockfile"; flock "$held"
   ( exec {held}>&-; KLEPSYDRA_LOCK_WAIT_S=10 bash "$script" --sync ) & local bg=$!
   blocked "$bg"; "$1"; exec {held}>&-; wait "$bg"
@@ -213,12 +214,18 @@ raced() { # SETUP
 closed_by_hook() { jq -c 'del(.browser)' "$K/fleet/$S1.json" >"$K/t" && mv "$K/t" "$K/fleet/$S1.json"; }
 ended_meanwhile() { jq -c '.ended = {at: 1}' "$K/fleet/$S1.json" >"$K/t" && mv "$K/t" "$K/fleet/$S1.json"; }
 reopened() { proc 300 202 chrome /opt/google/chrome/chrome "--user-data-dir=$cache/mcp-chrome-c35bcf5"; }
+closed_itself() { rm -rf -- "${P:?}/300"; }
 race_drop() { raced closed_by_hook; }
-race_end() { raced ended_meanwhile; }
+race_end() { raced ended_meanwhile "" up; }
 race_back() { raced reopened; }
-check "a mark dropped while the sync waits stays dropped (no stale closed)" "$(raced closed_by_hook)" "- false"
-check "a session that ended while the sync waits is never written" "$(raced ended_meanwhile)" "open true"
-check "a window back while the sync waits is not called closed" "$(raced reopened)" "open false"
+race_close() { raced closed_itself "" up; }
+check "a mark dropped while the sync waits stays dropped (no stale closed)" "$(race_drop)" "- false"
+check "a session that ended while the sync waits is never written" "$(race_end)" "- true"
+check "a window back while the sync waits is not called closed" "$(race_back)" "open false"
+check "the agent's own close while the sync waits: no mark set open" "$(race_close)" "- false"
+tree; sessions; jq -c '.written_at = 5 | .turns_at = 5' "$K/fleet/$S1.json" >"$K/t" && mv "$K/t" "$K/fleet/$S1.json"
+check "a mark write moves written_at, and turns_at with it, as the fleet hook does" \
+  "$(KLEPSYDRA_NOW=$NOW bash "$script" --sync; jq -c '[.browser, .written_at, .turns_at]' "$K/fleet/$S1.json")" "[\"open\",$NOW,$NOW]"
 
 pw=mcp__plugin_playwright_playwright__browser
 pre() { # SID TOOL [payload spacing]
@@ -298,7 +305,7 @@ locked_sync() {
   mark $S1
 }
 check "locked_sync on the real script writes nothing" "$(locked_sync)" "-"
-hmutant "a sync that skips the fleet lock writes under it" 's/if flock -w "\${KLEPSYDRA_LOCK_WAIT_S:-5}" "\$lock"; then/if true; then/' locked_sync "open"
+hmutant "a sync that skips the fleet lock writes under it" 's/if flock -w "\${KLEPSYDRA_LOCK_WAIT_S:-5}" "\$lock" \&\&/if true \&\&/' locked_sync "open"
 nested() {
   tree; sessions; sess $S1 100 1000 open; rm -rf -- "${P:?}/300"
   proc 800 100 bash bash; proc 801 800 claude claude; proc 802 801 node node "$H/n/node_modules/@playwright/mcp/cli.js"
@@ -310,15 +317,16 @@ hmutant "a walk into a nested claude takes its browser as the caller's (silent)"
 scan_open() { NOKIDS=1 tree; sessions; sess $S1 100 1000 open; pre $S1 ${pw}_click; }
 hmutant "no fallback scan: no children files reads as closed" 's/\[\[ \$claude == "\$root" \]\] \&\& return 0/:/' scan_open \
   "$(printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\nrc=0' "$(sed -n "s/^CLOSED_NOTE='\(.*\)'$/\1/p" "$script")")"
-hmutant "a write without the mark check overwrites a drop made meanwhile" 's/((.browser | strings) \/\/ "") == \$from)/true)/' race_drop "closed false"
-hmutant "a write without the ended check writes an ended session" 's/select(.ended == null and /select(/' race_end "closed true"
-hmutant "no recheck under the lock calls a reopened window closed" 's/if \[\[ -z \${4:-} \]\] || ! holds_browser "\$4" walk; then/if true; then/' race_back "closed false"
+hmutant "closed decided without the mark read under the lock overwrites a drop made meanwhile" 's/    elif \[\[ \$cur == open \]\]; then to=closed/    elif true; then to=closed/' race_drop "closed false"
+hmutant "a write without the ended check writes an ended session" 's/\[\[ \$cur == "live "\* \]\]; then/true; then/' race_end "open true"
+hmutant "no walk under the lock calls a reopened window closed" 's/    elif holds_browser "\$pid" walk; then to=open/    elif false; then to=open/' race_back "closed false"
+hmutant "open decided before the lock marks a window the agent just closed open" 's/    elif holds_browser "\$pid" walk; then to=open/    elif true; then to=open/' race_close "open false"
 reused() { tree; sessions; sess $S1 100 999 open; rm -rf -- "${P:?}/300"; pre $S1 ${pw}_click | head -1 | note; }
-hmutant "no liveness check in pre-tool tells a dead claude's file" 's/  proc_is "\$pid" "\$start" || return 0/  :/' reused "$(printf 'PreToolUse\ttrue\tfalse')"
+hmutant "no liveness checks (pre-tool's and under the lock) tell a dead claude's file" 's/  proc_is "\$pid" "\$start" || return 0/  :/; s/ || ! proc_is "\$pid" "\$start"; then to=""/; then to=""/' reused "$(printf 'PreToolUse\ttrue\tfalse')"
 other_distro() { tree; sessions; sess $S4 700 7000 open null Other-Distro; rm -rf -- "${P:?}/700"; bash "$script" --sync; mark $S4; }
 hmutant "no host check drops another distro's mark" 's/^    on_this_host "\$boot" "\$distro" || continue$/    :/' other_distro "-"
 crashed() { tree; sessions; sess $S2 700 7000 open; rm -rf -- "${P:?}/700"; bash "$script" --sync; mark $S2; }
-hmutant "no liveness check keeps a dead claude's mark" 's/if ! proc_is "\$cpid" "\$cstart"; then/if false; then/' crashed "closed"
+hmutant "no liveness checks (the sync's and under the lock) keep a dead claude's mark" 's/if ! proc_is "\$cpid" "\$cstart"; then/if false; then/; s/ || ! proc_is "\$pid" "\$start"; then to=""/; then to=""/' crashed "closed"
 unset KLEPSYDRA_DIR KLEPSYDRA_STATE
 
 # Mutation checks: each guard that keeps AJ's own browsers out, removed in a

@@ -307,8 +307,6 @@ pub struct SessionFile {
     pub browser: bool,
 }
 
-/// `orchestrator_face` when it is a short plain voice key; anything else is
-/// none rather than costing the file.
 /// The `browser` mark is "used" or "open"; any other value, of any type, is not.
 fn browser_open<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
     Ok(
@@ -316,6 +314,8 @@ fn browser_open<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error
     )
 }
 
+/// `orchestrator_face` when it is a short plain voice key; anything else is
+/// none rather than costing the file.
 fn lenient_face<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     Ok(match serde_json::Value::deserialize(d)? {
         serde_json::Value::String(k)
