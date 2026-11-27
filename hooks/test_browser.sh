@@ -184,7 +184,7 @@ exec {held}>&-
 bash "$script" --sync
 check "the lock free: it writes" "$(mark $S1)" "open"
 
-check "an inherited LOCK is not the fleet hook's lock" "$(tree; sessions; LOCK= bash "$script" --sync; mark $S1)" "open"
+check "an inherited LOCK is not the fleet hook's lock" "$(tree; sessions; LOCK='' bash "$script" --sync; mark $S1)" "open"
 
 # Returns once a descendant of PID is a flock (the sync has read the files and
 # waits on the lock), or after 10 s.
@@ -316,7 +316,7 @@ hmutant "no recheck under the lock calls a reopened window closed" 's/if \[\[ -z
 reused() { tree; sessions; sess $S1 100 999 open; rm -rf -- "${P:?}/300"; pre $S1 ${pw}_click | head -1 | note; }
 hmutant "no liveness check in pre-tool tells a dead claude's file" 's/  proc_is "\$pid" "\$start" || return 0/  :/' reused "$(printf 'PreToolUse\ttrue\tfalse')"
 other_distro() { tree; sessions; sess $S4 700 7000 open null Other-Distro; rm -rf -- "${P:?}/700"; bash "$script" --sync; mark $S4; }
-hmutant "no host check drops another distro's mark" 's/ \&\& on_this_host "\$boot" "\$distro" || continue/ || continue/' other_distro "-"
+hmutant "no host check drops another distro's mark" 's/^    on_this_host "\$boot" "\$distro" || continue$/    :/' other_distro "-"
 crashed() { tree; sessions; sess $S2 700 7000 open; rm -rf -- "${P:?}/700"; bash "$script" --sync; mark $S2; }
 hmutant "no liveness check keeps a dead claude's mark" 's/if ! proc_is "\$cpid" "\$cstart"; then/if false; then/' crashed "closed"
 unset KLEPSYDRA_DIR KLEPSYDRA_STATE
@@ -354,10 +354,10 @@ check "settings: pre-tool only on the Playwright browser tools, never blocking, 
 m=$(jq -r '.hooks.PreToolUse[0].matcher' <<<"$settings")
 check "the matcher takes the plugin's and a plain server's browser tools, not another browser server's" \
   "$(for n in mcp__plugin_playwright_playwright__browser_click mcp__playwright__browser_navigate mcp__chrome__browser_navigate Bash; do [[ $n =~ $m ]] && echo y || echo n; done | paste -sd,)" "y,y,n,n"
-names="mcp__plugin_playwright_playwright__browser_click mcp__playwright__browser_navigate mcp__chrome__browser_navigate Bash mcp__plugin_playwright_playwright__browser_close mcp__x__browser_playwright_y"
+names=(mcp__plugin_playwright_playwright__browser_click mcp__playwright__browser_navigate mcp__chrome__browser_navigate Bash mcp__plugin_playwright_playwright__browser_close mcp__x__browser_playwright_y)
 check "the hook's own tool test agrees with the matcher read as Claude Code reads it (a JavaScript RegExp, unanchored)" \
-  "$(node -e 'const m = new RegExp(process.argv[1]); console.log(process.argv.slice(2).map((n) => (m.test(n) ? "y" : "n")).join(","))' "$m" $names)" \
-  "$(for n in $names; do [[ $n =~ ^mcp__.*playwright.*__browser_ ]] && echo y || echo n; done | paste -sd,)"
+  "$(node -e 'const m = new RegExp(process.argv[1]); console.log(process.argv.slice(2).map((n) => (m.test(n) ? "y" : "n")).join(","))' "$m" "${names[@]}")" \
+  "$(for n in "${names[@]}"; do [[ $n =~ ^mcp__.*playwright.*__browser_ ]] && echo y || echo n; done | paste -sd,)"
 check "settings: the browser script, not async, a timeout that covers its wait" \
   "$(jq -c '.hooks.SessionEnd[0].hooks[0] | [(.command | ltrimstr("~")), has("async"), (.timeout >= 2)]' <<<"$settings")" '["/.claude/klepsydra-browser.sh",false,true]'
 check "make install-hooks installs it" "$(grep -c '"hooks/klepsydra-browser.sh klepsydra-browser.sh"' "$here/../fleet/lib.sh")" "1"

@@ -416,7 +416,8 @@ sync_marks() {
     [[ $claude == - ]] || held[$claude]=1
   done < <(browsers)
   while IFS=$'\t' read -r name ended boot distro cpid cstart mark; do
-    [[ $ended == 0 && $cpid =~ ^[0-9]+$ ]] && on_this_host "$boot" "$distro" || continue
+    [[ $ended == 0 && $cpid =~ ^[0-9]+$ ]] || continue
+    on_this_host "$boot" "$distro" || continue
     if ! proc_is "$cpid" "$cstart"; then
       [[ -z $mark ]] || set_mark "$SESSIONS/$name" "" "$mark"
     elif [[ -n ${held[$cpid]:-} ]]; then

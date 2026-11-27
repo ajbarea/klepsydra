@@ -1775,13 +1775,14 @@ breg() { printf '{"hooks":{"PreToolUse":[{"matcher":"m","hooks":[{"type":"comman
 had_ca=0 had_cb=0; [[ -d $work/cfg-a ]] && had_ca=1; [[ -d $work/cfg-b ]] && had_cb=1
 mkdir -p "$work/cfg-a" "$work/cfg-b"
 check "#533: no settings in either account: no browser hook line" "$(bhook)" ""
-breg cfg-a "~/.claude/klepsydra-browser.sh --pre-tool || true"; breg cfg-b "~/.claude/klepsydra-browser.sh --pre-tool || true"
+tl='~' # the hook's command names ~ as written, unexpanded
+breg cfg-a "$tl/.claude/klepsydra-browser.sh --pre-tool || true"; breg cfg-b "$tl/.claude/klepsydra-browser.sh --pre-tool || true"
 check "#533: registered with || true in both accounts: ok" "$(bhook)" "ok   browser hook: registered in 2 accounts; it never blocks a browser call"
-breg cfg-b "~/.claude/klepsydra-browser.sh --pre-tool"
+breg cfg-b "$tl/.claude/klepsydra-browser.sh --pre-tool"
 check "#533: an entry without || true fails, naming its account" "$(bhook)" "FAIL browser hook: can block every browser call in $work/cfg-b (no || true): fleet install"
 printf '{"hooks":{}}\n' >"$work/cfg-b/settings.json"
 check "#533: an account without it warns" "$(bhook)" "warn browser hook: not registered in $work/cfg-b: fleet install"
-breg cfg-b "~/.claude/klepsydra-browser.sh --pre-tool || true"
+breg cfg-b "$tl/.claude/klepsydra-browser.sh --pre-tool || true"
 cp "$FLEET_HOOK_DIR/klepsydra-browser.sh" "$work/browser.keep"; printf '#!/usr/bin/env bash\nexit 2\n' >"$FLEET_HOOK_DIR/klepsydra-browser.sh"
 check "#533: an installed script without --pre-tool warns" "$(bhook)" "warn browser hook: $FLEET_HOOK_DIR/klepsydra-browser.sh has no --pre-tool: fleet install"
 mv "$work/browser.keep" "$FLEET_HOOK_DIR/klepsydra-browser.sh"

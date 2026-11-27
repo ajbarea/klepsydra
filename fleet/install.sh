@@ -121,7 +121,9 @@ register_browser_hook() { # settings.json
     { ilog ERROR "settings did not parse; the browser hook is not registered" file="$cfg"; return 1; }
   [[ $want == "$(jq . "$cfg")" ]] && return 0
   if (( dry )); then printf 'would: register the browser hook in %s\n' "$cfg"; return 0; fi
-  real=$(readlink -f -- "$cfg") && tmp=$(mktemp -- "$real.XXXXXX") || { ilog ERROR "the browser hook was not registered" file="$cfg"; return 1; }
+  if ! real=$(readlink -f -- "$cfg") || ! tmp=$(mktemp -- "$real.XXXXXX"); then
+    ilog ERROR "the browser hook was not registered" file="$cfg"; return 1
+  fi
   if chmod --reference="$real" -- "$tmp" && printf '%s\n' "$want" >"$tmp" && mv -f -- "$tmp" "$real"; then
     ilog INFO "registered the browser hook" file="$real"
   else

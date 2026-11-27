@@ -670,17 +670,17 @@ browser_check
 # could block every browser call when the installed script misreads its mode
 # (11-25), so it fails; none registered, or a script without --pre-tool, warns.
 browser_hook_check() {
-  local dir cmds bad="" missing="" n=0 script=$FLEET_HOOK_DIR/klepsydra-browser.sh
+  local dir cmds ungated="" unregistered="" n=0 script=$FLEET_HOOK_DIR/klepsydra-browser.sh
   for dir in $FLEET_ACCOUNTS; do
     [[ -f $dir/settings.json ]] || continue
     n=$((n + 1))
     cmds=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command | strings | select(test("klepsydra-browser\\.sh"))' "$dir/settings.json" 2>/dev/null)
-    if [[ -z $cmds ]]; then missing+="$(tilde "$dir") "
-    elif grep -qv -- '|| true$' <<<"$cmds"; then bad+="$(tilde "$dir") "; fi
+    if [[ -z $cmds ]]; then unregistered+="$(tilde "$dir") "
+    elif grep -qv -- '|| true$' <<<"$cmds"; then ungated+="$(tilde "$dir") "; fi
   done
   if (( !n )); then return 0
-  elif [[ -n $bad ]]; then report FAIL "browser hook" "can block every browser call in ${bad% } (no || true): fleet install"
-  elif [[ -n $missing ]]; then report warn "browser hook" "not registered in ${missing% }: fleet install"
+  elif [[ -n $ungated ]]; then report FAIL "browser hook" "can block every browser call in ${ungated% } (no || true): fleet install"
+  elif [[ -n $unregistered ]]; then report warn "browser hook" "not registered in ${unregistered% }: fleet install"
   elif ! bash "$script" --pre-tool </dev/null >/dev/null 2>&1; then report warn "browser hook" "$(tilde "$script") has no --pre-tool: fleet install"
   else report ok "browser hook" "registered in $n accounts; it never blocks a browser call"; fi
 }
