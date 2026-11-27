@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-# --- klepsydra dir: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
+# --- klepsydra dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-browser.sh and statusline/klepsydra-statusline.sh ---
 # The overlay's app-local-data dir, named for the bundle identifier in
 # src-tauri/tauri.conf.json. Not the install dir: the uninstaller's "delete app
 # data" reaches only this one, and a per-machine install cannot be written to.

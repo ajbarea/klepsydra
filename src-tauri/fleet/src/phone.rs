@@ -93,7 +93,7 @@ pub fn exact_assets<K: AsRef<str>>(
 /// (shown, never acted on: the phone has no wrap-up buttons). The rest (its
 /// tmux pane, Claude process, distro, full launch folder) serve the
 /// desktop's actions alone.
-const SESSION_FIELDS: [&str; 27] = [
+const SESSION_FIELDS: [&str; 28] = [
     "session_id",
     "name",
     "voice",
@@ -121,6 +121,7 @@ const SESSION_FIELDS: [&str; 27] = [
     "wrapup",
     "turn_at",
     "asked_after_turn",
+    "browser",
 ];
 
 /// The snapshot as the phone gets it: each session cut to `SESSION_FIELDS`,
@@ -1113,7 +1114,7 @@ mod tests {
                 "remote_url": "https://claude.ai/code/session_01ABC",
                 "account": {"id": "a1", "label": "RIT-CS-DQL"}, "started_at": 1, "ceded": "bf_emma", "pick": "af_nova",
                 "wrapup": {"state": "blocked", "reason": "a review is running", "at": 5, "settled_at": 6},
-                "turn_at": 4, "asked_after_turn": true, "reply_at": 8
+                "turn_at": 4, "asked_after_turn": true, "reply_at": 8, "browser": true
             }, {"session_id": "s2", "launch_dir": "C:\\Users\\aj\\proj", "status": "done"}, "junk"],
             "speaking": {"session_id": "s1", "envelope": [0.5], "started_at": 1.0, "ends_at": 2.0},
             "receiver": {"addr": "127.0.0.1:4318", "listening": true, "error": null}

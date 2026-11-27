@@ -1,58 +1,61 @@
-# IMPL: #416 agy cards read silent (PR #563, branch agy/silent-416-r2)
+# IMPL: #533 show when an agent holds the shared browser (PR #556, branch feat/browser-in-use-533)
 
-Issue: https://github.com/ajbarea/klepsydra/issues/416. Supersedes #508.
-Opus redesign at the free-engine cap; spec: the 9 findings in
-https://github.com/ajbarea/klepsydra/pull/563#issuecomment-7173164692
+Issue #533. Opus redesign at the free-engine cap; spec: the smaller design in
+https://github.com/ajbarea/klepsydra/pull/556#issuecomment-7182947522
+Paused 11-27 (RIT weekly limit); resume from here.
 
 ## Slice
-agy has no status line and lists no background work, so the resume service
-gives it a heartbeat from screen progress and reads its tasks from the
-pane's live child shells. Claude's readings stay as on main.
+Card shows a **browser** chip while the session's file mark is "used" or
+"open". Fleet hook (PostToolUse, `mcp__*playwright*__browser_*`) marks
+"used"; `klepsydra-browser.sh` confirms "open" once it sees that claude's own
+mcp-chrome Chrome, marks "closed" when it goes. `--pre-tool` never blocks:
+when a confirmed window closed under the caller it adds a note (tell the
+user) once, exit 0. No deny state, no state files.
 
-## Done (11-26)
-- B1: `shells_live` is agy's crew in `view.rs` and in lib.sh's `turn_done`,
-  `turn_settled`, `pane_background` (shared `CREW_JQ`, `AGY_IDLE_JQ`); a Rust
-  test parses the exact JSON the service writes.
-- B2: the extglob squeeze is gone; `screen_progress` is one bash pass over
-  `SCR_PLAIN`'s lines. Real captures 2.6/3.2/5.0 KB: old 14.4/30.8/138.7 s,
-  new 7/6/9 ms; a 300x80 timing check in `fleet/test_forks_screen.sh`.
-- S3/S4: the no-child rule and the Done-not-Silent exemption are agy-only, in
-  the hook and `view.rs`; Claude cases on both sides.
-- S5: progress reads the plain screen less spinner, cue and usage lines;
-  seeded property test (60 redraws, 60 one-char edits) + real agy fixtures.
-- S6: only bash/zsh/bwrap children count; agy starts MCP servers as npm, uv
-  or node, so no cmdline match is needed.
-- S7: the service takes the hook's lock (lock_dir block shared with the
-  hooks since #517) and re-reads the file under it.
-- S8: agy rules run every pass; only the beat waits on a screen change.
-- S9: idle comes from `eng_state agy`.
-- The last progress per pane persists in `$FLEET_STATE/screens/` (a restart
-  never beats a frozen screen); closed panes' files are pruned.
-- Review r1 (fresh Opus, on 6d7a81c): 1 Blocking, 2 Should-fix, fixed:
-  `eng_state agy` reads agy 1.5.17's status-line footer (spinner or running
-  task line = busy), fed the plain screen; a known Claude pane forks nothing
-  (strace test); calls recounted under the lock; empty pane list prunes
-  nothing; statusline name fallback dropped, hook registry read builtin;
-  `live_shells` array renamed (`callers`); resume-at-reset.sh finds its
-  folder from BASH_SOURCE so sourcing it never runs a pass. Mutants: no fast
-  path, no status-line footer: each red.
-- Review r2 (on 78060e0): 1 Should-fix (vacuous-guard): the fast path's
-  `ended` test never matched the hook's `{reason, at}` object. Now the fast
-  path holds only while the pane's Claude process (pid + start, read from
-  /proc, no fork) runs; tests: still running = not looked up, gone = looked up.
-- Review r3 (on a781016): the r2 fix holds and opened nothing new; 1
-  Should-fix (test only): the cache was hand-filled in every test. Now the
-  first pass fills it from a session file in the hook's format, and the fork
-  count is 3 passes less 1; deleting the fill line turns both red.
+## Done (head 5448859 + this commit)
+- Fleet hook: "used" (keeps "open"); browser_close, SessionEnd, any start but
+  a compaction and `mark_gone` drop it. Shared `host facts` block.
+- `reconcile` decides every mark under the fleet hook's lock from the mark and
+  /proc as they are then (modes sync, tell, close); moves written_at/turns_at.
+- `--sync` (resume pass, this boot+distro only); `--pre-tool` (builtins, walks
+  /proc only for a marked session); usage exits 1.
+- `fleet install` registers `--pre-tool || true` once the copy is this
+  checkout's; atomic write at the resolved path keeps symlink and mode.
+- doctor = main's + holder name (fleet socket only) + per-account "browser hook".
+- Rust `browser: bool` ("used"/"open", not when ended); chip = icon + "browser".
+- Reviews: /code-review medium (10 findings) + readers r1, r2 (all fixed);
+  round-3 reader ran on 5448859 (see PR comment / report for its result).
 
-## Verify
-- `make test-delegate` (takes the heavy lock)
-- `bash fleet/test_forks_screen.sh`
-- `make test-fleet FLEET_SHARD=resume` (takes the heavy lock)
-- `flock -o /tmp/fleet-heavy.lock timeout 1500 bash hooks/test_fleet.sh`
-- `cd src-tauri && cargo test -p klepsydra-fleet view`
+Consumers traced (readers r1-r2): fleet hook PostToolUse has no matcher (sees
+every Playwright tool); resume pass runs `--sync` from the checkout with
+KLEPSYDRA_DIR; doctor TSV columns line up; HOOK_COPIES installs the script;
+Rust reads leniently, JS `=== true`; phone carries the bool; accounts-sync
+copies the hook to ~/.claude-rit.
+
+## Measured (tmpfs fake /proc, 3 browsers, 43 session files; fcd8d71 vs ac67195)
+pre-tool 70.9 ms/28 execs -> 5.7 ms/1; unmarked 3.6 ms/1; sync 69.1 ms/26 ->
+20.7 ms/3 (338 procs: 73.8 -> 5.5; 70.8 -> 23.5). Harness and outputs:
+~/.local/state/fleet-orchestrator/reports/redesign-556/ (measure.sh NEW OLD
+[EXTRA]; needs host boot in session files since r2). Not re-measured on 5448859.
 
 ## Next
-1. 📋 Verify pass clean (its strace guard added: a no-trace strace now fails), CI green, merge,
-   then `fleet install` (touches hooks and fleet scripts).
-2. Follow-up: one shared copy of `live_shells` with the hooks-common work.
+1. Doctor shard: `#533: a pass marks the session holding a browser open`
+   failed (null) on CI and locally, also at 7cf956e before the host check. The
+   fixture now carries host boot+distro (`bsync`), but a second cause is open:
+   `--sync` run by hand on the same fake /proc writes "open" (scratch repro
+   works), so suspect the resume pass env (bash `VAR=x func` export? lib.sh?).
+   Trace with `bash -x` inside the pass. Watcher "review 5" red on CI is a
+   tmux paste-timing test outside this diff: rerun to confirm a flake.
+2. Run (heavy lock, do not edit the suite while it runs): `make test-fleet`,
+   cargo test/clippy/fmt, `test_wall_browser.py browser_chip chip_name`,
+   re-measure with measure.sh, `make shellcheck`.
+3. Fresh Opus reader (elenchus medium) until a round is clean, then a verify
+   pass. Rewrite the PR body (still the old deny design), merge on clean + CI.
+4. Live: `fleet install`; chip on a real card during a Playwright MCP call;
+   `fleet doctor` "browser hook" ok on both accounts; registered command with
+   an old script exits 0. Write reports/redesign-556.md; `fleet done`.
+
+## Verify
+`bash hooks/test_browser.sh` (92), `bash hooks/test_fleet.sh` (690),
+`make test-fleet FLEET_SHARD=doctor`, `cargo test -p klepsydra-fleet` (473 on
+ac67195), `node --test src/fleet-model.test.js`.

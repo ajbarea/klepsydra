@@ -1084,6 +1084,8 @@ reap_browsers() {
     esac
   done < <(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" KLEPSYDRA_NOW="$NOW" KLEPSYDRA_BROWSER_GRACE_S="${FLEET_BROWSER_GRACE_S:-10}" \
     bash "$BROWSER" --reap "$FLEET_STATE/browsers-reaped" 2>/dev/null </dev/null)
+  # Each live session's browser mark in step with the open browsers (#533).
+  KLEPSYDRA_DIR="$KLEPSYDRA_DIR" KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" bash "$BROWSER" --sync </dev/null 2>/dev/null
 }
 PREV_ACCT="" DOCTOR_DUE=0 HEPH_DOUBT=""
 # The last pass's summary, from resume.beat: a --once run or a restart logs

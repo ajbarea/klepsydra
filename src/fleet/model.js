@@ -725,6 +725,7 @@ export function card(s, cast, nowMs, request = null, native = false) {
     model: engInfo ? engInfo.model : null,
     maker: engInfo ? engInfo.maker : null,
     engineInfo: engInfo,
+    browser: s.browser === true,
     delegate: typeof delegate === "string" ? delegate : null,
     label: [accessibleName(s, cast, nowMs), wrapup?.text].filter(Boolean).join(", "),
   };

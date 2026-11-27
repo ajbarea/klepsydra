@@ -50,6 +50,9 @@ const BRANCH_ICON =
 // A head and shoulders: the account a session runs on, told apart from the branch beside it.
 const ACCOUNT_ICON =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 14c.6-2.8 2.6-4.2 5-4.2s4.4 1.4 5 4.2"/></svg><span class="visually-hidden">account </span><span></span>';
+// A window frame: this session holds the shared Playwright browser open (#533).
+const BROWSER_ICON =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 6.5h12M4.5 4.8h.01M7 4.8h.01"/></svg><span>browser</span>';
 
 const TALLY = [
   ["needs", "blocked"],
@@ -677,6 +680,9 @@ function paint(el, c) {
   if (!acct.firstChild) acct.innerHTML = ACCOUNT_ICON;
   setText(acct.lastChild, c.showAccount ? c.account : null);
   acct.title = c.showAccount ? `Account: ${c.account}` : "";
+  const browser = el.querySelector(".browser-chip");
+  browser.hidden = !c.browser;
+  if (c.browser && !browser.firstChild) browser.innerHTML = BROWSER_ICON;
   el.querySelector(".where").title = [`${c.place?.repo ?? ""}${c.place?.worktree ? ` / ${c.place.worktree}` : ""}`, c.place?.branch, c.showAccount ? `on ${c.account}` : null].filter(Boolean).join(" \u00b7 ");
   const also = c.also.map((t) => Object.assign(document.createElement("li"), { textContent: t }));
   if (c.alsoRest) {

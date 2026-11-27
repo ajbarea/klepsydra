@@ -99,6 +99,41 @@ if (( hooks_only )); then
   exit 0
 fi
 
+# The browser hook (#533) in ~/.claude's settings, once this checkout's copy of
+# the script is the one installed: any older entry for it is replaced by
+# README's, whose `|| true` keeps every browser call going whatever the script
+# does. The file is rewritten whole (a temp file renamed) at the path it
+# resolves to, with its own mode, so a symlink stays a link and 0600 stays
+# 0600; `fleet accounts sync` carries it to the second folder.
+BROWSER_HOOK='{"matcher": "mcp__.*playwright.*__browser_.*", "hooks": [{"type": "command", "command": "~/.claude/klepsydra-browser.sh --pre-tool || true", "timeout": 10}]}'
+register_browser_hook() { # settings.json
+  local cfg=$1 real want tmp
+  [[ -f $cfg ]] || { ilog INFO "no Claude Code settings; the browser hook is not registered" file="$cfg"; return 0; }
+  # A dry run installed no copy: it says what a real run would register.
+  if (( !dry )) && ! cmp -s -- "$root/hooks/klepsydra-browser.sh" "$FLEET_HOOK_DIR/klepsydra-browser.sh"; then
+    ilog ERROR "the browser script's copy is not this checkout's; its hook is not registered" file="$FLEET_HOOK_DIR/klepsydra-browser.sh"
+    return 1
+  fi
+  want=$(jq --argjson e "$BROWSER_HOOK" '
+    def browser: (.command // "") | strings | test("klepsydra-browser\\.sh --pre-tool");
+    .hooks.PreToolUse = ([(.hooks.PreToolUse // [])[]
+      | if any(.hooks[]?; browser) then (.hooks |= map(select(browser | not))) | select(.hooks | length > 0) else . end] + [$e])' "$cfg") ||
+    { ilog ERROR "settings did not parse; the browser hook is not registered" file="$cfg"; return 1; }
+  [[ $want == "$(jq . "$cfg")" ]] && return 0
+  if (( dry )); then printf 'would: register the browser hook in %s\n' "$cfg"; return 0; fi
+  if ! real=$(readlink -f -- "$cfg") || ! tmp=$(mktemp -- "$real.XXXXXX"); then
+    ilog ERROR "the browser hook was not registered" file="$cfg"; return 1
+  fi
+  if chmod --reference="$real" -- "$tmp" && printf '%s\n' "$want" >"$tmp" && mv -f -- "$tmp" "$real"; then
+    ilog INFO "registered the browser hook" file="$real"
+  else
+    rm -f -- "${tmp:?}"
+    ilog ERROR "the browser hook was not registered; the settings stay as they were" file="$real"
+    return 1
+  fi
+}
+register_browser_hook "$FLEET_DEFAULT_CONFIG/settings.json" || failed=1
+
 do_ mkdir -p -- "$FLEET_STATE" "$UNITS" "$BIN"
 for f in "${SCRIPTS[@]}"; do
   [[ -e $here/$f ]] || continue

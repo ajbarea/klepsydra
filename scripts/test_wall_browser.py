@@ -465,6 +465,46 @@ def chip_name(wall):
     page.close()
 
 
+# The browser chip on each card: shown, its word, its tooltip, and whether it
+# or the repo and branch chips beside it are cut.
+BROWSER_CHIPS = """() => [...document.querySelectorAll('#wall > .card')].map((c) => {
+  const chip = c.querySelector('.browser-chip');
+  const cut = (sel) => [...c.querySelectorAll(sel)].filter((e) => e.checkVisibility()).some((e) => e.scrollWidth > e.clientWidth + 1);
+  return {
+    id: c.dataset.key,
+    shown: chip.checkVisibility(),
+    text: chip.textContent,
+    title: chip.title,
+    cut: cut('.browser-chip span') || cut('.repo') || cut('.branch span'),
+    inside: chip.getBoundingClientRect().right <= c.querySelector('.where').getBoundingClientRect().right + 0.5,
+  };
+})"""
+
+
+def browser_chip(wall):
+    """A card whose session holds the shared browser open shows a "browser" chip
+    with its tooltip, uncut and leaving the repo and branch chips whole, at
+    1920 comfortable and 945 compact; it goes when the mark does (#533)."""
+    for width in (1920, 945):
+        page = open_app(wall, width, 1000)
+        held = page.snapshot["sessions"][0]["session_id"]
+        snap = json.loads(json.dumps(page.snapshot))
+        snap["sessions"][0]["browser"] = True
+        send(page, snap)
+        got = page.evaluate(BROWSER_CHIPS)
+        mine = [g for g in got if g["id"] == held]
+        others = [g for g in got if g["id"] != held]
+        density = page.evaluate("document.getElementById('wall').dataset.density")
+        ok = (len(mine) == 1 and mine[0]["shown"] and mine[0]["text"] == "browser"
+              and mine[0]["title"] == "Using the shared Playwright browser"
+              and not mine[0]["cut"] and mine[0]["inside"] and not any(g["shown"] for g in others))
+        wall.check(ok, f"the holder's card alone shows the browser chip, whole, at {width} ({density})", [mine, density])
+        snap["sessions"][0].pop("browser")
+        send(page, snap)
+        wall.check(not any(g["shown"] for g in page.evaluate(BROWSER_CHIPS)), f"the chip goes with the mark at {width}", None)
+        page.close()
+
+
 def drawer_opens_and_returns_focus(wall):
     """The header button and a chip open the Ledger; Esc and Close shut it
     and focus goes back to the opener."""
@@ -4862,6 +4902,7 @@ def main() -> int:
             receipt_text,
             partial_mark,
             chip_name,
+            browser_chip,
             drawer_opens_and_returns_focus,
             drawer_tables,
             drawer_states,

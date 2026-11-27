@@ -278,6 +278,26 @@ check "its own failure clears it" "$(field .state)" '"working"'
 fire post-tool-edit.json '.hook_event_name = "PostToolUseFailure" | .tool_input.file_path = "'"$repos"'/ideas/x"'
 check "a failed edit moves nothing" "$(field '.where.repo')" '"klepsydra"'
 
+pw=mcp__plugin_playwright_playwright__browser
+fire post-tool-bash.json ".tool_name = \"${pw}_navigate\""
+check "#533: a Playwright browser step marks the shared browser used" "$(field .browser)" '"used"'
+fire post-tool-bash.json
+check "#533: another tool keeps the mark" "$(field .browser)" '"used"'
+jq -c '.browser = "open"' "$file" >"$file.t" && mv "$file.t" "$file"
+fire post-tool-bash.json ".tool_name = \"${pw}_click\""
+check "#533: a browser step keeps a confirmed mark open" "$(field .browser)" '"open"'
+fire post-tool-bash.json ".hook_event_name = \"PostToolUseFailure\" | .tool_name = \"${pw}_click\""
+check "#533: a failed browser step keeps it (the sync judges the window)" "$(field .browser)" '"open"'
+jq -c '.browser = "closed"' "$file" >"$file.t" && mv "$file.t" "$file"
+fire post-tool-bash.json ".tool_name = \"${pw}_navigate\""
+check "#533: a browser step after a close marks it used again" "$(field .browser)" '"used"'
+fire post-tool-bash.json ".tool_name = \"${pw}_close\""
+check "#533: browser_close drops it" "$(field .browser)" "null"
+fire post-tool-bash.json '.tool_name = "mcp__chrome__browser_navigate"'
+check "#533: another server's browser tool does not mark it" "$(field .browser)" "null"
+fire post-tool-bash.json '.tool_name = "mcp__playwright__browser_snapshot"'
+check "#533: a plain playwright server's tool marks it" "$(field .browser)" '"used"'
+
 fire pre-tool-question.json
 check "question" "$(field '[.state, .reason]')" '["needs_you","question"]'
 fire post-tool-bash.json '.tool_name = "AskUserQuestion"'
@@ -598,6 +618,7 @@ rm -f "$wfile"
 echo "lifecycle"
 now=1792353300
 fire session-end.json
+check "#533: the end drops the browser mark" "$(field .browser)" "null"
 check "end" "$(field '[.state, .reason, .ended]')" "[\"ended\",\"exited\",{\"reason\":\"prompt_input_exit\",\"at\":$now}]"
 touch -d @1 "$file"
 fire stop.json
@@ -608,6 +629,11 @@ turns_before_resume=$(field .turns)
 now=1792353400 fire session-start.json '.source = "resume"'
 check "resumed: done, since it has a prompt" "$(field '[.state, .ended]')" '["done",null]'
 check "resumed: no turn ended" "$(field .turns)" "$turns_before_resume"
+jq -c '.browser = "open"' "$file" >"$file.t" && mv "$file.t" "$file"
+now=1792353401 fire session-start.json '.source = "compact"'
+check "#533: a compaction keeps the browser mark" "$(field .browser)" '"open"'
+now=1792353402 fire session-start.json '.source = "resume"'
+check "#533: a new process drops it" "$(field .browser)" "null"
 now=1792353405 fire session-start.json '.source = "resume"' KLEPSYDRA_PID=710
 check "resumed in another terminal: the new claude" "$(field .claude)" '{"pid":700,"start":9000000}'
 fire user-prompt.json
@@ -1771,6 +1797,7 @@ A10=aaaaaaaa-0000-4000-8000-000000000010 # an earlier boot, claude unknown
 A11=aaaaaaaa-0000-4000-8000-000000000011 # an earlier boot, idle over a day: left to the prune
 put $A1 working $OLD Ubuntu 500 8717628
 put $A2 'done' $B Ubuntu 4999 1
+jq -c '.browser = "open"' "$dir/fleet/$A2.json" >"$dir/fleet/$A2.t" && mv "$dir/fleet/$A2.t" "$dir/fleet/$A2.json"
 put $A3 working $B Ubuntu 500 8717628
 put $A4 working $B Debian 4999 1
 put $A5 working $B Ubuntu 500 1
@@ -1799,6 +1826,7 @@ check "this boot, claude unknown: unchanged" "$(state_of $A9)" "working/-"
 check "earlier boot, claude unknown: gone" "$(state_of $A10)" "ended/gone"
 check "idle over a day: left to the prune" "$(state_of $A11)|$(jq -c .written_at "$dir/fleet/$A11.json")" "working/-|$((now - 2 * 86400))"
 check "gone clears needs" "$(jq -c .needs "$dir/fleet/$A1.json")" "null"
+check "#533: gone drops the browser mark (no chip on an ended card)" "$(jq -c .browser "$dir/fleet/$A2.json")" "null"
 check "gone stamps when" "$(jq -c '[.ended.at, .state_at]' "$dir/fleet/$A1.json")" "[$now,$now]"
 rm -f "$dir"/fleet/aaaaaaaa-*.json
 # The firing session's own file is never marked, even with a dead pid on record

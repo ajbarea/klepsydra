@@ -634,7 +634,7 @@ heavy_lock_check
 # last changed). One idle past FLEET_BROWSER_IDLE_MIN minutes (30) warns, as
 # does one whose MCP server is gone (the resume service closes it).
 browser_check() {
-  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0 cpid
+  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0 cpid pane name
   [[ $min =~ ^[0-9]+$ ]] || min=30
   idle_max=$((min * 60))
   while IFS=$'\t' read -r pid server claude idle dir; do
@@ -642,8 +642,17 @@ browser_check() {
     who="claude $claude"
     if [[ $claude == - ]]; then who="no session"
     else
-      while IFS=$'\t' read -r f _ _ ended _ cpid _; do
-        [[ $cpid == "$claude" && $ended == 0 ]] && { who="session ${f:0:8}"; break; }
+      while IFS=$'\t' read -r f pane sock ended _ cpid _; do
+        [[ $cpid == "$claude" && $ended == 0 ]] || continue
+        # The agent holding it (#533): its registry name, Heph in the orchestrator's
+        # pane; only for a pane on the fleet's own tmux server.
+        name=""
+        if [[ $pane == %* ]] && fleet_socket "$sock"; then
+          [[ $pane == "$(orchestrator)" ]] && name=heph || name=$(reg_field "$pane" 2)
+        fi
+        who=${name:+held by $name}
+        who=${who:-session ${f:0:8}}
+        break
       done < <(fleet_sessions_tsv)
     fi
     list+="pid $pid ($who, idle $( [[ $idle == - ]] && echo '?' || echo "$((idle / 60)) min")"
@@ -656,6 +665,26 @@ browser_check() {
   else report ok "MCP browsers" "${list%; }"; fi
 }
 browser_check
+
+# The browser hook (#533) in each account's settings: an entry without `|| true`
+# could block every browser call when the installed script misreads its mode
+# (11-25), so it fails; none registered, or a script without --pre-tool, warns.
+browser_hook_check() {
+  local dir cmds ungated="" unregistered="" n=0 script=$FLEET_HOOK_DIR/klepsydra-browser.sh
+  for dir in $FLEET_ACCOUNTS; do
+    [[ -f $dir/settings.json ]] || continue
+    n=$((n + 1))
+    cmds=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command | strings | select(test("klepsydra-browser\\.sh"))' "$dir/settings.json" 2>/dev/null)
+    if [[ -z $cmds ]]; then unregistered+="$(tilde "$dir") "
+    elif grep -qv -- '|| true$' <<<"$cmds"; then ungated+="$(tilde "$dir") "; fi
+  done
+  if (( !n )); then return 0
+  elif [[ -n $ungated ]]; then report FAIL "browser hook" "can block every browser call in ${ungated% } (no || true): fleet install"
+  elif [[ -n $unregistered ]]; then report warn "browser hook" "not registered in ${unregistered% }: fleet install"
+  elif ! bash "$script" --pre-tool </dev/null >/dev/null 2>&1; then report warn "browser hook" "$(tilde "$script") has no --pre-tool: fleet install"
+  else report ok "browser hook" "registered in $n accounts; it never blocks a browser call"; fi
+}
+browser_hook_check
 
 # Voices (#273): the tray's mode has been applied to keryx (the resume service
 # applies a change within a pass; a mode left unapplied says why).

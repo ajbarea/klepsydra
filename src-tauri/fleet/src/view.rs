@@ -154,6 +154,10 @@ pub struct View {
     /// so the card can play it; left out of the JSON without one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_at: Option<i64>,
+    /// It holds the shared Playwright MCP browser open (#533); left out of
+    /// the JSON when it does not.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub browser: bool,
     #[serde(skip)]
     pub marks: Marks,
 }
@@ -363,6 +367,7 @@ pub fn view(entry: &Entry, now: i64) -> Option<View> {
         orchestrator: f.orchestrator,
         orchestrator_face: f.orchestrator_face.clone(),
         reply_at: None,
+        browser: f.browser && f.ended.is_none(),
         marks: Marks {
             state_at: f.state_at,
             turns: f.counted_turns(),
@@ -527,6 +532,7 @@ mod tests {
             orchestrator_face: None,
             engine: None,
             model: None,
+            browser: false,
         }
     }
 
@@ -1663,5 +1669,19 @@ mod tests {
         let v = view(&e, NOW).unwrap();
         assert_eq!(v.said.as_ref().unwrap().text, "narrating");
         assert_eq!(v.said.as_ref().unwrap().at, NOW - 350);
+    }
+
+    #[test]
+    fn view_carries_the_browser_mark_only_when_open() {
+        let mut e = entry("a", State::Working, NOW - 400, NOW - 5);
+        let json = |e: &Entry| serde_json::to_value(view(e, NOW).unwrap()).unwrap();
+        assert!(json(&e).get("browser").is_none());
+        e.file.browser = true;
+        assert_eq!(json(&e)["browser"], serde_json::Value::Bool(true));
+        e.file.ended = Some(crate::session::Ended { at: NOW - 10 });
+        assert!(
+            json(&e).get("browser").is_none(),
+            "an ended card never shows the chip"
+        );
     }
 }

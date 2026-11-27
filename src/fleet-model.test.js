@@ -1079,3 +1079,12 @@ test("#373: the live region says who arrived, with the epithet when the cast has
   assert.equal(arrivalLine(needs, cast), `Hephaestus has arrived, Master of the Forge, ${announcements(new Map(), [needs], cast)[0].replace(/^Hephaestus, /, "")}`, "a loud state is said as a status change would say it");
   assert.match(arrivalLine({ ...needs, status: "error" }, cast), /, error/);
 });
+
+test("a card shows the browser chip only for a session holding the shared browser open (#533)", () => {
+  const cast = { characters: {} };
+  const now = Date.now();
+  assert.equal(card({ session_id: "s1", browser: true }, cast, now).browser, true);
+  for (const mark of [undefined, false, "open", "closed", "worker", null]) {
+    assert.equal(card({ session_id: "s2", browser: mark }, cast, now).browser, false, String(mark));
+  }
+});
