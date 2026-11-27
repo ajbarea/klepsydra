@@ -663,12 +663,6 @@ REGISTRY=${REGISTRY:-$FLEET_STATE/panes.tsv}
 registered() { awk -F'\t' -v p="$1" '$1 == p { f = 1 } END { exit !f }' "$REGISTRY" 2>/dev/null; }
 reg_field() { awk -F'\t' -v p="$1" -v n="$2" '$1 == p { print $n; exit }' "$REGISTRY" 2>/dev/null; }
 orchestrator() { cat "$FLEET_STATE/orchestrator.pane" 2>/dev/null; }
-# The agent holding an open Playwright MCP browser, or one line per open browser (#533).
-browser_holder() { # [PROFILE]
-  local bscript=${FLEET_BROWSER_SCRIPT:-${here%/fleet}/hooks/klepsydra-browser.sh}
-  KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" FLEET_STATE="$FLEET_STATE" REGISTRY="$REGISTRY" KLEPSYDRA_DIR="$KLEPSYDRA_DIR" \
-    bash "$bscript" --holder "$@" 2>/dev/null
-}
 # Reports `fleet done` sent: time, name, pane, send result (pending while the
 # send runs, then sent, queued, delivered, acked or why not), and optional
 # escaped report text in column 5; `fleet close` removes them. Every write goes
@@ -846,7 +840,7 @@ pane_folder() { # PANE
 HEPH=${FLEET_HEPH:-$FLEET_STATE/HEPH.md}
 fleet_panes() { t list-panes -s -t "$FLEET_SESSION" -F '#{pane_id}' 2>/dev/null; }
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-# --- session rows: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
+# --- session rows: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-browser.sh and fleet/lib.sh ---
 # One tab-separated row per named session file whose first line is a v1
 # object: its name, then what the jq array `fields` picks from the object
 # (`last_active` is its newest time field, `or_q` a string or "?"). One jq
@@ -2230,7 +2224,7 @@ proc_osrelease() {
 
 # The hook's lock folder, so the resume service writes a session file under
 # the hook's own lock (#416).
-# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, hooks/klepsydra-browser.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
 # The folder for the locks and stamps every caller must share: one per host and
 # boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
 # used only while it and the folder above it are ours, not symlinks and the

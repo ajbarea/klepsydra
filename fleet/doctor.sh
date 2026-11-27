@@ -177,16 +177,24 @@ fi
 
 # The newest live session file of tmux pane PANE.
 session_of() {
-  local f best="" best_at=-1 at
-  for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-    [[ -f $f ]] || continue
-    at=$(jq -r --arg p "$1" 'select(.tmux.pane == $p and .ended == null) | (.started_at // 0)' "$f" 2>/dev/null)
-    [[ -n $at ]] && (( ${at%.*} > best_at )) && best=$f best_at=${at%.*}
-  done
+  local f pane ended at best="" best_at=-1
+  while IFS=$'\t' read -r f pane _ ended at _; do
+    [[ $pane == "$1" && $ended == 0 ]] || continue
+    (( ${at%.*} > best_at )) && best=$KLEPSYDRA_DIR/fleet/$f best_at=${at%.*}
+  done < <(fleet_sessions_tsv)
   printf '%s' "$best"
 }
 orch=$(orchestrator)
 panes=$(awk -F'\t' 'NF >= 3 { print $1 }' "$REGISTRY" 2>/dev/null)
+# One read of every session file for the whole run: the checks below ask it per pane.
+# shellcheck disable=SC2034 # read by fleet_sessions_tsv
+SESSION_ROWS=$(fleet_sessions_tsv)
+if [[ -s ${FLEET_STATE:-}/bad-sessions ]]; then
+  bad_sessions=$(tr '\n' ' ' <"${FLEET_STATE:-}/bad-sessions" | sed 's/ $//')
+  report warn "session files" "corrupt or truncated: $bad_sessions" files="$bad_sessions"
+else
+  report ok "session files" "every session file parsed"
+fi
 
 # Limits as the fleet hook's StopFailure record dates them (#311), else as the
 # panes show them (#263): one still at a limit OVERDUE_S past its reset was
@@ -428,13 +436,8 @@ voice_voices=${KERYX_VOICES:-${XDG_CACHE_HOME:-$HOME/.cache}/keryx/voices.json}
 proc_root=${KLEPSYDRA_PROC:-/proc}
 # What keryx speaks is its hold in voices.json (a `keryx voice` pick outranks the
 # session's KERYX_VOICE); the session's KERYX_VOICE stands in when it holds none.
-for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
-  [[ -f $f ]] || continue
-  IFS=$'\x1f' read -r expected pid start ended < <(jq -r '[
-    (if .orchestrator == true then (if .orchestrator_face == "bf_emma" or .orchestrator_face == "bf_alice" then "bf_emma" else "am_michael" end)
-     else (.voice // "") end),
-    (.claude.pid // "" | tostring), (.claude.start // "" | tostring), (if .ended then "ended" else "" end)] | join("\u001f")' "$f" 2>/dev/null)
-  [[ -z $ended && -n $expected && $pid =~ ^[1-9][0-9]*$ ]] || continue
+while IFS=$'\t' read -r _ expected pid start ended; do
+  [[ $ended == 0 && $expected != '?' && $pid =~ ^[1-9][0-9]*$ ]] || continue
   actual=""
   [[ -r $voice_voices ]] &&
     actual=$(jq -r --arg h "$pid:$start" '.holders[$h].voice // empty | strings' "$voice_voices" 2>/dev/null)
@@ -443,7 +446,8 @@ for f in "$KLEPSYDRA_DIR"/fleet/*.json; do
   [[ -n $actual && $actual != "$expected" ]] || continue
   report warn "voice $pid" "card has $expected but terminal has $actual" \
     pid="$pid" expected="$expected" actual="$actual"
-done
+done < <(fleet_rows "$KLEPSYDRA_DIR/fleet" '[(if .orchestrator == true then orch_face else (.voice | or_q) end),
+  ((.claude.pid // "-") | tostring | or_q), ((.claude.start // "-") | tostring | or_q), (if .ended then 1 else 0 end)]')
 
 # CI reds routed to an agent (#180) wait in its inbox for an idle prompt; an hour is too long.
 stale_inbox=$(find "$FLEET_STATE/inbox" -mindepth 2 -maxdepth 2 -name '*.txt' -type f -mmin +60 -printf '%P ' 2>/dev/null)
@@ -625,73 +629,61 @@ heavy_lock_check() {
 }
 heavy_lock_check
 
-# Open Playwright MCP browsers (#379, #533): pid, owning session (its fleet file's
-# agent name or session id by the claude pid, else that pid) and idle time (since its profile
+# Open Playwright MCP browsers (#379): pid, owning session (its fleet file's
+# session id by the claude pid, else that pid) and idle time (since its profile
 # last changed). One idle past FLEET_BROWSER_IDLE_MIN minutes (30) warns, as
-# does one whose MCP server is gone (the resume service closes it), or one closed while held.
+# does one whose MCP server is gone (the resume service closes it).
 browser_check() {
-  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir agent list="" warned=0
+  local min=${FLEET_BROWSER_IDLE_MIN:-30} idle_max pid server claude idle dir who f list="" warned=0 cpid pane name
   [[ $min =~ ^[0-9]+$ ]] || min=30
   idle_max=$((min * 60))
-  local bscript=${FLEET_BROWSER_SCRIPT:-${here%/fleet}/hooks/klepsydra-browser.sh}
-  declare -A seen_dirs=()
   while IFS=$'\t' read -r pid server claude idle dir; do
     [[ -n $pid ]] || continue
-    [[ -z ${seen_dirs[$dir]:-} ]] || continue
-    seen_dirs[$dir]=1
-    agent=""
-    if [[ $claude != - ]]; then
-      agent=$(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" FLEET_STATE="$FLEET_STATE" REGISTRY="$REGISTRY" KLEPSYDRA_DIR="$KLEPSYDRA_DIR" bash "$bscript" --holder-of "$claude" 2>/dev/null)
-    fi
-    local idle_min
-    if [[ $idle == - ]]; then idle_min="?"
-    else idle_min="$((idle / 60)) min"; fi
-
-    if [[ -n $agent && $agent != "claude "* && $agent != "no session" ]]; then
-      list+="held by $agent for $idle_min"
-      if [[ $server == - ]]; then
-        list+=", its MCP server is gone"
-        warned=1
-      elif [[ $idle != - ]] && (( idle >= idle_max )); then
-        list+=", past $min min"
-        warned=1
-      fi
+    who="claude $claude"
+    if [[ $claude == - ]]; then who="no session"
     else
-      local who="claude $claude"
-      [[ $claude == - ]] && who="no session"
-      list+="pid $pid ($who, idle $idle_min"
-      if [[ $server == - ]]; then
-        list+=", its MCP server is gone"
-        warned=1
-      elif [[ $idle != - ]] && (( idle >= idle_max )); then
-        list+=", past $min min"
-        warned=1
-      fi
-      list+=")"
+      while IFS=$'\t' read -r f pane _ ended _ cpid _; do
+        [[ $cpid == "$claude" && $ended == 0 ]] || continue
+        # The agent holding it (#533): its registry name, Heph in the orchestrator's pane.
+        name=""
+        if [[ $pane == %* ]]; then
+          [[ $pane == "$(orchestrator)" ]] && name=heph || name=$(reg_field "$pane" 2)
+        fi
+        who=${name:+held by $name}
+        who=${who:-session ${f:0:8}}
+        break
+      done < <(fleet_sessions_tsv)
     fi
-    list+="; "
-  done < <(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" FLEET_STATE="$FLEET_STATE" REGISTRY="$REGISTRY" KLEPSYDRA_DIR="$KLEPSYDRA_DIR" bash "$bscript" --list 2>/dev/null </dev/null)
-
-  # Check if browser was closed while held
-  local closed_agent=""
-  if [[ -f $FLEET_STATE/browser-closed ]]; then
-    closed_agent=$(awk -F'\t' '{ print $1; exit }' "$FLEET_STATE/browser-closed" 2>/dev/null)
-    [[ -n $closed_agent ]] || closed_agent=$(awk '{ print $1; exit }' "$FLEET_STATE/browser-closed" 2>/dev/null)
-  fi
-
-  if [[ -n $list ]]; then
-    if (( warned )); then
-      report warn "MCP browsers" "${list%; } (the resume service closes one whose server is gone; an idle one closes with browser_close in its session, or a kill of its pid)"
-    else
-      report ok "MCP browsers" "${list%; }"
-    fi
-  elif [[ -n $closed_agent ]]; then
-    report warn "MCP browsers" "browser closed while $closed_agent held it"
-  else
-    report ok "MCP browsers" "none open"
-  fi
+    list+="pid $pid ($who, idle $( [[ $idle == - ]] && echo '?' || echo "$((idle / 60)) min")"
+    if [[ $server == - ]]; then list+=", its MCP server is gone"; warned=1
+    elif [[ $idle != - ]] && (( idle >= idle_max )); then list+=", past $min min"; warned=1; fi
+    list+="); "
+  done < <(KLEPSYDRA_PROC="${FLEET_PROC:-/proc}" bash "${FLEET_BROWSER_SCRIPT:-${here%/fleet}/hooks/klepsydra-browser.sh}" --list 2>/dev/null </dev/null)
+  if [[ -z $list ]]; then report ok "MCP browsers" "none open"
+  elif (( warned )); then report warn "MCP browsers" "${list%; } (the resume service closes one whose server is gone; an idle one closes with browser_close in its session, or a kill of its pid)"
+  else report ok "MCP browsers" "${list%; }"; fi
 }
 browser_check
+
+# The browser hook (#533) in each account's settings: an entry without `|| true`
+# could block every browser call when the installed script misreads its mode
+# (11-25), so it fails; none registered, or a script without --pre-tool, warns.
+browser_hook_check() {
+  local dir cmds bad="" missing="" n=0 script=$FLEET_HOOK_DIR/klepsydra-browser.sh
+  for dir in $FLEET_ACCOUNTS; do
+    [[ -f $dir/settings.json ]] || continue
+    n=$((n + 1))
+    cmds=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command | strings | select(test("klepsydra-browser\\.sh"))' "$dir/settings.json" 2>/dev/null)
+    if [[ -z $cmds ]]; then missing+="$(tilde "$dir") "
+    elif grep -qv -- '|| true$' <<<"$cmds"; then bad+="$(tilde "$dir") "; fi
+  done
+  if (( !n )); then return 0
+  elif [[ -n $bad ]]; then report FAIL "browser hook" "can block every browser call in ${bad% } (no || true): fleet install"
+  elif [[ -n $missing ]]; then report warn "browser hook" "not registered in ${missing% }: fleet install"
+  elif ! bash "$script" --pre-tool </dev/null >/dev/null 2>&1; then report warn "browser hook" "$(tilde "$script") has no --pre-tool: fleet install"
+  else report ok "browser hook" "registered in $n accounts; it never blocks a browser call"; fi
+}
+browser_hook_check
 
 # Voices (#273): the tray's mode has been applied to keryx (the resume service
 # applies a change within a pass; a mode left unapplied says why).

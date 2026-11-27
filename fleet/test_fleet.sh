@@ -1755,19 +1755,12 @@ bproc 4301 4300 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome
 bproc 4302 1 chrome /opt/google/chrome/chrome "--user-data-dir=$work/home/.config/google-chrome"
 mkdir -p "$bc/mcp-chrome-aa/Default"; touch -d "@$(( $(date +%s) - 330 ))" "$bc/mcp-chrome-aa" "$bc/mcp-chrome-aa/Default"
 check "#379: a live one: its pid, owning session and idle time; AJ's Chrome is not listed" "$(doctor | grep 'MCP browsers')" \
-  "ok   MCP browsers: held by worker for 5 min"
+  "ok   MCP browsers: pid 4301 (session dddddddd, idle 5 min)"
 check "#379: idle past FLEET_BROWSER_IDLE_MIN warns" \
-  "$(FLEET_BROWSER_IDLE_MIN=5 doctor | grep -c '^warn MCP browsers: held by worker for 5 min, past 5 min')" "1"
+  "$(FLEET_BROWSER_IDLE_MIN=5 doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min, past 5 min)')" "1"
 bproc 4310 1 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-bb"
 check "#379: one whose MCP server is gone warns" \
-  "$(doctor | grep -c '^warn MCP browsers: held by worker for 5 min; pid 4310 (no session, idle ?, its MCP server is gone)')" "1"
-rm -rf "$work/dproc/4301" "$work/dproc/4310"
-printf 'worker\t%s\n' "$(date +%s)" >"$FLEET_STATE/browser-closed"
-check "#533: closed while held warns" "$(doctor | grep 'MCP browsers')" \
-  "warn MCP browsers: browser closed while worker held it"
-rm -f "$FLEET_STATE/browser-closed"
-bproc 4301 4300 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-aa"
-bproc 4310 1 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-bb"
+  "$(doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min); pid 4310 (no session, idle ?, its MCP server is gone)')" "1"
 djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"
@@ -1872,6 +1865,16 @@ rm -rf -- "${work:?}/dproc/4310"
 bpass $((bnow + 120))
 check "#379: once gone, its close is logged and the record cleared" \
   "$(jq -r 'select(.message == "an orphaned MCP browser closed") | .pid' "$FLEET_LOG") $([[ -e $FLEET_STATE/browsers-reaped ]] && echo kept || echo cleared)" "4310 cleared"
+# Each pass also puts the sessions' browser marks in step (#533): claude 4242 holds 4301.
+bk=$work/bk/dev.ajsoftworks.klepsydra bsid=dddddddd-0000-4000-8000-000000000533
+mkdir -p "$bk/fleet"
+printf '{"v":1,"session_id":"%s","claude":{"pid":4242,"start":%s},"ended":null}\n' "$bsid" "$(cut -d' ' -f22 "$work/dproc/4242/stat")" >"$bk/fleet/$bsid.json"
+KLEPSYDRA_DIR=$bk bpass $((bnow + 130))
+check "#533: a pass marks the session holding a browser open" "$(jq -r .browser "$bk/fleet/$bsid.json")" "open"
+rm -rf -- "${work:?}/dproc/4301"
+KLEPSYDRA_DIR=$bk bpass $((bnow + 140))
+check "#533: and closed once its window is gone" "$(jq -r .browser "$bk/fleet/$bsid.json")" "closed"
+rm -rf -- "${work:?}/bk"
 rm -rf -- "${work:?}/dproc/4300" "${work:?}/dproc/4301" "${work:?}/dproc/4302" "${work:?}/bcache"
 
 echo "install"
@@ -1917,6 +1920,35 @@ check "#244: --hooks installs only the copies: no scripts, units or command" \
 rm -rf -- "${inst:?}/hc" "${inst:?}/h"
 check "#244: the wrap-up skill lands in its skill folder" "$(cmp -s "${here%/fleet}/hooks/klepsydra-wrapup.md" "$inst/claude/skills/klepsydra-wrapup/SKILL.md" && echo same)" "same"
 hinst >/dev/null # the tmux conf the folder case removed comes back first
+
+# The browser hook (#533): registered by a full install once the script's copy
+# is this checkout's, replacing an older entry, in a linked 0600 settings file.
+binst() { FLEET_DEFAULT_CONFIG="$inst/cfg" FLEET_STATE="$inst/state" FLEET_UNITS="$inst/units" FLEET_BIN="$inst/bin" FLEET_HOOK_DIR="$inst/claude" \
+  FLEET_LOG="$work/instlog/browser.log" bash "$here/install.sh" --force --no-cutover >/dev/null 2>&1; echo $?; }
+bhooks() { jq -c '[.hooks.PreToolUse[] | [.matcher, (.hooks | map(.command))]]' "$inst/cfg/settings.json"; }
+mkdir -p "$inst/cfg" "$inst/dotfiles"
+check "#533: no settings file: none is made" "$(binst) $([[ -e $inst/cfg/settings.json ]] && echo made)" "0 "
+printf '%s\n' '{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"guard.sh"}]},
+  {"matcher":"mcp__.*playwright.*|browser_.*","hooks":[{"type":"command","command":"~/.claude/klepsydra-browser.sh --pre-tool"}]}],
+  "SessionEnd":[{"hooks":[{"type":"command","command":"~/.claude/klepsydra-browser.sh","timeout":5}]}]}}' >"$inst/dotfiles/settings.json"
+chmod 600 "$inst/dotfiles/settings.json"; ln -s "$inst/dotfiles/settings.json" "$inst/cfg/settings.json"
+check "#533: the old blocking entry is replaced by README's, other hooks kept" "$(binst) $(bhooks)" \
+  '0 [["Bash",["guard.sh"]],["mcp__.*playwright.*__browser_.*",["~/.claude/klepsydra-browser.sh --pre-tool || true"]]]'
+check "#533: a linked settings file stays a link, its file 0600, no temp file left, the rest kept" \
+  "$([[ -L $inst/cfg/settings.json ]] && echo link) $(stat -c %a "$inst/dotfiles/settings.json") $(find "$inst/dotfiles" -name 'settings.json.*' | wc -l) $(jq -c '[.model, (.hooks.SessionEnd | length)]' "$inst/cfg/settings.json")" \
+  'link 600 0 ["opus",1]'
+check "#533: the entry matches README's block" "$(jq -c '.hooks.PreToolUse[-1]' "$inst/cfg/settings.json")" \
+  "$(sed -n '/^<!-- browser-settings:start -->$/,/^<!-- browser-settings:end -->$/p' "${here%/fleet}/README.md" | grep -v -e '^<!--' -e '^```' | jq -c '.hooks.PreToolUse[0]')"
+touch -d @1 "$inst/dotfiles/settings.json"
+check "#533: a second install leaves it as it is" "$(binst) $(stat -c %Y "$inst/dotfiles/settings.json")" "0 1"
+printf 'an older script\n' >"$inst/claude/klepsydra-browser.sh"; chmod a-w "$inst/claude/klepsydra-browser.sh"; chmod a-w "$inst/claude"
+printf '%s\n' '{"hooks":{"PreToolUse":[]}}' >"$inst/dotfiles/settings.json"
+check "#533: the script's copy failed: no entry, the install fails, said so" \
+  "$(binst) $(jq -c '.hooks.PreToolUse' "$inst/dotfiles/settings.json") $(grep -c "its hook is not registered" "$work/instlog/browser.log")" "1 [] 1"
+chmod u+w "$inst/claude" "$inst/claude/klepsydra-browser.sh"
+printf 'not json\n' >"$inst/dotfiles/settings.json"
+check "#533: settings that do not parse are left alone and the install fails" "$(binst) $(cat "$inst/dotfiles/settings.json")" "1 not json"
+rm -rf -- "${inst:?}/cfg" "${inst:?}/dotfiles"
 before=$(find "$inst/state/archive" -type f | wc -l)
 check "#244 nit: an install with nothing changed copies and archives nothing" \
   "$(FLEET_LOG="$work/instlog/same.log" hinst) $(( $(find "$inst/state/archive" -type f | wc -l) - before )) $(cat "$work/instlog/same.log" 2>/dev/null | grep -c 'installed a copy')" "0 0 0"

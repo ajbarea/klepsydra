@@ -278,6 +278,20 @@ check "its own failure clears it" "$(field .state)" '"working"'
 fire post-tool-edit.json '.hook_event_name = "PostToolUseFailure" | .tool_input.file_path = "'"$repos"'/ideas/x"'
 check "a failed edit moves nothing" "$(field '.where.repo')" '"klepsydra"'
 
+pw=mcp__plugin_playwright_playwright__browser
+fire post-tool-bash.json ".tool_name = \"${pw}_navigate\""
+check "#533: a Playwright browser step marks the shared browser open" "$(field .browser)" '"open"'
+fire post-tool-bash.json
+check "#533: another tool keeps the mark" "$(field .browser)" '"open"'
+fire post-tool-bash.json ".hook_event_name = \"PostToolUseFailure\" | .tool_name = \"${pw}_click\""
+check "#533: a failed browser step keeps it (the sync judges the window)" "$(field .browser)" '"open"'
+fire post-tool-bash.json ".tool_name = \"${pw}_close\""
+check "#533: browser_close drops it" "$(field .browser)" "null"
+fire post-tool-bash.json '.tool_name = "mcp__chrome__browser_navigate"'
+check "#533: another server's browser tool does not mark it" "$(field .browser)" "null"
+fire post-tool-bash.json '.tool_name = "mcp__playwright__browser_snapshot"'
+check "#533: a plain playwright server's tool marks it" "$(field .browser)" '"open"'
+
 fire pre-tool-question.json
 check "question" "$(field '[.state, .reason]')" '["needs_you","question"]'
 fire post-tool-bash.json '.tool_name = "AskUserQuestion"'
@@ -598,6 +612,7 @@ rm -f "$wfile"
 echo "lifecycle"
 now=1792353300
 fire session-end.json
+check "#533: the end drops the browser mark" "$(field .browser)" "null"
 check "end" "$(field '[.state, .reason, .ended]')" "[\"ended\",\"exited\",{\"reason\":\"prompt_input_exit\",\"at\":$now}]"
 touch -d @1 "$file"
 fire stop.json
@@ -608,6 +623,11 @@ turns_before_resume=$(field .turns)
 now=1792353400 fire session-start.json '.source = "resume"'
 check "resumed: done, since it has a prompt" "$(field '[.state, .ended]')" '["done",null]'
 check "resumed: no turn ended" "$(field .turns)" "$turns_before_resume"
+jq -c '.browser = "open"' "$file" >"$file.t" && mv "$file.t" "$file"
+now=1792353401 fire session-start.json '.source = "compact"'
+check "#533: a compaction keeps the browser mark" "$(field .browser)" '"open"'
+now=1792353402 fire session-start.json '.source = "resume"'
+check "#533: a new process drops it" "$(field .browser)" "null"
 now=1792353405 fire session-start.json '.source = "resume"' KLEPSYDRA_PID=710
 check "resumed in another terminal: the new claude" "$(field .claude)" '{"pid":700,"start":9000000}'
 fire user-prompt.json

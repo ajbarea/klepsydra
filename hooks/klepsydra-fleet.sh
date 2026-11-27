@@ -8,7 +8,7 @@
 
 set -uo pipefail
 
-# --- klepsydra dir: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
+# --- klepsydra dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-browser.sh and statusline/klepsydra-statusline.sh ---
 # The overlay's app-local-data dir, named for the bundle identifier in
 # src-tauri/tauri.conf.json. Not the install dir: the uninstaller's "delete app
 # data" reaches only this one, and a per-machine install cannot be written to.
@@ -73,7 +73,7 @@ prune_hourly() { # stamp prune dir now
 }
 # --- end prune helpers ---
 
-# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, hooks/klepsydra-browser.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
 # The folder for the locks and stamps every caller must share: one per host and
 # boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
 # used only while it and the folder above it are ours, not symlinks and the
@@ -440,7 +440,7 @@ tmux_facts() {
   fi
 }
 
-# --- session rows: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
+# --- session rows: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-browser.sh and fleet/lib.sh ---
 # One tab-separated row per named session file whose first line is a v1
 # object: its name, then what the jq array `fields` picks from the object
 # (`last_active` is its newest time field, `or_q` a string or "?"). One jq
@@ -813,7 +813,13 @@ def assistant_text($line):
   | .name = (($ev.session_title | text) // .name // $fallback_name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
-  | if $event == "SessionEnd" then del(.browser) else . end
+  # The shared Playwright browser (#533): "open" once one of its tools
+  # succeeds; gone at browser_close, at the end and in a new process.
+  # klepsydra-browser.sh --sync marks it "closed" when the window goes.
+  | if $event == "PostToolUse" and ((($ev.tool_name | strings) // "") | test("^mcp__.*playwright.*__browser_")) then
+      (if $ev.tool_name | endswith("__browser_close") then del(.browser) else .browser = "open" end)
+    elif $event == "SessionEnd" or ($event == "SessionStart" and $ev.source != "compact") then del(.browser)
+    else . end
   # An orchestrator file written before faces (#222) is Hephaestus's: it keeps him.
   # One written while Athena wore bf_alice (before 11-02) keeps her on her voice now.
   | if $orchestrator then .orchestrator_face = ((.orchestrator_face | strings | if . == "bf_alice" then $athena_face else . end)
@@ -1456,19 +1462,6 @@ main() {
   # tmux can hang for its timeout; no other hook waits on it, so drop the lock first.
   { exec {lock}>&-; } 2>/dev/null
   fleet_registry_event "$orch_state" "$event" "$session" "$source" "$input" "$cleared_sid"
-  # Playwright MCP browser sync on PostToolUse for browser tools (#533)
-  if [[ $event == PostToolUse && $input == *'"tool_name":'* ]]; then
-    local tname
-    tname=$(jq -r '.tool_name // empty' <<<"$input" 2>/dev/null)
-    case $tname in
-      *playwright* | browser_*)
-        local bscript=${FLEET_BROWSER_SCRIPT:-${HOME:-}/.claude/klepsydra-browser.sh}
-        if [[ -x $bscript ]]; then
-          setsid -f bash "$bscript" --sync-holders </dev/null >/dev/null 2>&1
-        fi
-        ;;
-    esac
-  fi
   # A permission prompt in a tmux pane gets a watcher for its answer (#217),
   # started after the lock is let go: a child holding its fd would keep it.
   if [[ $event == PermissionRequest && -n $tmux_pane && ${KLEPSYDRA_ASK_WATCH:-1} == 1 && ${new:-$old} == *'"state":"needs_you"'* ]]; then

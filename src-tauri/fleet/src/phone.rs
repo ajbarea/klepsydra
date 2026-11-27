@@ -1114,7 +1114,7 @@ mod tests {
                 "remote_url": "https://claude.ai/code/session_01ABC",
                 "account": {"id": "a1", "label": "RIT-CS-DQL"}, "started_at": 1, "ceded": "bf_emma", "pick": "af_nova",
                 "wrapup": {"state": "blocked", "reason": "a review is running", "at": 5, "settled_at": 6},
-                "turn_at": 4, "asked_after_turn": true, "reply_at": 8, "browser": "worker"
+                "turn_at": 4, "asked_after_turn": true, "reply_at": 8, "browser": true
             }, {"session_id": "s2", "launch_dir": "C:\\Users\\aj\\proj", "status": "done"}, "junk"],
             "speaking": {"session_id": "s1", "envelope": [0.5], "started_at": 1.0, "ends_at": 2.0},
             "receiver": {"addr": "127.0.0.1:4318", "listening": true, "error": null}

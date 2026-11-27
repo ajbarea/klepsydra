@@ -51,7 +51,7 @@ COPILOT_CONFIG=(.github/hooks .github/copilot .github/skills .github/agents .git
 AGY_ASK=${KLEPSYDRA_AGY_ASK:-30} # seconds for one agy listing; a launch asks with less
 WT=${KLEPSYDRA_WT:-wt.exe}
 UNDO=()
-# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, hooks/klepsydra-browser.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
 # The folder for the locks and stamps every caller must share: one per host and
 # boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
 # used only while it and the folder above it are ours, not symlinks and the
