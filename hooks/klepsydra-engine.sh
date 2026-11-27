@@ -83,14 +83,28 @@ printf '%s' "$input" | jq -c \
     tool_response: (.toolResponse // .tool_response // null),
     agent_id: ((.agentId // .agent_id) | text),
     engine: $engine,
-    source: ((.source // .reason) | text)
+    source: ((.source // .reason) | text),
+    session_title: ((.sessionTitle // .session_title // .title) | text),
+    background_tasks: (
+      if $engine == "agy" and .fullyIdle == true then []
+      elif (.backgroundTasks // .background_tasks) != null then (.backgroundTasks // .background_tasks)
+      else null end
+    )
   }
+  | if .background_tasks == null
+    then del(.background_tasks)
+    else .
+    end
   | if .hook_event_name == "UserPromptSubmit" and .prompt == ""
     then del(.prompt)
     else .
     end
   | if .hook_event_name == "SessionEnd" and .source == ""
     then del(.source)
+    else .
+    end
+  | if .session_title == ""
+    then del(.session_title)
     else .
     end
 ' | exec bash "$fleet"

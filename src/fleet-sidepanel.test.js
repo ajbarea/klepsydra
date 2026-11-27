@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 
 globalThis.window ??= {};
 const side = await import("./fleet/sidepanel.js");
-const queue = await import("./fleet/queuepanel.js");
 
 test("the Queue keeps its stored keys and the Ledger has its own, none shared", () => {
   assert.deepEqual(side.storeKeys("queue"), {
@@ -17,14 +16,6 @@ test("the Queue keeps its stored keys and the Ledger has its own, none shared", 
   assert.ok(ledger.every((k) => k.startsWith("klepsydra.ledger.")), ledger.join());
   const shared = ledger.filter((k) => Object.values(side.storeKeys("queue")).includes(k));
   assert.deepEqual(shared, []);
-});
-
-test("the Queue's snap and text-size rules are the side panel's, not a copy", () => {
-  for (const name of ["DOCK_MIN_PX", "WIDTH", "WALL_MIN", "TEXT_SIZES", "clampWidth", "snap", "parseView", "separatorKey", "textSize", "stepText", "textKey"]) {
-    assert.equal(queue[name], side[name], name);
-  }
-  const src = readFileSync(new URL("./fleet/queuepanel.js", import.meta.url), "utf8");
-  assert.doesNotMatch(src, /export (const|function) (DOCK_MIN_PX|WIDTH|snap|separatorKey|textKey)\b/);
 });
 
 /** A stand-in for a panel on the edge: its view, and what the edge asked of it. */

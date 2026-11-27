@@ -63,7 +63,14 @@ for i in "${!args[@]}"; do [[ ${args[i]} == -e ]] && { cmd=("${args[@]:i+1}"); b
 echo $! >>"$WT_PIDS"
 EOF
 chmod +x "$work/bin/wt.exe"
-export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" XDG_RUNTIME_DIR="$work" WSL_DISTRO_NAME=Test
+export WT_LOG="$work/wt.log" WT_PIDS="$work/stub-pids" HOME="$work/home" WSL_DISTRO_NAME=Test
+# Locks live in this boot's folder in the (test) home's state folder, whatever
+# the runtime folder: here one a WSL boot has not made yet (#517).
+export XDG_RUNTIME_DIR="$work/no-runtime"
+printf 'testhost\n' >"$work/hostname"
+export KLEPSYDRA_HOSTNAME="$work/hostname"
+ld="$HOME/.local/state/klepsydra/run-testhost-$(</proc/sys/kernel/random/boot_id)"
+pending="$ld/klepsydra-tab-pending-$UID"
 export KLEPSYDRA_TMUX_SOCKET="$sock" KLEPSYDRA_TMUX_CONF="$here/klepsydra-tmux.conf"
 export KLEPSYDRA_CLAUDE="sleep 600" KLEPSYDRA_WT="$work/bin/wt.exe"
 # Never the host's systemd: an agent's own scope sets INVOCATION_ID, which
@@ -113,7 +120,7 @@ check "first: one window" "$(windows)" "1"
 check "first: one tab" "$(tabs)" "1"
 check "first: the tab attaches by the socket's path" "$(head -1 "$WT_LOG")" \
   "-w fleet new-tab --title klepsydra sessions --suppressApplicationTitle wsl.exe -d Test -e tmux -S $(t display -p '#{socket_path}') attach -t =fleet"
-check "first: an attached tab leaves no pending stamp" "$([[ -e $work/klepsydra-tab-pending-$UID ]] && echo left)" ""
+check "first: an attached tab leaves no pending stamp" "$([[ -e $pending ]] && echo left)" ""
 check "first: conf loaded" "$(t show -gv automatic-rename-format)" "#{pane_title}"
 check "first: focus events on" "$(t show -gv focus-events)" "on"
 attach
@@ -583,7 +590,7 @@ check "copy mode, interrupt: out of copy mode" "$(t display -p -t "$p" '#{pane_i
 
 # An End the app gave up on may still be running: a second one is refused.
 : >"$work/fake.log"; p=$(fake)
-exec {held}>>"$work/klepsydra-pane-$UID-${p#%}.lock"; flock -n "$held"
+exec {held}>>"$ld/klepsydra-pane-$UID-${p#%}.lock"; flock -n "$held"
 for verb in end interrupt wrapup; do
   out=$(send "$verb" "$p" 2>&1); rc=$?
   check "pane locked, $verb: exit 1" "$rc" "1"
@@ -716,7 +723,7 @@ check "#273: without the fleet installed it says so" "$rc $out" "1 The fleet com
 
 # Another click holding the lock past its 10 s: the window is selected anyway.
 detach_all; : >"$WT_LOG"
-lock="$work/klepsydra-launch-$UID.lock"
+lock="$ld/klepsydra-launch-$UID.lock"
 ( exec 9>>"$lock"; flock 9; exec sleep 30 ) &
 holder=$!
 for _ in $(seq 100); do flock -n "$lock" true || break; sleep 0.05; done
@@ -735,6 +742,60 @@ check "jump behind a held lock: says no launch" "$out" \
   "Selected the session's tmux window, but another click is still opening a terminal tab. Try again."
 check "jump behind a held lock: window selected" "$(t display -p -t =fleet: '#{pane_id}')" "$first"
 check "jump behind a held lock: no tab" "$(tabs)" "0"
+# #518 N5: with no lock folder the window is still selected, and the message
+# says so and that no tab opened.
+t select-window -t "$(t list-windows -t =fleet -F '#{window_id}' | tail -1)"
+ln -s "$HOME/.local/state/klepsydra" "$work/jstate-link"
+out=$(export KLEPSYDRA_STATE="$work/jstate-link"; jmp "$first" "$fpid" "$fstart" 2>&1); rc=$?
+check "#518 N5: jump with no lock folder says the window changed and no tab opened" "$rc|$out" \
+  "1|Selected the session's tmux window, but klepsydra has no lock folder ($work/jstate-link is a symlink), so no terminal tab opened for it."
+check "#518 N5: and the window is selected, with no tab" "$(t display -p -t =fleet: '#{pane_id}') $(tabs)" "$first 0"
+rm -f -- "$work/jstate-link"
+
+echo "one lock folder for every launch (#517)"
+# At a WSL boot XDG_RUNTIME_DIR names a folder logind makes minutes later, and
+# the overlay's non-login shells may not have it at all: every launch still
+# takes the one lock in this boot's state folder, never waits, never splits.
+stop_server; detach_all; : >"$WT_LOG"
+lk="$ld/klepsydra-launch-$UID.lock"
+( exec 9>>"$lk"; flock 9; exec sleep 30 ) &
+holder=$!
+for _ in $(seq 100); do flock -n "$lk" true || break; sleep 0.05; done
+mkdir -m 700 "$work/run-made"
+s=$EPOCHREALTIME
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work/run-not-yet" bash "$launch" new "$work/repos" 2>&1); rc=$?
+e=$EPOCHREALTIME
+check "#517 B2: before the runtime folder exists, a held launch refuses a second" "$rc|$out" "1|Another launch is still running."
+check "#517 B1: and it never waits for that folder" "$(( (${e/./} - ${s/./}) < 3000000 ))" "1"
+out=$(KLEPSYDRA_LOCK_WAIT=0.1 XDG_RUNTIME_DIR="$work/run-made" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 B2: once it exists, the same lock refuses it" "$rc|$out" "1|Another launch is still running."
+out=$(env -u XDG_RUNTIME_DIR KLEPSYDRA_LOCK_WAIT=0.1 bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 B2: and so it does for a shell without XDG_RUNTIME_DIR" "$rc|$out" "1|Another launch is still running."
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+check "#517 B2: none of them started a session or a tab" "$(windows) $(tabs)" "0 0"
+
+# The tab-pending stamp is shared the same way: a cold tab opened before the
+# runtime folder exists keeps a launch after it from opening a second tab.
+stop_server; detach_all; : >"$WT_LOG"
+export WT_DELAY=never
+out=$(XDG_RUNTIME_DIR="$work/run-not-yet" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 B2: a cold tab before the folder exists stamps this boot's folder" \
+  "$rc $([[ -f $pending ]] && echo stamped)" "0 stamped"
+out=$(XDG_RUNTIME_DIR="$work/run-made" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 B2: and a launch after it sees the stamp: one tab, two windows" "$rc $(tabs) $(windows)" "0 1 2"
+unset WT_DELAY
+rm -f -- "$pending" # or the next cases' first tab waits on it
+
+# No lock folder of its own: nothing starts, and it says why.
+stop_server; detach_all; : >"$WT_LOG"
+ln -s "$HOME/.local/state/klepsydra" "$work/state-link"
+out=$(KLEPSYDRA_STATE="$work/state-link" bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517: no lock folder of its own: new is refused and says why" "$rc|$out|$(windows) $(tabs)" \
+  "1|klepsydra has no lock folder ($work/state-link is a symlink), so this click went no further.|0 0"
+rm -f -- "$work/state-link"
+# A lock wait that is no number of seconds is the 10 s default, not "another launch".
+out=$(KLEPSYDRA_LOCK_WAIT=abc bash "$launch" new "$work/repos" 2>&1); rc=$?
+check "#517 review: KLEPSYDRA_LOCK_WAIT=abc still launches" "$rc $(windows)" "0 1"
 
 echo "one tab per fleet"
 stop_server; detach_all; : >"$WT_LOG"
@@ -761,7 +822,6 @@ unset WT_DELAY
 
 echo "a tab that has not attached yet"
 stop_server; detach_all; : >"$WT_LOG"
-pending="$work/klepsydra-tab-pending-$UID"
 # A cold WSL: the tab attaches after the launcher stops waiting. The launcher's
 # poll runs longer on a loaded machine, so any fixed delay can land inside it
 # and leave no pending stamp; this tab never attaches.
@@ -905,7 +965,6 @@ EOF
 chmod +x "$lbin/.xdg" "$lbin/.xdotool" "$lbin/.xprop"
 export TERM_LOG="$work/term.log" XDG_LOG="$work/xdg.log" XDO_LOG="$work/xdo.log"
 lx() { env -u WSL_DISTRO_NAME KLEPSYDRA_PROC="$lproc" PATH="$lbin:$lbase" "$@"; }
-pending="$work/klepsydra-tab-pending-$UID"
 stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
 
 out=$(lx bash "$launch" new "$work/repos" 2>&1); rc=$?
@@ -937,6 +996,10 @@ sp=$(t display -p '#{socket_path}')
 want_tail="tmux -S $sp attach -t =fleet"
 check "linux: xterm gets title, -e and the attach" "$(head -1 "$TERM_LOG")" "xterm -T klepsydra sessions -e $want_tail"
 check "linux: an attached tab: windows 1, pending stamp gone" "$(windows) $([[ -e $pending ]] && echo left)" "1 "
+stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
+mkfifo "$pending"
+lx env KLEPSYDRA_TERMINAL=xterm bash "$launch" new "$work/repos" >/dev/null 2>&1; rc=$?
+check "linux: a FIFO at the shared pending stamp is removed, not ignored" "$rc|$([[ -p $pending ]] && echo fifo)" "0|"
 stop_server; detach_all; : >"$TERM_LOG"; rm -f "$pending"
 lx bash "$launch" new "$work/repos" >/dev/null 2>&1
 check "linux: gnome-terminal gets a titled tab" "$(head -1 "$TERM_LOG")" "gnome-terminal --tab --title=klepsydra sessions -- $want_tail"
@@ -1132,8 +1195,11 @@ check "#292 review 3: a program started by hand in a viewer's pane dies: shown a
   "$(ti list-panes -a -F '#{pane_id}' | grep -cx -- "$w3") $(ti show -pqv -t "$w3" @klepsydra_dead | cut -d' ' -f2-) $(cat "$work"/dead/*.txt 2>/dev/null | grep -c '^second words$')" \
   "1 its process exited with status 4 1"
 ti kill-pane -t "$w3" 2>/dev/null
-ti send-keys -t "$v0" Enter
-for _ in $(seq 50); do ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx -- "$v0" || break; sleep 0.1; done
+for _ in $(seq 50); do
+  ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx -- "$v0" || break
+  ti send-keys -t "$v0" Enter 2>/dev/null
+  sleep 0.1
+done
 check "#290: Enter closes a dead pane's viewer" "$(ti list-panes -a -F '#{pane_id}' 2>/dev/null | grep -cx -- "$v0") (left: $(ti list-panes -a -F '#{pane_id}:#{pane_start_command}' 2>/dev/null | tr '\n' ' '))" "0 (left: )"
 ti kill-server 2>/dev/null; to kill-server 2>/dev/null
 rm -f -- "$sockdir/${in4:?}" "$sockdir/${out4:?}"
@@ -1172,6 +1238,10 @@ check "#260: and no fleet session was made" "$(tmux -L "$sock5" has-session -t =
 tmux -L "$sock5" kill-server 2>/dev/null
 
 check "#292 review 2: no case reached the host's systemd-run" "$(cat "$work/systemd-run-guard.calls" 2>/dev/null)" ""
+# shellcheck disable=SC2016 # literal pattern checked against the source
+check "#518 r4: pending stamp path defined once from \$ld" \
+  "$(grep -E 'klepsydra-tab[-]pending|[/][^[:space:]]*tab[-]pending' "$here/test_launch.sh")" \
+  'pending="$ld/klepsydra-tab''-pending-$UID"'
 
 echo "cleanup"
 cleanup; trap - EXIT

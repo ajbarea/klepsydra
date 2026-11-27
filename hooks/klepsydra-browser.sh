@@ -31,7 +31,7 @@ WAIT_S=${KLEPSYDRA_BROWSER_WAIT_S:-1}
 GRACE_S=${KLEPSYDRA_BROWSER_GRACE_S:-10}
 now() { printf '%s' "${KLEPSYDRA_NOW:-$(printf '%(%s)T' -1)}"; }
 
-# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and hooks/klepsydra-browser.sh ---
+# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, hooks/klepsydra-browser.sh and fleet/lib.sh ---
 # Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
 # `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
 # The name sits in parentheses and may itself contain spaces or ")".

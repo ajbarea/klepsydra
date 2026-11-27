@@ -130,9 +130,12 @@ test("the strip marks the speaking session through the hold only", () => {
 test("frames run only while someone speaks, and reduced motion gets a still ring", () => {
   const src = readFileSync(new URL("./fleet/wall.js", import.meta.url), "utf8");
   const draw = src.slice(src.indexOf("function drawSpeaking"), src.indexOf("function receive"));
-  // The waves' frames, and one frame for Auto's density check after the wall resizes.
-  assert.equal((src.match(/requestAnimationFrame\(/g) ?? []).length, 2, "two places schedule frames");
+  // The waves' frames, one frame for Auto's density check after the wall resizes, and one
+  // to place Amber Door's panel under the bar after the bar resizes or the page scrolls.
+  assert.equal((src.match(/requestAnimationFrame\(/g) ?? []).length, 3, "three places schedule frames");
   assert.match(src, /densityFrame = requestAnimationFrame\(showDensity\)/, "the density check is one frame, never a loop");
+  const door = src.slice(src.indexOf("const placeDoor"), src.indexOf("new ResizeObserver(placeDoor)"));
+  assert.match(door, /cancelAnimationFrame\(doorFrame\);\s*doorFrame = requestAnimationFrame\(\(\) => document\.body\.style\.setProperty\("--bar-foot"/, "placing the panel is one frame, never a loop");
   assert.ok(draw.indexOf("if (!f) return;") < draw.indexOf("requestAnimationFrame("), "idle stops the loop");
   assert.match(draw, /reducedMotion\(\)[\s\S]*circles\(svg, "still", 1\)[\s\S]*return;/);
   assert.match(src, /said\.push\(`\$\{identity\(who, cast\)\.name\} speaking`\)/);

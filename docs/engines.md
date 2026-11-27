@@ -165,7 +165,7 @@ reports back itself. The adapter, outside the model, does:
 | Engine | Turn end | Answer | Limit signal | Notes |
 |---|---|---|---|---|
 | agy print | process exit | stdout | exit text or stderr matching a quota/auth phrase | `--print-timeout` unused: `timeout -k` outside is the limit |
-| agy interactive | footer `esc to cancel` to `? for shortcuts`, with a reply under the echo of the prompt sent | text after the echo of that prompt (`> [fleet:N] ...`) up to the next rule, minus tool, token and tip lines | phrase near the box | agy also has a Stop hook and a status line with `agent_state` and quota buckets; the pane watcher needs neither, so it is the one signal used (later stage) |
+| agy interactive | footer `esc to cancel` to `? for shortcuts` (with a status line as the footer: no Braille spinner or running task line left), with a reply under the echo of the prompt sent | text after the echo of that prompt (`> [fleet:N] ...`) up to the next rule, minus tool, token and tip lines | phrase near the box | agy also has a Stop hook and a status line with `agent_state` and quota buckets; the pane watcher needs neither, so it is the one signal used (later stage) |
 | copilot print | process exit | stdout (`-s`) | exit text or stderr | no quota command exists; limits are read from failure text |
 | copilot interactive | footer `Working ctrl+c interrupt` to `open sidebar ... Manual Approval`, with a reply under the echo of the prompt sent | text after the echo of that prompt (`❯ [fleet:N] ...`) up to the cwd line, bullet stripped, model-choice notice dropped | phrase near the box | a new folder shows a trust dialog (footer `enter to select`); the adapter answers Enter once. It stays in scrollback, so only the last lines are read |
 

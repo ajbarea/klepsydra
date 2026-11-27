@@ -154,10 +154,13 @@ eng_classify() { # RC STDOUT STDERR: a failure is read with its stderr; an exit 
 
 # An interactive pane's state from its screen. agy: the input box sits between
 # two rules and the footer under it reads "esc to cancel" while a turn runs and
-# "? for shortcuts" when idle. Copilot: the footer reads "Working ctrl+c
+# "? for shortcuts" when idle; with a status line (agy 1.5.12+, klepsydra's
+# "... · ctx N% · ..."), that line is the footer instead, and a turn runs while
+# a spinner line (Braille) or a "● [hh:mm:ss] ... running" task line shows
+# (agy_spinning). Copilot: the footer reads "Working ctrl+c
 # interrupt" while a turn runs and "open sidebar ... Manual Approval" when idle,
 # and a folder not yet trusted shows a dialog (state trust; eng_trust_key answers).
-eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
+eng_state() { # ENGINE SCREEN (plain text, no escapes) [PROMPT: the text last sent]
   local engine=$1 screen=$2 foot recent
   recent=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -12)
   foot=$(grep -v '^[[:space:]]*$' <<<"$screen" | tail -1)
@@ -166,6 +169,8 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
   local footer=unknown
   if [[ $engine == agy && $foot == *"esc to cancel"* ]]; then footer=busy
   elif [[ $engine == agy && $foot == *"? for shortcuts"* ]]; then footer=idle
+  elif [[ $engine == agy && $foot == *" · ctx "[0-9]*"% · "* ]]; then
+    if agy_spinning "$recent"; then footer=busy; else footer=idle; fi
   elif [[ $engine == copilot && $foot == *"ctrl+c interrupt"* ]]; then footer=busy
   elif [[ $engine == copilot && ( $foot == *"open sidebar"* || $foot == *"Manual Approval"* ) ]]; then footer=idle; fi
   # A running turn is busy whatever the screen says. A quota or login message is the
@@ -179,6 +184,18 @@ eng_state() { # ENGINE SCREEN [PROMPT: the text last sent]
     if grep -Eqi -- "$ENG_AUTH_RE" <<<"$reply"; then echo auth; return; fi
   fi
   echo "$footer"
+}
+
+# Whether agy's recent lines show a turn at work: a spinner line (its first
+# character Braille, U+2800 to U+28FF) or a background task still running.
+agy_spinning() { # LINES
+  local LC_ALL=C line lead
+  while IFS= read -r line; do
+    lead=${line#"${line%%[![:space:]]*}"}
+    case ${lead:0:2} in $'\xe2\xa0' | $'\xe2\xa1' | $'\xe2\xa2' | $'\xe2\xa3') return 0 ;; esac
+    [[ $lead =~ ^$'\xe2\x97\x8f'\ \[[0-9]{2}:[0-9]{2}:[0-9]{2}\]\ .*\ running$ ]] && return 0
+  done <<<"$1"
+  return 1
 }
 
 # The key that answers a "trust this folder" dialog (Copilot's first option is Yes).

@@ -42,8 +42,136 @@ fi
 CAST=${KLEPSYDRA_CAST:-}
 if [[ -z $CAST && -n ${KLEPSYDRA_DIR:-} && -f $KLEPSYDRA_DIR/cast.json ]]; then CAST=$KLEPSYDRA_DIR/cast.json
 elif [[ -z $CAST && -n ${HOME:-} ]]; then CAST=$HOME/.claude/klepsydra-cast.json; fi
+
+# --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
+# Whether `dir` is the overlay's own data dir, the only place a prune deletes
+# from: absolute, without "..", named for the bundle identifier, and not a
+# symlink. Trailing slashes do not count.
+own_data_dir() { # dir
+  local dir=$1
+  while [[ $dir == */ ]]; do dir=${dir%/}; done
+  [[ -n $dir && $dir == /* ]] || return 1
+  [[ $dir == */../* || $dir == */.. ]] && return 1
+  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
+  [[ ! -L $dir ]]
+}
+
+# A prune runs at most once an hour, refused or not; `stamp` holds the time of
+# the last run, and a clock that went back runs it again.
+PRUNE_EVERY=3600
+prune_due() { # stamp now
+  local last=""
+  { IFS= read -r last <"$1"; } 2>/dev/null
+  [[ $2 =~ ^[0-9]+$ ]] || return 1
+  ! [[ $last =~ ^[0-9]+$ ]] || (( 10#$2 - 10#$last >= PRUNE_EVERY || 10#$2 < 10#$last ))
+}
+prune_hourly() { # stamp prune dir now
+  prune_due "$1" "$4" || return 0
+  "$2" "$3" "$4"
+  { printf '%s\n' "$4" >"$1"; } 2>/dev/null
+  return 0
+}
+# --- end prune helpers ---
+
+# --- lock dir: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, statusline/klepsydra-statusline.sh and fleet/lib.sh ---
+# The folder for the locks and stamps every caller must share: one per host and
+# boot in ~/.local/state/klepsydra (KLEPSYDRA_STATE), made with mode 0700 and
+# used only while it and the folder above it are ours, not symlinks and the
+# folder above it is writable by no one else. Sets LOCK_DIR, or empties it,
+# says why in LOCK_WHY and fails; never waits, never prints. Not
+# XDG_RUNTIME_DIR: a WSL boot sets it before logind makes it, and the overlay's
+# shells may lack it, so callers would split between two locks (#517). Making
+# this boot's folder removes this host's folders last changed before this boot
+# began (btime), which only ended boots can be. Another host's are untouched
+# while hostnames differ (same-name hosts on one shared HOME still prune each
+# other). An unusable hostname never prunes, so run-_-* accumulates one small
+# folder per boot. The host is the kernel's hostname, so renaming a host
+# mid-boot moves its lock.
+lock_why() { # PATH [w]: fails with LOCK_WHY set when PATH is no folder of ours (w: or not writable)
+  local mode
+  if [[ -L $1 ]]; then LOCK_WHY="$1 is a symlink"
+  elif [[ ! -e $1 ]]; then LOCK_WHY="$1 is missing"
+  elif [[ ! -d $1 ]]; then LOCK_WHY="$1 is not a folder"
+  elif [[ ! -O $1 ]]; then LOCK_WHY="$1 belongs to another user"
+  elif [[ -n ${2:-} && ! -w $1 ]]; then
+    mode=$(stat -c %A -- "$1" 2>/dev/null)
+    if [[ ${mode:2:1} == w ]]; then LOCK_WHY="$1 cannot be written (a read-only file system, or locked)"
+    else LOCK_WHY="$1 is not writable (mode ${mode:-unknown})"; fi
+  else return 0; fi
+  return 1
+}
+# shellcheck disable=SC2034 # LOCK_WHY is for the caller
+lock_dir() {
+  local base=${KLEPSYDRA_STATE:-} given boot="" host="" run old name mode key val btime="" m err prune=1
+  LOCK_DIR="" LOCK_WHY=""
+  if [[ -z $base ]]; then
+    if [[ -n ${HOME:-} ]]; then base=$HOME
+    else local HOME; unset HOME; base=~; fi # bash reads the password file's home
+    base=$base/.local/state/klepsydra
+  fi
+  given=$base
+  while [[ $base == */ ]]; do base=${base%/}; done
+  if [[ $base != /* ]]; then
+    if [[ $given == /* ]]; then LOCK_WHY="the state folder cannot be /"
+    else LOCK_WHY="the state folder '$given' is not an absolute path"; fi
+    return 1
+  fi
+  # builtin reads: no process
+  { read -r boot <"${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}"; } 2>/dev/null
+  [[ $boot =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || boot=unknown prune=0
+  { read -r host <"${KLEPSYDRA_HOSTNAME:-/proc/sys/kernel/hostname}"; } 2>/dev/null
+  [[ ${#host} -le 253 && $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || host=_ prune=0 # no hostname has a _, so no host's prune reaches it
+  run=$base/run-$host-$boot
+  if [[ ! -e $run && ! -L $run ]]; then
+    if [[ ! -e $base && ! -L $base ]]; then
+      if ! err=$({ mkdir -p -- "${base%/*}" && mkdir -m 700 -- "$base"; } 2>&1); then
+        if [[ ! -e $base && ! -L $base ]]; then # not another caller's mkdir winning
+          LOCK_WHY="cannot make $base${err:+: ${err##*: }}"; return 1
+        fi
+      fi
+    fi
+    lock_why "$base" || return 1
+    mode=$(stat -c %a -- "$base" 2>/dev/null) # once a boot: others could plant links
+    if [[ ! $mode =~ ^[0-7]{3,4}$ ]] || (( (8#$mode & 8#022) != 0 )); then
+      LOCK_WHY="$base is writable by its group or others (mode ${mode:-unknown})"; return 1
+    fi
+    if err=$(mkdir -m 700 -- "$run" 2>&1); then
+      if (( prune )); then
+        while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done 2>/dev/null </proc/stat
+        for old in "$base/run-$host-"*; do
+          name=${old##*/}; name=${name#"run-$host-"}
+          [[ $btime =~ ^[0-9]+$ && $name =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ &&
+            $old != "$run" && -d $old && ! -L $old ]] || continue
+          m=$(stat -c %Y -- "$old" 2>/dev/null) && [[ $m =~ ^[0-9]+$ ]] && (( m < btime )) && rm -rf -- "${old:?}" 2>/dev/null
+        done
+      fi
+    elif [[ ! -e $run && ! -L $run ]]; then # not another caller's mkdir winning
+      LOCK_WHY="cannot make $run${err:+: ${err##*: }}"; return 1
+    fi
+  fi
+  lock_why "$base" && lock_why "$run" w || return 1
+  LOCK_DIR=$run
+}
+# --- end lock dir ---
 # Every session's hooks run as separate processes, so writes take one lock.
-LOCK=${XDG_RUNTIME_DIR:-/tmp}/klepsydra-fleet-$UID.lock
+# Without its folder (lock_dir) the hook writes nothing, but leaves one line,
+# "<epoch> <why>", in <KLEPSYDRA_DIR>/lock-refused at most every LOCK_TRACE_S
+# seconds, which fleet doctor shows (#518). Builtins only, only when
+# own_data_dir (dev.ajsoftworks.klepsydra) holds, and only to a regular file.
+LOCK_TRACE_S=600
+lock_trace() { # WHY
+  local file=${KLEPSYDRA_DIR:-}/lock-refused now t=""
+  [[ -n ${KLEPSYDRA_DIR:-} ]] && own_data_dir "$KLEPSYDRA_DIR" || return 0
+  [[ -d $KLEPSYDRA_DIR && ! -L $file && ( ! -e $file || -f $file ) ]] || return 0
+  now=${KLEPSYDRA_NOW:-}
+  [[ $now =~ ^[0-9]+$ ]] || printf -v now '%(%s)T' -1
+  { read -r t _ <"$file"; } 2>/dev/null || t=""
+  [[ $t =~ ^[0-9]{1,12}$ ]] && (( t <= now && now - t < LOCK_TRACE_S )) && return 0
+  { printf '%s %s\n' "$now" "$1"; } 2>/dev/null >"$file"
+  return 0
+}
+lock_dir || lock_trace "$LOCK_WHY"
+LOCK=${LOCK_DIR:+$LOCK_DIR/klepsydra-fleet-$UID.lock}
 PROMPT_CHARS=300
 # The events README.md registers this hook on; any other is ignored.
 EVENTS="SessionStart UserPromptSubmit PermissionRequest PreToolUse Notification PostToolUse PostToolUseFailure SubagentStart SubagentStop Stop StopFailure SessionEnd"
@@ -144,7 +272,7 @@ branch_of() { # gitdir
   esac
 }
 
-# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh and hooks/klepsydra-browser.sh ---
+# --- proc stat: identical in hooks/klepsydra-fleet.sh, hooks/klepsydra-launch.sh, hooks/klepsydra-browser.sh and fleet/lib.sh ---
 # Fields of $PROC_ROOT/<pid>/stat after the command name, into the caller's
 # `stat`: [0] is the state, [1] the parent pid, [19] the start time (field 22).
 # The name sits in parentheses and may itself contain spaces or ")".
@@ -217,25 +345,29 @@ nested_claude() { # pid
   (claude_ancestor "${stat[1]}")
 }
 
-# How many Bash tool calls Claude Code process `pid` runs now: its child
-# shells, one per call however many subshells or pipes the call starts, less
-# the one running this hook (`me` and its parents). Claude Code's footer counts
-# them so; the hook events cannot, since none fires when a background shell
-# ends mid-turn. A zombie has ended; sh and dash are hook wrappers (dash keeps
-# its process for `sh -c CMD`), never a Bash tool call: Claude Code runs those
-# in bash or zsh, or the CLAUDE_CODE_SHELL it names. Where /bin/sh is bash, a
-# hook wrapper can briefly count; the card's min with its set bounds that.
-# Prints nothing when no children list is readable, 0 for an empty one, and
-# nothing under CLAUDE_CODE_SHELL_PREFIX, whose wrapper hides the shell.
+# --- live shells: identical in hooks/klepsydra-fleet.sh and fleet/lib.sh ---
+# How many tool calls the engine process `pid` runs now: its child shells, one
+# per call however many subshells or pipes the call starts, less the one
+# running this hook (`me` and its parents). Claude Code's footer counts them
+# so; the hook events cannot, since none fires when a background shell ends
+# mid-turn. agy runs each call as `bash -c CMD` too, and starts its MCP servers
+# as npm, uv or node, never a shell (agy 1.5.17, 11-25), so the same rule
+# counts its tasks and never its servers. A zombie has ended; sh and dash are
+# hook wrappers (dash keeps its process for `sh -c CMD`), never a tool call:
+# the engines run those in bash or zsh, or the CLAUDE_CODE_SHELL it names.
+# Where /bin/sh is bash, a hook wrapper can briefly count; the card's min with
+# its set bounds that. Prints nothing when no children list is readable, 0 for
+# an empty one, and nothing under CLAUDE_CODE_SHELL_PREFIX, whose wrapper
+# hides the shell.
 live_shells() { # pid me
   local pid=$1 p=$2 f child comm n=0 listed=0 i own=${CLAUDE_CODE_SHELL:-}
-  local -a stat=() mine=()
+  local -a stat=() callers=()
   [[ -n ${CLAUDE_CODE_SHELL_PREFIX:-} ]] && return 0
   own=${own##*/}
   [[ $own == sh || $own == dash ]] && own=""
   for ((i = 0; i < 32; i++)); do
     [[ $p == "$pid" ]] && break
-    mine+=("$p")
+    callers+=("$p")
     proc_stat "$p" || break
     p=${stat[1]}
     (( p >= 1 )) || break
@@ -245,7 +377,7 @@ live_shells() { # pid me
     listed=1
     for child in $(<"$f"); do
       [[ $child =~ ^[0-9]+$ ]] || continue
-      [[ " ${mine[*]} " == *" $child "* ]] && continue
+      [[ " ${callers[*]} " == *" $child "* ]] && continue
       proc_stat "$child" && [[ ${stat[0]} == Z ]] && continue
       comm=""
       { IFS= read -r comm <"$PROC_ROOT/$child/comm"; } 2>/dev/null
@@ -255,6 +387,7 @@ live_shells() { # pid me
   done
   (( listed )) && printf '%s' "$n"
 }
+# --- end live shells ---
 
 # The voice keryx holds for a terminal, or nothing without keryx or a hold.
 holder_voice() { # pid start
@@ -354,7 +487,7 @@ fleet_rows() { # folder fields
 # symlink, and only when `dir` is the overlay's own absolute data dir. Runs
 # under the fleet lock in a few processes however many files there are.
 PRUNE_AFTER=86400
-PRUNE_STAMP=${LOCK%.lock}.pruned
+PRUNE_STAMP=${LOCK:+${LOCK%.lock}.pruned}
 prune_fleet() { # dir now
   local dir=$1 now=$2
   own_data_dir "$dir" || return 1
@@ -448,35 +581,6 @@ mark_gone() { # dir now self
       ((.claude.pid | numbers) // 0 | floor), ((.claude.start | numbers) // 0 | floor), last_active]')
 }
 
-# --- prune helpers: identical in hooks/klepsydra-fleet.sh and statusline/klepsydra-statusline.sh ---
-# Whether `dir` is the overlay's own data dir, the only place a prune deletes
-# from: absolute, without "..", named for the bundle identifier, and not a
-# symlink. Trailing slashes do not count.
-own_data_dir() { # dir
-  local dir=$1
-  while [[ $dir == */ ]]; do dir=${dir%/}; done
-  [[ -n $dir && $dir == /* ]] || return 1
-  [[ $dir == */../* || $dir == */.. ]] && return 1
-  [[ ${dir##*/} == dev.ajsoftworks.klepsydra ]] || return 1
-  [[ ! -L $dir ]]
-}
-
-# A prune runs at most once an hour, refused or not; `stamp` holds the time of
-# the last run, and a clock that went back runs it again.
-PRUNE_EVERY=3600
-prune_due() { # stamp now
-  local last=""
-  { IFS= read -r last <"$1"; } 2>/dev/null
-  [[ $2 =~ ^[0-9]+$ ]] || return 1
-  ! [[ $last =~ ^[0-9]+$ ]] || (( 10#$2 - 10#$last >= PRUNE_EVERY || 10#$2 < 10#$last ))
-}
-prune_hourly() { # stamp prune dir now
-  prune_due "$1" "$4" || return 0
-  "$2" "$3" "$4"
-  { printf '%s\n' "$4" >"$1"; } 2>/dev/null
-  return 0
-}
-# --- end prune helpers ---
 
 # The transcript's last few lines that turn Remote Control on or off, one per
 # line: `/remote-control` connecting (system bridge_status, with the session
@@ -703,7 +807,10 @@ def assistant_text($line):
             ended: null, turns: 0, written_at: $now}) as $s
   | $s
   | .engine = (($ev.engine | strings | select(test("^[A-Za-z0-9._-]{1,32}$"))) // .engine // "claude")
-  | .name = (($ev.session_title | text) // .name)
+  | (if ($worktree != "" and $branch != "" and ($branch | IN("main", "master") | not)) then $branch
+     elif ($brief_title != "") then $brief_title
+     else null end) as $fallback_name
+  | .name = (($ev.session_title | text) // .name // $fallback_name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
   | if $event == "SessionEnd" then del(.browser) else . end
@@ -876,7 +983,7 @@ def assistant_text($line):
       # non-shell program counts as no shell, but the list still names it).
       | if $event == "Stop" and ($ev.background_tasks | type) == "array" then del(.shells_live)
         else .shells_live = $n
-          | if $n == 0 then .background |= map(select(.kind != "shell")) else . end end
+          | if $n == 0 then (.engine == "agy") as $agy | .background |= map(select(.kind != "shell" and (.kind != "task" or ($agy | not)))) else . end end
     else del(.shells_live) end
 
   # State, with what it needs from AJ and who asked.
@@ -901,9 +1008,9 @@ def assistant_text($line):
      elif $event == "Notification" and $ev.notification_type == "idle_prompt"
           and (.state == "working" or .state == "needs_you") and $now - .state_at >= 30 then
        # The prompt is free; work still out keeps the session working.
-       if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+       if .background != [] or (.engine == "agy" and (.shells_live // 0) > 0) then {state: "working", reason: "background"} else {state: "done", reason: null} end
      elif $event == "Stop" then
-       if .background != [] then {state: "working", reason: "background"} else {state: "done", reason: null} end
+       if .background != [] or (.engine == "agy" and (.shells_live // 0) > 0) then {state: "working", reason: "background"} else {state: "done", reason: null} end
      elif $event == "StopFailure" then {state: "error", reason: (($ev.error // "unknown") | gsub("_"; " "))}
      elif $event == "SessionEnd" then {state: "ended", reason: (($ev.reason // "other") | ended_as)}
      elif $adopt and .state == "done" then {state: "working", reason: "background"}
@@ -1119,7 +1226,9 @@ watch_ask() { # sid
   local sid=$1 file lock text row at socket pane screen asked="" seen=0 misses=0 began now
   [[ $sid =~ $UUID_RE && -n ${KLEPSYDRA_DIR:-} ]] || return 0
   file=$KLEPSYDRA_DIR/fleet/$sid.json
-  { exec {lock}>>"${XDG_RUNTIME_DIR:-/tmp}/klepsydra-ask-$UID-$sid.lock"; } 2>/dev/null || return 0
+  [[ -n $LOCK_DIR ]] || return 0
+  { exec {lock}>>"$LOCK_DIR/klepsydra-ask-$UID-$sid.lock"; } 2>/dev/null ||
+    { lock_trace "cannot open $LOCK_DIR/klepsydra-ask-$UID-$sid.lock"; return 0; }
   # A watcher on its way out still holds the lock; one still watching keeps it.
   flock -w 10 "$lock" || return 0
   began=$SECONDS
@@ -1149,7 +1258,8 @@ watch_ask() { # sid
 # when the fleet lock stays busy, so the watcher tries again on its next look.
 ask_answered() { # file asked_at now
   local lock new
-  { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
+  [[ -n $LOCK ]] || return 0
+  { exec {lock}>>"$LOCK"; } 2>/dev/null || { lock_trace "cannot open $LOCK"; return 0; }
   flock -w 5 "$lock" || { exec {lock}>&-; return 1; }
   new=$(jq -c --argjson asked "$2" --argjson now "$3" "$STATE_DEFS"'
     select(.state == "needs_you" and .state_at == $asked) | answered as $t
@@ -1175,16 +1285,17 @@ fleet_registry_event() { # state event session source input cleared_sid
 }
 
 main() {
-  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine="" call_tokens=""
+  local input fields session event cwd edited transcript source now file old new lock voice="" cwd_repo by=cwd remote="" cleared="" cleared_sid="" homes='{}' old_git where_gone=false account=null engine="" call_tokens="" prompt=""
   input=$(cat)
   fields=$(printf '%s' "$input" | jq -r '
     def s: if type == "string" then gsub("[\u001f\n]"; " ") else "" end;
     [ (.session_id | s), (.hook_event_name | s), (.cwd | s),
       (if .hook_event_name == "PostToolUse" and (.tool_name | IN("Edit", "Write", "NotebookEdit"))
        then ((.tool_input.file_path // .tool_input.notebook_path) | s) else "" end),
-      (.transcript_path | s), (.source | s), (.engine | s)
+      (.transcript_path | s), (.source | s), (.engine | s),
+      (.prompt | s)
     ] | join("\u001f")' 2>/dev/null) || return 0
-  IFS=$'\x1f' read -r session event cwd edited transcript source engine <<<"$fields"
+  IFS=$'\x1f' read -r session event cwd edited transcript source engine prompt <<<"$fields"
   [[ $session =~ $UUID_RE && " $EVENTS " == *" $event "* ]] || return 0
 
   now=${KLEPSYDRA_NOW:-}
@@ -1272,7 +1383,8 @@ main() {
       [[ -n $account ]] || account=null
     fi
   fi
-  { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
+  [[ -n $LOCK ]] || return 0
+  { exec {lock}>>"$LOCK"; } 2>/dev/null || { lock_trace "cannot open $LOCK"; return 0; }
   flock -w 5 "$lock" || return 0
 
   [[ $event == SessionStart && $source == clear ]] && IFS=$'\x1f' read -r cleared cleared_face cleared_sid < <(cleared_link "$fleet" "$found_pid" "$found_start" "$session")
@@ -1298,8 +1410,30 @@ main() {
   old_git=""
   [[ $old =~ \"git\":\"(/[^\"\\]*)\" ]] && old_git=${BASH_REMATCH[1]}
   [[ -n $old_git && ! -e $old_git ]] && where_gone=true
+  # A session with no name yet is named after its brief's first line (or,
+  # in jq below, its worktree's branch), never a number (#416).
+  local brief_title="" brief_file="" reg reg_p
+  reg=${REGISTRY:-${FLEET_STATE:-${HOME:-}/.local/state/fleet-orchestrator}/panes.tsv}
+  if [[ $old == *'"name":"'* ]]; then :
+  elif [[ $prompt =~ Read\ your\ brief\ at\ ([^[:space:]]+) ]]; then
+    brief_file=${BASH_REMATCH[1]}
+    [[ $brief_file == ~* ]] && brief_file="${HOME:-}${brief_file#\~}"
+  elif [[ -n $tmux_pane && -r $reg ]]; then
+    while IFS=$'\t' read -r reg_p _ brief_file _; do
+      [[ $reg_p == "$tmux_pane" ]] && break
+      brief_file=""
+    done <"$reg" 2>/dev/null
+  fi
+  if [[ -n $brief_file && -f $brief_file ]]; then
+    { IFS= read -r brief_title <"$brief_file"; } 2>/dev/null
+    brief_title=${brief_title#\# }
+    brief_title=${brief_title#\#}
+    brief_title=${brief_title#Task: }
+    brief_title=${brief_title#"${brief_title%%[![:space:]]*}"}
+    brief_title=${brief_title%"${brief_title##*[![:space:]]}"}
+  fi
   new=$(printf '%s' "$input" | jq -c --arg old "$old" --argjson now "$now" --argjson chars "$PROMPT_CHARS" --argjson bg_max "$BACKGROUND_MAX" --argjson stopped_ttl "$STOPPED_TTL" \
-    --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" \
+    --arg repo "$where_repo" --arg worktree "$where_worktree" --arg branch "$where_branch" --arg brief_title "$brief_title" \
     --arg git "$where_git" --argjson where_gone "$where_gone" --arg by "$by" --arg dir "$where_dir" --arg gh "$where_remote" \
     --arg tmux_socket "$tmux_socket" --arg tmux_pane "$tmux_pane" --arg boot "$host_boot" --arg distro "$host_distro" \
     --arg voice "$voice" --argjson homes "$homes" --arg cwd_repo "$cwd_repo" --arg pid "$found_pid" --arg start "$found_start" --arg remote "$remote" --arg cleared "$cleared" --argjson account "$account" --arg live "$live" \

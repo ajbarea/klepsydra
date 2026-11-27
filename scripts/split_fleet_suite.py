@@ -57,6 +57,7 @@ TABLE = [
             r"^limits from events",
             r"^resume: limits, resets",
             r"^resume: what AJ typed",
+            r"^resume: agy heartbeat",
             r"^resume: review round",
             r"^round 4: AJ resumed",
             r"^live_session$",
@@ -125,6 +126,7 @@ TABLE = [
         [
             r"^a finished agent is never relaunched",
             r"^fleet done reports the finish",
+            r"^fleet done reports must reach the orchestrator",
             r"^relaunch never leaves two agents on one row",
         ],
     ),
@@ -148,6 +150,7 @@ TABLE = [
             r"^an agent's own IMPL\.md",
             r"^finished agents: one verdict per row",
             r"^recover:",
+            r"^wait_runtime_dir",
             r"^resume: Heph's session is recorded",
             r"^the orchestrator's identity across",
             r"^a pane open with its agent dead",  # #314, on recover's fake /proc

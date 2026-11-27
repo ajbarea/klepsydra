@@ -144,15 +144,36 @@ pub(crate) fn fleet_window_quiet() -> Result<isize, JumpError> {
     uia::find(Lookup::Exact(crate::launch::FLEET_TAB))
 }
 
+/// COM on this thread while the guard lives: entered with `apartment`, and
+/// balanced on drop only when the entry succeeded (a thread already in
+/// another apartment keeps it, with nothing to balance).
+#[cfg(windows)]
+pub(crate) struct Com;
+
+#[cfg(windows)]
+impl Com {
+    pub(crate) fn enter(apartment: windows::Win32::System::Com::COINIT) -> Option<Com> {
+        unsafe { windows::Win32::System::Com::CoInitializeEx(None, apartment) }
+            .is_ok()
+            .then_some(Com)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Com {
+    fn drop(&mut self) {
+        unsafe { windows::Win32::System::Com::CoUninitialize() };
+    }
+}
+
 #[cfg(windows)]
 mod uia {
-    use super::JumpError;
+    use super::{Com, JumpError};
     use klepsydra_fleet::tabs::{pick, Lookup};
     use windows::core::{Interface, BSTR};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_MULTITHREADED,
+        CoCreateInstance, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
     };
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
@@ -172,15 +193,6 @@ mod uia {
     const CONNECTION_TIMEOUT_MS: u32 = 1000;
     /// Longest (ms) UI Automation waits for one call to a provider to finish.
     const TRANSACTION_TIMEOUT_MS: u32 = 3000;
-
-    /// Balances a CoInitializeEx that succeeded on this thread.
-    struct Com;
-
-    impl Drop for Com {
-        fn drop(&mut self) {
-            unsafe { CoUninitialize() };
-        }
-    }
 
     struct Tab {
         window: IUIAutomationElement,
@@ -254,9 +266,7 @@ mod uia {
         then: impl FnOnce(&Tab) -> Result<R, JumpError>,
     ) -> Result<R, JumpError> {
         lookup.check()?;
-        let _com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
-            .is_ok()
-            .then_some(Com);
+        let _com = Com::enter(COINIT_MULTITHREADED);
         let uia: IUIAutomation =
             unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }
                 .or_else(|_| unsafe {

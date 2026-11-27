@@ -24,6 +24,8 @@
 # past FLEET_BROWSER_IDLE_MIN or for one whose MCP server is gone (#379).
 # agy's and Copilot's model lists, kept in models-<engine>.txt: a change is a
 # warning to review routing in docs/engines.md for 3 days (#513).
+# The lock folder the hooks and launcher share (FAIL with the reason when they
+# cannot lock; a warning when the fleet hook could not in the last hour).
 # Briefs whose shared rules
 # are out of date, and a second folder not logged in, are warnings.
 # With `--json FILE` (the fleet-doctor timer) it also writes the checks to FILE
@@ -522,20 +524,21 @@ fi
 paused=$(awk -F'\t' '$1 != "" && $1 !~ /^#/ { printf "%s, ", $1 }' "${FLEET_PAUSED:-$FLEET_STATE/paused.tsv}" 2>/dev/null)
 [[ -n $paused ]] && report ok "paused agents" "${paused%, }: fleet unpause NAME brings one back" paused="${paused%, }"
 # Reports `fleet done` could not deliver, and finished panes left open and
-# unread (done-reports.tsv; `fleet close NAME` clears a row), #445.
+# unread (done-reports.tsv; `fleet close NAME` clears a row), #445, #367.
 undelivered="" unread="" panes_now=$(fleet_panes)
-while IFS=$'\t' read -r at rname rpane rresult; do
+# shellcheck disable=SC2034 # _ absorbs the optional 5th column (the report text)
+while IFS=$'\t' read -r at rname rpane rresult _; do
   [[ $at =~ ^[0-9]+$ ]] || continue
   if [[ $rresult == pending ]] && (( now - at <= 300 )); then
     : # its send is still running
-  elif [[ $rresult != sent && $rresult != queued ]]; then
+  elif [[ $rresult != sent && $rresult != queued && $rresult != delivered && $rresult != acked ]]; then
     undelivered+="$rname ($rresult), "
   elif (( now - at > ${FLEET_UNREAD_S:-1800} )) && grep -qx -- "$rpane" <<<"$panes_now"; then
     unread+="$rname ($rpane, $(( (now - at) / 60 )) min), "
   fi
 done < <(cat "$DONE_REPORTS" 2>/dev/null)
 if [[ -n $undelivered ]]; then
-  report warn "done reports" "not delivered to the orchestrator: ${undelivered%, }: in the queue file's Running now; fleet close NAME once read" undelivered="${undelivered%, }"
+  report warn "done reports" "not delivered to the orchestrator: ${undelivered%, }: fleet inbox (or queue file's Running now); fleet close NAME once read" undelivered="${undelivered%, }"
 elif [[ -n $unread ]]; then
   report warn "done reports" "finished and left open, report unread for over $(( ${FLEET_UNREAD_S:-1800} / 60 )) min: ${unread%, }: fleet close NAME" unread="${unread%, }"
 else
@@ -810,6 +813,30 @@ elif [[ -n $differ ]]; then
 else
   report ok "installed copies" "the hooks, status line, launcher and cast match $root"
 fi
+# The lock folder (#517, #518): without one the fleet hook records no session
+# and the launcher refuses every click. The installed hook's own lock_dir block
+# says whether it can lock now and why not; the line the hook leaves when it
+# could not (KLEPSYDRA_DIR/lock-refused) says when it last failed this boot.
+lock_check() {
+  local src=$FLEET_HOOK_DIR/klepsydra-fleet.sh live rc t="" why="" btime="" key val trace=${KLEPSYDRA_DIR:-}/lock-refused
+  grep -q '^# --- lock dir' "$src" 2>/dev/null || src=$root/hooks/klepsydra-fleet.sh
+  # shellcheck disable=SC2016 # the inner shell expands its own variables
+  live=$(bash -c 'eval "$(sed -n "/^# --- lock dir/,/^# --- end lock dir ---\$/p" "$1")"
+    if lock_dir; then printf "%s" "$LOCK_DIR"; else printf "%s" "$LOCK_WHY"; exit 1; fi' _ "$src" 2>/dev/null </dev/null)
+  rc=$?
+  [[ -n ${KLEPSYDRA_DIR:-} && -f $trace && ! -L $trace ]] && { read -r t why <"$trace"; } 2>/dev/null
+  local proc_stat=${FLEET_PROC:-/proc}/stat
+  [[ -e $proc_stat ]] || proc_stat=/proc/stat
+  { while read -r key val; do [[ $key == btime ]] && { btime=$val; break; }; done <"$proc_stat"; } 2>/dev/null
+  if (( rc )); then
+    report FAIL "lock folder" "${live:-lock_dir did not run}: until it is fixed the fleet hook records no session and the launcher refuses clicks" why="$live"
+  elif [[ $t =~ ^[0-9]{1,12}$ && $btime =~ ^[0-9]+$ ]] && (( t >= btime && t <= now && now - t < 3600 )); then
+    report warn "lock folder" "the fleet hook could not lock at $(date -d "@$t" +%H:%M) ($why), so it recorded no session then; it can now, in $live" refused_at="$t" why="$why"
+  else
+    report ok "lock folder" "$live"
+  fi
+}
+lock_check
 # tmux 3.4 dies on a focus event to a dead pane (#290): the fleet's server must
 # carry the pane-died hook, which a server reads from its conf only at start.
 if t has-session 2>/dev/null; then
