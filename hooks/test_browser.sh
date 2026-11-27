@@ -139,14 +139,15 @@ check "usage on a bad mode exits 1, which never blocks a hook" "$(bash "$script"
 rc=1"
 
 echo "holders (#533)"
-K=$work/dev.ajsoftworks.klepsydra
-export KLEPSYDRA_DIR=$K KLEPSYDRA_STATE=$work/state
+K=$work/dev.ajsoftworks.klepsydra BOOT=aaaaaaaa-1111-4111-8111-111111111111
+printf '%s\n' "$BOOT" >"$work/boot_id"
+export KLEPSYDRA_DIR=$K KLEPSYDRA_STATE=$work/state KLEPSYDRA_BOOT_ID=$work/boot_id WSL_DISTRO_NAME=Test
 S1=11111111-1111-4111-8111-111111111111 S2=22222222-2222-4222-8222-222222222222 S3=33333333-3333-4333-8333-333333333333
-# sess SID CLAUDE_PID START [MARK [ENDED]]: a session file as the fleet hook writes it (one line).
+# sess SID CLAUDE_PID START [MARK [ENDED [DISTRO]]]: a session file as the fleet hook writes it (one line).
 sess() {
   mkdir -p "$K/fleet"
-  jq -nc --arg s "$1" --argjson p "$2" --argjson st "$3" --arg m "${4:-}" --argjson e "${5:-null}" \
-    '{v: 1, session_id: $s, claude: {pid: $p, start: $st}, ended: $e} + (if $m == "" then {} else {browser: $m} end)' >"$K/fleet/$1.json"
+  jq -nc --arg s "$1" --argjson p "$2" --argjson st "$3" --arg m "${4:-}" --argjson e "${5:-null}" --arg b "$BOOT" --arg d "${6:-Test}" \
+    '{v: 1, session_id: $s, claude: {pid: $p, start: $st}, host: {boot: $b, distro: $d}, ended: $e} + (if $m == "" then {} else {browser: $m} end)' >"$K/fleet/$1.json"
 }
 mark() { jq -r '.browser // "-"' "$K/fleet/$1.json"; }
 sessions() { rm -rf -- "${K:?}/fleet"; sess $S1 100 1000; sess $S2 700 7000; sess $S3 100 999 open; }
@@ -168,6 +169,12 @@ rm -rf -- "${P:?}/710"
 bash "$script" --sync
 check "an ended session's file is never written" "$(mark $S2)" "open"
 tree; sessions
+S4=44444444-4444-4444-8444-444444444444
+tree; sessions; sess $S4 700 7000 open null Other-Distro; rm -rf -- "${P:?}/700"
+bash "$script" --sync
+check "another distro's session (its pids not in this /proc) is never written" "$(mark $S4)" "open"
+rm -f -- "$K/fleet/$S4.json"
+tree; sessions
 check "no data dir of the overlay's own: a sync writes nothing" "$(KLEPSYDRA_DIR=$work/elsewhere bash "$script" --sync; mark $S1)" "-"
 lockfile=$(echo "$work"/state/run-*/klepsydra-fleet-"$UID".lock)
 exec {held}>>"$lockfile"; flock "$held"
@@ -179,6 +186,40 @@ check "the lock free: it writes" "$(mark $S1)" "open"
 
 check "an inherited LOCK is not the fleet hook's lock" "$(tree; sessions; LOCK= bash "$script" --sync; mark $S1)" "open"
 
+# Returns once a descendant of PID is a flock (the sync has read the files and
+# waits on the lock), or after 10 s.
+blocked() { # pid
+  local i d ps_out
+  for ((i = 0; i < 100; i++)); do
+    ps_out=$(ps -o pid=,ppid=,comm= -u "$UID")
+    d=$1
+    for _ in 1 2 3; do
+      d=$(awk -v p=" $(tr '\n' ' ' <<<"$d")" 'index(p, " " $2 " ") { print $1 }' <<<"$ps_out")
+      [[ -n $d ]] || break
+      awk -v p=" $(tr '\n' ' ' <<<"$d")" 'index(p, " " $1 " ") && $3 == "flock" { f = 1 } END { exit !f }' <<<"$ps_out" && return 0
+    done
+    sleep 0.1
+  done
+}
+# A sync that read a mark, then waits for the lock while the file changes
+# under it: RACE-SETUP runs while it waits; it never writes a stale change.
+raced() { # SETUP
+  tree; sessions; sess $S1 100 1000 open; rm -rf -- "${P:?}/300"
+  exec {held}>>"$lockfile"; flock "$held"
+  ( exec {held}>&-; KLEPSYDRA_LOCK_WAIT_S=10 bash "$script" --sync ) & local bg=$!
+  blocked "$bg"; "$1"; exec {held}>&-; wait "$bg"
+  printf '%s %s' "$(mark $S1)" "$(jq -c '.ended != null' "$K/fleet/$S1.json")"
+}
+closed_by_hook() { jq -c 'del(.browser)' "$K/fleet/$S1.json" >"$K/t" && mv "$K/t" "$K/fleet/$S1.json"; }
+ended_meanwhile() { jq -c '.ended = {at: 1}' "$K/fleet/$S1.json" >"$K/t" && mv "$K/t" "$K/fleet/$S1.json"; }
+reopened() { proc 300 202 chrome /opt/google/chrome/chrome "--user-data-dir=$cache/mcp-chrome-c35bcf5"; }
+race_drop() { raced closed_by_hook; }
+race_end() { raced ended_meanwhile; }
+race_back() { raced reopened; }
+check "a mark dropped while the sync waits stays dropped (no stale closed)" "$(raced closed_by_hook)" "- false"
+check "a session that ended while the sync waits is never written" "$(raced ended_meanwhile)" "open true"
+check "a window back while the sync waits is not called closed" "$(raced reopened)" "open false"
+
 pw=mcp__plugin_playwright_playwright__browser
 pre() { # SID TOOL [payload spacing]
   printf '{"session_id":%s"%s","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{}}' "${3:-}" "$1" "$2" | bash "$script" --pre-tool
@@ -188,7 +229,8 @@ note() { jq -r '.hookSpecificOutput | [.hookEventName, (.additionalContext | tes
 tree; sessions; bash "$script" --sync
 check "pre-tool: its window open: silent, exit 0" "$(pre $S1 ${pw}_navigate)" "rc=0"
 check "pre-tool: another tool: silent" "$(rm -rf -- "${P:?}/300"; pre $S1 Bash)" "rc=0"
-check "pre-tool: browser_close: silent" "$(pre $S1 ${pw}_close)" "rc=0"
+check "pre-tool: browser_close: silent, and it drops the mark at once" "$(pre $S1 ${pw}_close),$(mark $S1)" "rc=0,-"
+sess $S1 100 1000 open
 out=$(pre $S1 ${pw}_click)
 check "pre-tool: its window closed: context for Claude, no decision, exit 0" "$(head -1 <<<"$out" | note),$(tail -1 <<<"$out")" "$(printf 'PreToolUse\ttrue\tfalse'),rc=0"
 check "pre-tool: it says so once (the mark is dropped)" "$(mark $S1),$(pre $S1 ${pw}_click)" "-,rc=0"
@@ -228,6 +270,8 @@ proc 300 202 chrome /opt/google/chrome/chrome "--user-data-dir=/tmp/playwright_c
 check "pre-tool: a used mark it cannot confirm (--isolated) is never told closed" "$(pre $S1 ${pw}_click),$(mark $S1)" "rc=0,used"
 bash "$script" --sync
 check "the sync drops a used mark it cannot confirm" "$(mark $S1)" "-"
+tree; sessions; sess $S1 100 999 open; rm -rf -- "${P:?}/300"
+check "pre-tool: a file for an earlier claude on that pid (another start) is not told" "$(pre $S1 ${pw}_click)" "rc=0"
 check "pre-tool: a bad session id reads nothing" "$(pre ../$S1 ${pw}_click)" "rc=0"
 check "pre-tool: no stdin at all: exit 0" "$(bash "$script" --pre-tool </dev/null; echo "rc=$?")" "rc=0"
 # The registered command, with a script that has no --pre-tool (main before #533 exited 2,
@@ -266,6 +310,13 @@ hmutant "a walk into a nested claude takes its browser as the caller's (silent)"
 scan_open() { NOKIDS=1 tree; sessions; sess $S1 100 1000 open; pre $S1 ${pw}_click; }
 hmutant "no fallback scan: no children files reads as closed" 's/\[\[ \$claude == "\$root" \]\] \&\& return 0/:/' scan_open \
   "$(printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\nrc=0' "$(sed -n "s/^CLOSED_NOTE='\(.*\)'$/\1/p" "$script")")"
+hmutant "a write without the mark check overwrites a drop made meanwhile" 's/((.browser | strings) \/\/ "") == \$from)/true)/' race_drop "closed false"
+hmutant "a write without the ended check writes an ended session" 's/select(.ended == null and /select(/' race_end "closed true"
+hmutant "no recheck under the lock calls a reopened window closed" 's/if \[\[ -z \${4:-} \]\] || ! holds_browser "\$4" walk; then/if true; then/' race_back "closed false"
+reused() { tree; sessions; sess $S1 100 999 open; rm -rf -- "${P:?}/300"; pre $S1 ${pw}_click | head -1 | note; }
+hmutant "no liveness check in pre-tool tells a dead claude's file" 's/  proc_is "\$pid" "\$start" || return 0/  :/' reused "$(printf 'PreToolUse\ttrue\tfalse')"
+other_distro() { tree; sessions; sess $S4 700 7000 open null Other-Distro; rm -rf -- "${P:?}/700"; bash "$script" --sync; mark $S4; }
+hmutant "no host check drops another distro's mark" 's/ \&\& on_this_host "\$boot" "\$distro" || continue/ || continue/' other_distro "-"
 crashed() { tree; sessions; sess $S2 700 7000 open; rm -rf -- "${P:?}/700"; bash "$script" --sync; mark $S2; }
 hmutant "no liveness check keeps a dead claude's mark" 's/if ! proc_is "\$cpid" "\$cstart"; then/if false; then/' crashed "closed"
 unset KLEPSYDRA_DIR KLEPSYDRA_STATE
@@ -312,7 +363,7 @@ check "settings: the browser script, not async, a timeout that covers its wait" 
 check "make install-hooks installs it" "$(grep -c '"hooks/klepsydra-browser.sh klepsydra-browser.sh"' "$here/../fleet/lib.sh")" "1"
 pblock() { sed -n '/^# --- proc stat/,/^# --- end proc stat ---$/p' "$1"; }
 check "proc stat block identical in the fleet hook" "$(pblock "$script")" "$(pblock "$here/klepsydra-fleet.sh")"
-for b in "klepsydra dir" "lock dir" "session rows"; do
+for b in "klepsydra dir" "lock dir" "session rows" "host facts"; do
   blk() { sed -n "/^# --- $b/,/^# --- end $b ---\$/p" "$1"; }
   check "$b block identical in the fleet hook" "$( [[ -n $(blk "$script") ]] && blk "$script")" "$(blk "$here/klepsydra-fleet.sh")"
 done

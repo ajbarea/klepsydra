@@ -299,6 +299,25 @@ fleet_rows() { # folder fields
 }
 # --- end session rows ---
 
+# --- host facts: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-browser.sh ---
+# Sets host_boot (this kernel boot) and host_distro (this WSL distro), each
+# empty when unknown or malformed.
+BOOT_ID=${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}
+host_facts() {
+  host_boot="" host_distro=${WSL_DISTRO_NAME:-}
+  { IFS= read -r host_boot <"$BOOT_ID"; } 2>/dev/null
+  [[ $host_boot =~ ^[0-9a-f-]{36}$ ]] || host_boot=""
+  [[ $host_distro =~ ^[A-Za-z0-9._-]{1,64}$ ]] || host_distro=""
+}
+# Whether a session file's BOOT and DISTRO ("?" for none) are this boot and
+# distro (host_facts first): only there are its pids visible in this /proc.
+on_this_host() { # boot distro
+  local distro=$2
+  [[ $distro == "?" ]] && distro=""
+  [[ -n $host_boot && $1 == "$host_boot" && $distro == "$host_distro" ]]
+}
+# --- end host facts ---
+
 # --- browser holders (#533) ---
 # A session's card shows "browser" while its file's mark says its claude holds
 # the shared Playwright browser. The fleet hook marks "used" once a Playwright
@@ -314,9 +333,10 @@ fleet_rows() { # folder fields
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 SESSIONS=${KLEPSYDRA_DIR:+$KLEPSYDRA_DIR/fleet}
 MARK_LOCK="" MARK_LOCK_SET=0
-# What --sync reads of each session file: ended (0 or 1), claude pid and start, mark.
-MARK_FIELDS='[(if .ended == null then 0 else 1 end), ((.claude.pid | numbers) // "-"),
-  ((.claude.start | numbers) // "-"), ((.browser | strings) // "")]'
+# What --sync reads of each session file: ended (0 or 1), boot and distro ("?"
+# for none), claude pid and start, mark.
+MARK_FIELDS='[(if .ended == null then 0 else 1 end), (.host.boot | or_q), (.host.distro | or_q),
+  ((.claude.pid | numbers) // "-"), ((.claude.start | numbers) // "-"), ((.browser | strings) // "")]'
 CLOSED_NOTE='The shared Playwright browser window this session was using has closed since its last browser step (closed by hand, or its MCP server restarted), so the page it had open is gone. Tell the user the window was closed while you were using it. If this browser step fails, call browser_close, then retry it in a fresh window.'
 
 # Whether `dir` is the overlay's own data dir (as the fleet hook checks before
@@ -385,16 +405,18 @@ set_mark() { # file state from [pid]
   return 0
 }
 
-# Every live session's mark in step with the open browsers.
+# Every live session's mark in step with the open browsers: only for a session
+# of this boot and distro, whose pids this /proc shows.
 sync_marks() {
   local -A held=()
-  local pid start ppid server claude dir name ended cpid cstart mark
+  local pid start ppid server claude dir name ended boot distro cpid cstart mark
   [[ -n $SESSIONS && -d $SESSIONS ]] && own_data_dir "$KLEPSYDRA_DIR" || return 0
+  host_facts
   while read -r pid start ppid server claude dir; do
     [[ $claude == - ]] || held[$claude]=1
   done < <(browsers)
-  while IFS=$'\t' read -r name ended cpid cstart mark; do
-    [[ $ended == 0 && $cpid =~ ^[0-9]+$ ]] || continue
+  while IFS=$'\t' read -r name ended boot distro cpid cstart mark; do
+    [[ $ended == 0 && $cpid =~ ^[0-9]+$ ]] && on_this_host "$boot" "$distro" || continue
     if ! proc_is "$cpid" "$cstart"; then
       [[ -z $mark ]] || set_mark "$SESSIONS/$name" "" "$mark"
     elif [[ -n ${held[$cpid]:-} ]]; then
@@ -407,17 +429,18 @@ sync_marks() {
   done < <(fleet_rows "$SESSIONS" "$MARK_FIELDS")
 }
 
-# PreToolUse on a Playwright browser tool: never blocks. A "used" mark whose
-# claude holds its MCP browser becomes "open". A confirmed mark ("open" or
-# "closed") whose claude now holds none is dropped, and Claude gets
-# CLOSED_NOTE. Reads the payload and the session's own file with builtins;
-# walks /proc only for a marked session.
+# PreToolUse on a Playwright browser tool: never blocks. browser_close drops
+# the mark at once (the fleet hook's own drop is async). A "used" mark whose
+# claude holds its MCP browser (the children walk) becomes "open". A confirmed
+# mark ("open" or "closed") whose claude now holds none is dropped, and Claude
+# gets CLOSED_NOTE. Reads the payload and the session's own file with
+# builtins; walks /proc only for a marked session.
 pre_tool() {
   local payload="" text="" tool sid file pid start mark
   IFS= read -r -d '' payload
   [[ $payload =~ \"tool_name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] || return 0
   tool=${BASH_REMATCH[1]}
-  [[ $tool =~ ^mcp__.*playwright.*__browser_ && $tool != *__browser_close ]] || return 0
+  [[ $tool =~ ^mcp__.*playwright.*__browser_ ]] || return 0
   [[ -n $SESSIONS ]] && own_data_dir "$KLEPSYDRA_DIR" || return 0
   [[ $payload =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] || return 0
   sid=${BASH_REMATCH[1]}
@@ -427,14 +450,15 @@ pre_tool() {
   { IFS= read -r text <"$file"; } 2>/dev/null
   [[ $text =~ \"browser\":\"(used|open|closed)\" ]] || return 0
   mark=${BASH_REMATCH[1]}
+  [[ $tool == *__browser_close ]] && { set_mark "$file" "" "$mark"; return 0; }
   [[ $text =~ \"claude\":\{\"pid\":([0-9]+),\"start\":([0-9]+)\} ]] || return 0
   pid=${BASH_REMATCH[1]} start=${BASH_REMATCH[2]}
   proc_is "$pid" "$start" || return 0
-  if holds_browser "$pid"; then
-    [[ $mark == used ]] && set_mark "$file" open used
+  if [[ $mark == used ]]; then
+    holds_browser "$pid" walk && set_mark "$file" open used
     return 0
   fi
-  [[ $mark == used ]] && return 0
+  holds_browser "$pid" && return 0
   set_mark "$file" "" "$mark" "$pid"
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$CLOSED_NOTE"
 }

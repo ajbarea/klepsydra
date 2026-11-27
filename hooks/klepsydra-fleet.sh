@@ -419,6 +419,7 @@ claude_alive() { # pid start
   proc_is "$1" "$2" && is_claude "$1"
 }
 
+# --- host facts: identical in hooks/klepsydra-fleet.sh and hooks/klepsydra-browser.sh ---
 # Sets host_boot (this kernel boot) and host_distro (this WSL distro), each
 # empty when unknown or malformed.
 BOOT_ID=${KLEPSYDRA_BOOT_ID:-/proc/sys/kernel/random/boot_id}
@@ -428,6 +429,14 @@ host_facts() {
   [[ $host_boot =~ ^[0-9a-f-]{36}$ ]] || host_boot=""
   [[ $host_distro =~ ^[A-Za-z0-9._-]{1,64}$ ]] || host_distro=""
 }
+# Whether a session file's BOOT and DISTRO ("?" for none) are this boot and
+# distro (host_facts first): only there are its pids visible in this /proc.
+on_this_host() { # boot distro
+  local distro=$2
+  [[ $distro == "?" ]] && distro=""
+  [[ -n $host_boot && $1 == "$host_boot" && $distro == "$host_distro" ]]
+}
+# --- end host facts ---
 
 # Sets tmux_socket and tmux_pane from the session's tmux, both empty outside
 # tmux or when either is malformed.
@@ -566,8 +575,7 @@ mark_gone() { # dir now self
   while IFS=$'\t' read -r f state boot distro pid start last; do
     [[ ${f%.json} =~ $UUID_RE && $state != ended && $boot != "?" && $f != "$self.json" ]] || continue
     if [[ $boot == "$host_boot" ]]; then
-      [[ $distro == "?" ]] && distro=""
-      [[ $distro == "$host_distro" ]] || continue
+      on_this_host "$boot" "$distro" || continue
       [[ $pid =~ ^[1-9][0-9]*$ ]] || continue
       claude_alive "$pid" "$start" && continue
     fi

@@ -279,11 +279,13 @@ and `fleet doctor` lists the open ones.
 
 The same script shows when an agent holds the shared browser (#533). After one
 of the Playwright browser tools succeeds, the fleet hook marks the session's
-file `"browser": "open"` and its card shows a **browser** chip; `browser_close`
-and the session's end clear it. Each resume pass checks the marks against the
-open browsers (`klepsydra-browser.sh --sync`). Registered as a `PreToolUse` hook
-on those tools, `--pre-tool` adds a note for Claude when the window it held was
-closed, so it tells you. It never blocks a call: it always exits 0, and
+file `"browser": "used"` and its card shows a **browser** chip; `browser_close`
+and the session's end clear it. The script confirms the mark `"open"` once it
+sees that session's own MCP Chrome, at the session's next browser step or the
+resume service's next pass (`klepsydra-browser.sh --sync`), which also drops a
+mark it cannot confirm and marks `"closed"` a confirmed window that went.
+Registered as a `PreToolUse` hook on those tools, `--pre-tool` adds a note for
+Claude when its confirmed window was closed, so it tells you. It never blocks a call: it always exits 0, and
 `|| true` keeps a call going even if an older copy of the script is installed.
 `fleet install` registers it, once the script's copy is in place.
 
