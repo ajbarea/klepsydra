@@ -1,45 +1,61 @@
 # IMPL: #533 show when an agent holds the shared browser (PR #556, branch feat/browser-in-use-533)
 
-Issue: https://github.com/ajbarea/klepsydra/issues/533. Opus redesign at the
-free-engine cap; spec: the smaller design in
+Issue #533. Opus redesign at the free-engine cap; spec: the smaller design in
 https://github.com/ajbarea/klepsydra/pull/556#issuecomment-7182947522
+Paused 11-27 (RIT weekly limit); resume from here.
 
 ## Slice
-A session's file holds `"browser": "open"` while its claude has the shared
-Playwright browser open; its card shows a **browser** chip. `--pre-tool`
-never blocks: when the caller's own window closed, it adds a note for Claude
-(tell the user) once and exits 0. No deny state, no state files.
+Card shows a **browser** chip while the session's file mark is "used" or
+"open". Fleet hook (PostToolUse, `mcp__*playwright*__browser_*`) marks
+"used"; `klepsydra-browser.sh` confirms "open" once it sees that claude's own
+mcp-chrome Chrome, marks "closed" when it goes. `--pre-tool` never blocks:
+when a confirmed window closed under the caller it adds a note (tell the
+user) once, exit 0. No deny state, no state files.
 
-## Done (11-27)
-- Fleet hook: PostToolUse of `mcp__*playwright*__browser_*` marks "used"
-  (keeps "open"); `browser_close`, SessionEnd and any start but a compaction
-  drop it (under its lock).
-- `klepsydra-browser.sh --sync` (each resume pass, this boot and distro's
-  sessions only, shared `host facts` block): "open" for a live session whose
-  claude holds its mcp-chrome browser, "closed" when a confirmed one goes,
-  none for an unconfirmed "used" or a dead claude. Writes under the fleet
-  hook's lock (shared lock dir block), rechecking the mark under it.
-- `--pre-tool`: builtins on the payload and the session's own file; walks
-  /proc (task children, full scan fallback) only for a marked session;
-  confirms "used", drops the mark at browser_close, notes a confirmed close.
-- Usage exits 1. `fleet install` registers `--pre-tool || true` only once
-  the copy is this checkout's, replacing older entries; atomic write at the
-  resolved path keeps a symlink and the file's mode.
-- doctor.sh is main's plus: the holder's name in "MCP browsers", and a
-  "browser hook" check over every account's settings.
-- Rust: `browser: bool` (true for "used" or "open"), lenient; wall chip is an
-  icon + the word "browser" with a tooltip.
-- Tests: hooks/test_browser.sh (sync, pre-tool, lock, registered command,
-  mutants), hooks/test_fleet.sh (#533 cases), fleet/test_fleet.sh (install,
-  doctor, resume pass), scripts/test_wall_browser.py `browser_chip`.
+## Done (head 5448859 + this commit)
+- Fleet hook: "used" (keeps "open"); browser_close, SessionEnd, any start but
+  a compaction and `mark_gone` drop it. Shared `host facts` block.
+- `reconcile` decides every mark under the fleet hook's lock from the mark and
+  /proc as they are then (modes sync, tell, close); moves written_at/turns_at.
+- `--sync` (resume pass, this boot+distro only); `--pre-tool` (builtins, walks
+  /proc only for a marked session); usage exits 1.
+- `fleet install` registers `--pre-tool || true` once the copy is this
+  checkout's; atomic write at the resolved path keeps symlink and mode.
+- doctor = main's + holder name (fleet socket only) + per-account "browser hook".
+- Rust `browser: bool` ("used"/"open", not when ended); chip = icon + "browser".
+- Reviews: /code-review medium (10 findings) + readers r1, r2 (all fixed);
+  round-3 reader ran on 5448859 (see PR comment / report for its result).
+
+Consumers traced (readers r1-r2): fleet hook PostToolUse has no matcher (sees
+every Playwright tool); resume pass runs `--sync` from the checkout with
+KLEPSYDRA_DIR; doctor TSV columns line up; HOOK_COPIES installs the script;
+Rust reads leniently, JS `=== true`; phone carries the bool; accounts-sync
+copies the hook to ~/.claude-rit.
+
+## Measured (tmpfs fake /proc, 3 browsers, 43 session files; fcd8d71 vs ac67195)
+pre-tool 70.9 ms/28 execs -> 5.7 ms/1; unmarked 3.6 ms/1; sync 69.1 ms/26 ->
+20.7 ms/3 (338 procs: 73.8 -> 5.5; 70.8 -> 23.5). Harness and outputs:
+~/.local/state/fleet-orchestrator/reports/redesign-556/ (measure.sh NEW OLD
+[EXTRA]; needs host boot in session files since r2). Not re-measured on 5448859.
 
 ## Next
-- Measure pre-tool and sync on a tmpfs fake /proc (3 browsers, 43 files).
-- Full suites, elenchus rounds until clean, PR body, merge, `fleet install`,
-  live chip + `fleet doctor` on both accounts; reports/redesign-556.md.
+1. Doctor shard: `#533: a pass marks the session holding a browser open`
+   failed (null) on CI and locally, also at 7cf956e before the host check. The
+   fixture now carries host boot+distro (`bsync`), but a second cause is open:
+   `--sync` run by hand on the same fake /proc writes "open" (scratch repro
+   works), so suspect the resume pass env (bash `VAR=x func` export? lib.sh?).
+   Trace with `bash -x` inside the pass. Watcher "review 5" red on CI is a
+   tmux paste-timing test outside this diff: rerun to confirm a flake.
+2. Run (heavy lock, do not edit the suite while it runs): `make test-fleet`,
+   cargo test/clippy/fmt, `test_wall_browser.py browser_chip chip_name`,
+   re-measure with measure.sh, `make shellcheck`.
+3. Fresh Opus reader (elenchus medium) until a round is clean, then a verify
+   pass. Rewrite the PR body (still the old deny design), merge on clean + CI.
+4. Live: `fleet install`; chip on a real card during a Playwright MCP call;
+   `fleet doctor` "browser hook" ok on both accounts; registered command with
+   an old script exits 0. Write reports/redesign-556.md; `fleet done`.
 
 ## Verify
-`bash hooks/test_browser.sh`; `bash hooks/test_fleet.sh`;
-`make test-fleet FLEET_SHARD=doctor` (and resume, misc);
-`cargo test -p klepsydra-fleet`; `node --test src/`;
-`scripts/test_wall_browser.py browser_chip` under the heavy lock.
+`bash hooks/test_browser.sh` (92), `bash hooks/test_fleet.sh` (690),
+`make test-fleet FLEET_SHARD=doctor`, `cargo test -p klepsydra-fleet` (473 on
+ac67195), `node --test src/fleet-model.test.js`.

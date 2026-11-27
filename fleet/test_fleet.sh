@@ -1895,11 +1895,14 @@ check "#379: once gone, its close is logged and the record cleared" \
 # Each pass also puts the sessions' browser marks in step (#533): claude 4242 holds 4301.
 bk=$work/bk/dev.ajsoftworks.klepsydra bsid=dddddddd-0000-4000-8000-000000000533
 mkdir -p "$bk/fleet"
-printf '{"v":1,"session_id":"%s","claude":{"pid":4242,"start":%s},"ended":null}\n' "$bsid" "$(cut -d' ' -f22 "$work/dproc/4242/stat")" >"$bk/fleet/$bsid.json"
-KLEPSYDRA_DIR=$bk bpass $((bnow + 130))
+printf 'bbbbbbbb-0000-4000-8000-000000000533\n' >"$work/bboot"
+printf '{"v":1,"session_id":"%s","claude":{"pid":4242,"start":%s},"host":{"boot":"bbbbbbbb-0000-4000-8000-000000000533","distro":"Test"},"ended":null}\n' \
+  "$bsid" "$(cut -d' ' -f22 "$work/dproc/4242/stat")" >"$bk/fleet/$bsid.json"
+bsync() { KLEPSYDRA_DIR=$bk KLEPSYDRA_BOOT_ID=$work/bboot WSL_DISTRO_NAME=Test bpass "$1"; }
+bsync $((bnow + 130))
 check "#533: a pass marks the session holding a browser open" "$(jq -r .browser "$bk/fleet/$bsid.json")" "open"
 rm -rf -- "${work:?}/dproc/4301"
-KLEPSYDRA_DIR=$bk bpass $((bnow + 140))
+bsync $((bnow + 140))
 check "#533: and closed once its window is gone" "$(jq -r .browser "$bk/fleet/$bsid.json")" "closed"
 rm -rf -- "${work:?}/bk"
 rm -rf -- "${work:?}/dproc/4300" "${work:?}/dproc/4301" "${work:?}/dproc/4302" "${work:?}/bcache"
