@@ -2604,11 +2604,15 @@ check "the file names the pane the watcher reads" "$(afield .tmux)" "{\"socket\"
 cp "$stub/setsid" "$work/setsid.stub"
 printf '#!/bin/sh\nexec /usr/bin/setsid "$@"\n' >"$stub/setsid"
 cp "$fixtures/pane-permission-2.1.302.txt" "$work/screen"
-now=1792360025 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1 KLEPSYDRA_ASK_MAX=2 KLEPSYDRA_ASK_TICK=0.05
-sleep 0.5
+now=1792360025 askfire permission-request.json . KLEPSYDRA_ASK_WATCH=1 KLEPSYDRA_ASK_MAX=3 KLEPSYDRA_ASK_TICK=0.05
+for _ in $(seq 60); do
+  pgrep -f "watch-ask $A" >/dev/null && [[ -e "$LOCK_DIR/klepsydra-ask-$UID-$A.lock" ]] &&
+    ! flock -w 0 "$LOCK_DIR/klepsydra-ask-$UID-$A.lock" true && break
+  sleep 0.05
+done
 check "a real watcher leaves the fleet lock free" \
   "$(pgrep -f "watch-ask $A" >/dev/null && echo running) $(flock -w 0 "$LOCK" true && echo free)" "running free"
-for _ in $(seq 40); do pgrep -f "watch-ask $A" >/dev/null || break; sleep 0.1; done
+for _ in $(seq 50); do pgrep -f "watch-ask $A" >/dev/null || break; sleep 0.1; done
 check "and it ends at its time limit" "$(pgrep -f "watch-ask $A" >/dev/null && echo running || echo ended)" "ended"
 mv -f -- "$work/setsid.stub" "$stub/setsid"
 
