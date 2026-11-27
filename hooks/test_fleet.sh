@@ -280,17 +280,23 @@ check "a failed edit moves nothing" "$(field '.where.repo')" '"klepsydra"'
 
 pw=mcp__plugin_playwright_playwright__browser
 fire post-tool-bash.json ".tool_name = \"${pw}_navigate\""
-check "#533: a Playwright browser step marks the shared browser open" "$(field .browser)" '"open"'
+check "#533: a Playwright browser step marks the shared browser used" "$(field .browser)" '"used"'
 fire post-tool-bash.json
-check "#533: another tool keeps the mark" "$(field .browser)" '"open"'
+check "#533: another tool keeps the mark" "$(field .browser)" '"used"'
+jq -c '.browser = "open"' "$file" >"$file.t" && mv "$file.t" "$file"
+fire post-tool-bash.json ".tool_name = \"${pw}_click\""
+check "#533: a browser step keeps a confirmed mark open" "$(field .browser)" '"open"'
 fire post-tool-bash.json ".hook_event_name = \"PostToolUseFailure\" | .tool_name = \"${pw}_click\""
 check "#533: a failed browser step keeps it (the sync judges the window)" "$(field .browser)" '"open"'
+jq -c '.browser = "closed"' "$file" >"$file.t" && mv "$file.t" "$file"
+fire post-tool-bash.json ".tool_name = \"${pw}_navigate\""
+check "#533: a browser step after a close marks it used again" "$(field .browser)" '"used"'
 fire post-tool-bash.json ".tool_name = \"${pw}_close\""
 check "#533: browser_close drops it" "$(field .browser)" "null"
 fire post-tool-bash.json '.tool_name = "mcp__chrome__browser_navigate"'
 check "#533: another server's browser tool does not mark it" "$(field .browser)" "null"
 fire post-tool-bash.json '.tool_name = "mcp__playwright__browser_snapshot"'
-check "#533: a plain playwright server's tool marks it" "$(field .browser)" '"open"'
+check "#533: a plain playwright server's tool marks it" "$(field .browser)" '"used"'
 
 fire pre-tool-question.json
 check "question" "$(field '[.state, .reason]')" '["needs_you","question"]'

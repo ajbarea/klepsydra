@@ -642,11 +642,12 @@ browser_check() {
     who="claude $claude"
     if [[ $claude == - ]]; then who="no session"
     else
-      while IFS=$'\t' read -r f pane _ ended _ cpid _; do
+      while IFS=$'\t' read -r f pane sock ended _ cpid _; do
         [[ $cpid == "$claude" && $ended == 0 ]] || continue
-        # The agent holding it (#533): its registry name, Heph in the orchestrator's pane.
+        # The agent holding it (#533): its registry name, Heph in the orchestrator's
+        # pane; only for a pane on the fleet's own tmux server.
         name=""
-        if [[ $pane == %* ]]; then
+        if [[ $pane == %* ]] && fleet_socket "$sock"; then
           [[ $pane == "$(orchestrator)" ]] && name=heph || name=$(reg_field "$pane" 2)
         fi
         who=${name:+held by $name}

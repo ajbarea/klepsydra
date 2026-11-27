@@ -300,17 +300,20 @@ pub struct SessionFile {
     /// The model running this session if recorded.
     #[serde(default)]
     pub model: Option<serde_json::Value>,
-    /// Its claude holds the shared Playwright MCP browser open: the hook's
-    /// `"browser": "open"` mark (#533). "closed" or anything else is false.
+    /// Its claude holds the shared Playwright MCP browser: the hook's
+    /// `"browser"` mark is "used" or "open" (#533). "closed" or anything
+    /// else is false.
     #[serde(default, deserialize_with = "browser_open")]
     pub browser: bool,
 }
 
 /// `orchestrator_face` when it is a short plain voice key; anything else is
 /// none rather than costing the file.
-/// The `browser` mark is "open"; any other value, of any type, is not.
+/// The `browser` mark is "used" or "open"; any other value, of any type, is not.
 fn browser_open<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
-    Ok(matches!(serde_json::Value::deserialize(d)?, serde_json::Value::String(s) if s == "open"))
+    Ok(
+        matches!(serde_json::Value::deserialize(d)?, serde_json::Value::String(s) if s == "used" || s == "open"),
+    )
 }
 
 fn lenient_face<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -842,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn the_browser_mark_is_open_only_for_the_string_open() {
+    fn the_browser_mark_is_held_only_for_used_or_open() {
         let base = |mark: &str| {
             format!(
                 r#"{{"v":1,"session_id":"{id}","state":"working","state_at":1,"written_at":1{mark}}}"#,
@@ -851,7 +854,15 @@ mod tests {
         };
         let open = |m: &str| serde_json::from_str::<SessionFile>(&base(m)).map(|s| s.browser);
         assert!(open(r#","browser":"open""#).unwrap());
-        for other in ["", r#","browser":"closed""#, r#","browser":"worker""#, r#","browser":true"#, r#","browser":null"#, r#","browser":{"x":1}"#] {
+        assert!(open(r#","browser":"used""#).unwrap());
+        for other in [
+            "",
+            r#","browser":"closed""#,
+            r#","browser":"worker""#,
+            r#","browser":true"#,
+            r#","browser":null"#,
+            r#","browser":{"x":1}"#,
+        ] {
             assert!(!open(other).unwrap(), "{other}");
         }
     }

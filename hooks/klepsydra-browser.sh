@@ -300,15 +300,20 @@ fleet_rows() { # folder fields
 # --- end session rows ---
 
 # --- browser holders (#533) ---
-# A session's card shows "browser" while its file holds "browser": "open". The
-# fleet hook sets it once a Playwright browser tool succeeds and drops it at
-# browser_close and at the session's end. --sync (each resume pass) keeps the
-# files in step with the open browsers: "open" for a live session whose claude
-# holds one, "closed" once that one is gone, and none for a session whose
-# claude died. --pre-tool tells a session whose window closed under it, once.
-# Every write takes the lock the fleet hook writes the files under.
+# A session's card shows "browser" while its file's mark says its claude holds
+# the shared Playwright browser. The fleet hook marks "used" once a Playwright
+# browser tool succeeds and drops the mark at browser_close and the session's
+# end. "used" becomes "open" only once this script sees that claude's own MCP
+# Chrome (an mcp-chrome-* profile), so a setup it cannot see (--isolated, a
+# custom profile, another browser) is never told its window closed. --sync
+# (each resume pass) keeps the marks in step: "open" for a live session whose
+# claude holds one, "closed" once it is gone, none for a "used" one it cannot
+# confirm or a session whose claude died. --pre-tool confirms a "used" mark,
+# and tells a session whose confirmed window closed under it, once. Every
+# write takes the lock the fleet hook writes the files under.
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 SESSIONS=${KLEPSYDRA_DIR:+$KLEPSYDRA_DIR/fleet}
+MARK_LOCK="" MARK_LOCK_SET=0
 # What --sync reads of each session file: ended (0 or 1), claude pid and start, mark.
 MARK_FIELDS='[(if .ended == null then 0 else 1 end), ((.claude.pid | numbers) // "-"),
   ((.claude.start | numbers) // "-"), ((.browser | strings) // "")]'
@@ -328,9 +333,10 @@ own_data_dir() { # dir
 
 # Whether Claude Code `pid` has an open MCP browser of its own (not one under
 # a nested claude). A walk down task/*/children (at most 512 processes) finds
-# it cheaply; when the walk finds none, or the kernel has no children files,
-# the full scan decides, so a racy walk never calls an open window closed.
-holds_browser() { # pid
+# it cheaply. When the walk finds none, or the kernel has no children files,
+# the full scan decides, so a racy walk never calls an open window closed;
+# `walk` trusts a walk that found none (a recheck after a full scan did).
+holds_browser() { # pid [walk]
   local root=$1 p k f profile seen=0 pid start ppid server claude dir
   local -a queue=("$1") kids=() stat=()
   if [[ -e $PROC_ROOT/$root/task/$root/children ]]; then
@@ -347,6 +353,7 @@ holds_browser() { # pid
         for k in "${kids[@]}"; do [[ $k =~ ^[0-9]+$ ]] && queue+=("$k"); done
       done
     done
+    [[ ${2:-} == walk ]] && (( seen < 512 )) && return 1
   fi
   while read -r pid start ppid server claude dir; do
     [[ $claude == "$root" ]] && return 0
@@ -356,18 +363,18 @@ holds_browser() { # pid
 
 # Sets FILE's mark to STATE ("open" or "closed", or "" for none) under the
 # fleet hook's lock, only while the file is a live session's and its mark is
-# still FROM; a change to "closed" first checks that claude PID still holds no
-# browser. Never waits past KLEPSYDRA_LOCK_WAIT_S (5).
+# still FROM; a change to "closed" or none first checks again (a walk) that
+# claude PID holds no browser. Never waits past KLEPSYDRA_LOCK_WAIT_S (5).
 set_mark() { # file state from [pid]
   local f=$1 lock new
-  if [[ -z ${LOCK+set} ]]; then
-    lock_dir
-    LOCK=${LOCK_DIR:+$LOCK_DIR/klepsydra-fleet-$UID.lock}
+  if (( !MARK_LOCK_SET )); then
+    MARK_LOCK_SET=1
+    lock_dir && MARK_LOCK=$LOCK_DIR/klepsydra-fleet-$UID.lock
   fi
-  [[ -n $LOCK && -f $f && ! -L $f ]] || return 0
-  { exec {lock}>>"$LOCK"; } 2>/dev/null || return 0
+  [[ -n $MARK_LOCK && -f $f && ! -L $f ]] || return 0
+  { exec {lock}>>"$MARK_LOCK"; } 2>/dev/null || return 0
   if flock -w "${KLEPSYDRA_LOCK_WAIT_S:-5}" "$lock"; then
-    if [[ -z ${4:-} ]] || ! holds_browser "$4"; then
+    if [[ -z ${4:-} ]] || ! holds_browser "$4" walk; then
       new=$(jq -c --arg to "$2" --arg from "$3" 'select(.ended == null and ((.browser | strings) // "") == $from)
         | if $to == "" then del(.browser) else .browser = $to end' "$f") &&
         [[ -n $new ]] && printf '%s\n' "$new" >"$f.$$.tmp" && mv -f -- "$f.$$.tmp" "$f"
@@ -394,16 +401,19 @@ sync_marks() {
       [[ $mark == open ]] || set_mark "$SESSIONS/$name" open "$mark"
     elif [[ $mark == open ]]; then
       set_mark "$SESSIONS/$name" closed open "$cpid"
+    elif [[ $mark == used ]]; then
+      set_mark "$SESSIONS/$name" "" used "$cpid"
     fi
   done < <(fleet_rows "$SESSIONS" "$MARK_FIELDS")
 }
 
-# PreToolUse on a Playwright browser tool: never blocks. When the session's
-# mark says it held a window ("open" or "closed") and its claude now holds
-# none, it drops the mark and hands Claude CLOSED_NOTE. Reads the payload and
-# the session's own file with builtins; walks /proc only for a marked session.
+# PreToolUse on a Playwright browser tool: never blocks. A "used" mark whose
+# claude holds its MCP browser becomes "open". A confirmed mark ("open" or
+# "closed") whose claude now holds none is dropped, and Claude gets
+# CLOSED_NOTE. Reads the payload and the session's own file with builtins;
+# walks /proc only for a marked session.
 pre_tool() {
-  local payload="" text="" tool sid file pid start
+  local payload="" text="" tool sid file pid start mark
   IFS= read -r -d '' payload
   [[ $payload =~ \"tool_name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] || return 0
   tool=${BASH_REMATCH[1]}
@@ -415,13 +425,17 @@ pre_tool() {
   file=$SESSIONS/$sid.json
   [[ -f $file && ! -L $file ]] || return 0
   { IFS= read -r text <"$file"; } 2>/dev/null
-  [[ $text == *'"browser":"open"'* || $text == *'"browser":"closed"'* ]] || return 0
+  [[ $text =~ \"browser\":\"(used|open|closed)\" ]] || return 0
+  mark=${BASH_REMATCH[1]}
   [[ $text =~ \"claude\":\{\"pid\":([0-9]+),\"start\":([0-9]+)\} ]] || return 0
   pid=${BASH_REMATCH[1]} start=${BASH_REMATCH[2]}
   proc_is "$pid" "$start" || return 0
-  holds_browser "$pid" && return 0
-  [[ $text == *'"browser":"open"'* ]] && set_mark "$file" "" open "$pid"
-  [[ $text == *'"browser":"closed"'* ]] && set_mark "$file" "" closed "$pid"
+  if holds_browser "$pid"; then
+    [[ $mark == used ]] && set_mark "$file" open used
+    return 0
+  fi
+  [[ $mark == used ]] && return 0
+  set_mark "$file" "" "$mark" "$pid"
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$CLOSED_NOTE"
 }
 # --- end browser holders ---

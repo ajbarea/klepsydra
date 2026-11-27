@@ -1756,11 +1756,37 @@ bproc 4302 1 chrome /opt/google/chrome/chrome "--user-data-dir=$work/home/.confi
 mkdir -p "$bc/mcp-chrome-aa/Default"; touch -d "@$(( $(date +%s) - 330 ))" "$bc/mcp-chrome-aa" "$bc/mcp-chrome-aa/Default"
 check "#379: a live one: its pid, owning session and idle time; AJ's Chrome is not listed" "$(doctor | grep 'MCP browsers')" \
   "ok   MCP browsers: pid 4301 (session dddddddd, idle 5 min)"
+wfile=$KLEPSYDRA_DIR/fleet/$(sid_of w1).json
+jq -c --arg s "/tmp/tmux-1/$FLEET_SOCK" '.tmux.socket = $s' "$wfile" >"$wfile.t" && mv "$wfile.t" "$wfile"
+check "#533: a session on the fleet's tmux server: named by the agent holding it" "$(doctor | grep 'MCP browsers')" \
+  "ok   MCP browsers: pid 4301 (held by worker, idle 5 min)"
+jq -c '.tmux.socket = "/tmp/tmux-1/default"' "$wfile" >"$wfile.t" && mv "$wfile.t" "$wfile"
+check "#533: the same pane id on another tmux server is not the agent's" "$(doctor | grep 'MCP browsers')" \
+  "ok   MCP browsers: pid 4301 (session dddddddd, idle 5 min)"
+jq -c 'del(.tmux.socket)' "$wfile" >"$wfile.t" && mv "$wfile.t" "$wfile"
 check "#379: idle past FLEET_BROWSER_IDLE_MIN warns" \
   "$(FLEET_BROWSER_IDLE_MIN=5 doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min, past 5 min)')" "1"
 bproc 4310 1 chrome /opt/google/chrome/chrome "--user-data-dir=$bc/mcp-chrome-bb"
 check "#379: one whose MCP server is gone warns" \
   "$(doctor | grep -c '^warn MCP browsers: pid 4301 (session dddddddd, idle 5 min); pid 4310 (no session, idle ?, its MCP server is gone)')" "1"
+# The browser hook in each account's settings (#533): never one that can block.
+bhook() { doctor | grep -E '^(ok|warn|FAIL) +browser hook'; }
+breg() { printf '{"hooks":{"PreToolUse":[{"matcher":"m","hooks":[{"type":"command","command":"%s"}]}]}}\n' "$2" >"$work/$1/settings.json"; }
+had_ca=0 had_cb=0; [[ -d $work/cfg-a ]] && had_ca=1; [[ -d $work/cfg-b ]] && had_cb=1
+mkdir -p "$work/cfg-a" "$work/cfg-b"
+check "#533: no settings in either account: no browser hook line" "$(bhook)" ""
+breg cfg-a "~/.claude/klepsydra-browser.sh --pre-tool || true"; breg cfg-b "~/.claude/klepsydra-browser.sh --pre-tool || true"
+check "#533: registered with || true in both accounts: ok" "$(bhook)" "ok   browser hook: registered in 2 accounts; it never blocks a browser call"
+breg cfg-b "~/.claude/klepsydra-browser.sh --pre-tool"
+check "#533: an entry without || true fails, naming its account" "$(bhook)" "FAIL browser hook: can block every browser call in $work/cfg-b (no || true): fleet install"
+printf '{"hooks":{}}\n' >"$work/cfg-b/settings.json"
+check "#533: an account without it warns" "$(bhook)" "warn browser hook: not registered in $work/cfg-b: fleet install"
+breg cfg-b "~/.claude/klepsydra-browser.sh --pre-tool || true"
+cp "$FLEET_HOOK_DIR/klepsydra-browser.sh" "$work/browser.keep"; printf '#!/usr/bin/env bash\nexit 2\n' >"$FLEET_HOOK_DIR/klepsydra-browser.sh"
+check "#533: an installed script without --pre-tool warns" "$(bhook)" "warn browser hook: $FLEET_HOOK_DIR/klepsydra-browser.sh has no --pre-tool: fleet install"
+mv "$work/browser.keep" "$FLEET_HOOK_DIR/klepsydra-browser.sh"
+rm -f -- "$work/cfg-a/settings.json" "$work/cfg-b/settings.json"
+(( had_ca )) || rmdir -- "$work/cfg-a"; (( had_cb )) || rmdir -- "$work/cfg-b"
 djson() { doc_prefs; FLEET_PS="$work/bin/ps" FLEET_SYSTEMCTL="$work/bin/systemctl" FLEET_CURL="${FLEET_CURL:-$work/bin/curl}" FLEET_TAILSCALE="${FLEET_TAILSCALE:-$work/bin/tailscale}" FLEET_TASKLIST="${FLEET_TASKLIST:-$work/bin/tasklist}" \
   DOC_ACTIVE="$work/active" DOC_FLEET="$work/fleet.json" bash "$here/doctor.sh" --json "$work/health.json" >/dev/null 2>&1; echo $?; rm -f -- "$KLEPSYDRA_DIR/prefs.json"; }
 : >"$FLEET_LOG"; rm -f "$work/health.json"

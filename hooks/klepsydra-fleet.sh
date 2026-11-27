@@ -813,11 +813,13 @@ def assistant_text($line):
   | .name = (($ev.session_title | text) // .name // $fallback_name)
   | .fleet_name = (($fleet_agent | text) // .fleet_name)
   | .orchestrator = $orchestrator
-  # The shared Playwright browser (#533): "open" once one of its tools
-  # succeeds; gone at browser_close, at the end and in a new process.
-  # klepsydra-browser.sh --sync marks it "closed" when the window goes.
+  # The shared Playwright browser (#533): "used" once one of its tools
+  # succeeds (klepsydra-browser.sh confirms it "open", or drops it); gone at
+  # browser_close, at the end and at any start but a compaction, which
+  # the next resume pass restores while the browser is still open.
   | if $event == "PostToolUse" and ((($ev.tool_name | strings) // "") | test("^mcp__.*playwright.*__browser_")) then
-      (if $ev.tool_name | endswith("__browser_close") then del(.browser) else .browser = "open" end)
+      (if $ev.tool_name | endswith("__browser_close") then del(.browser)
+       elif .browser == "open" then . else .browser = "used" end)
     elif $event == "SessionEnd" or ($event == "SessionStart" and $ev.source != "compact") then del(.browser)
     else . end
   # An orchestrator file written before faces (#222) is Hephaestus's: it keeps him.

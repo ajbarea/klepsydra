@@ -177,6 +177,8 @@ exec {held}>&-
 bash "$script" --sync
 check "the lock free: it writes" "$(mark $S1)" "open"
 
+check "an inherited LOCK is not the fleet hook's lock" "$(tree; sessions; LOCK= bash "$script" --sync; mark $S1)" "open"
+
 pw=mcp__plugin_playwright_playwright__browser
 pre() { # SID TOOL [payload spacing]
   printf '{"session_id":%s"%s","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{}}' "${3:-}" "$1" "$2" | bash "$script" --pre-tool
@@ -218,6 +220,14 @@ check "pre-tool: the same file in the overlay's dir is" "$(pre $S1 ${pw}_click |
 tree; sessions; sess $S1 100 1000 open
 sed -i 's/ S 202 / Z 202 /' "$P/300/stat"
 check "pre-tool: a zombie window is a closed one" "$(pre $S1 ${pw}_click | head -1 | note)" "$(printf 'PreToolUse\ttrue\tfalse')"
+tree; sessions; sess $S1 100 1000 used
+check "pre-tool: a used mark whose claude holds its MCP browser is confirmed open, silently" "$(pre $S1 ${pw}_click),$(mark $S1)" "rc=0,open"
+# An --isolated server's Chrome has a temporary profile, never an mcp-chrome-* one.
+tree; sessions; sess $S1 100 1000 used
+proc 300 202 chrome /opt/google/chrome/chrome "--user-data-dir=/tmp/playwright_chromiumdev_profile-x1"
+check "pre-tool: a used mark it cannot confirm (--isolated) is never told closed" "$(pre $S1 ${pw}_click),$(mark $S1)" "rc=0,used"
+bash "$script" --sync
+check "the sync drops a used mark it cannot confirm" "$(mark $S1)" "-"
 check "pre-tool: a bad session id reads nothing" "$(pre ../$S1 ${pw}_click)" "rc=0"
 check "pre-tool: no stdin at all: exit 0" "$(bash "$script" --pre-tool </dev/null; echo "rc=$?")" "rc=0"
 # The registered command, with a script that has no --pre-tool (main before #533 exited 2,

@@ -109,7 +109,8 @@ BROWSER_HOOK='{"matcher": "mcp__.*playwright.*__browser_.*", "hooks": [{"type": 
 register_browser_hook() { # settings.json
   local cfg=$1 real want tmp
   [[ -f $cfg ]] || { ilog INFO "no Claude Code settings; the browser hook is not registered" file="$cfg"; return 0; }
-  if ! cmp -s -- "$root/hooks/klepsydra-browser.sh" "$FLEET_HOOK_DIR/klepsydra-browser.sh"; then
+  # A dry run installed no copy: it says what a real run would register.
+  if (( !dry )) && ! cmp -s -- "$root/hooks/klepsydra-browser.sh" "$FLEET_HOOK_DIR/klepsydra-browser.sh"; then
     ilog ERROR "the browser script's copy is not this checkout's; its hook is not registered" file="$FLEET_HOOK_DIR/klepsydra-browser.sh"
     return 1
   fi
