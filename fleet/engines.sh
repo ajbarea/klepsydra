@@ -300,6 +300,26 @@ eng_usage_raw() { # ENGINE
   return 1
 }
 
+# Formats an epoch as a reset label:
+# - today: "resets 3:26am"
+# - tomorrow: "resets Sat 3:26am"
+# - beyond tomorrow: "resets Fri Dec 4 5:26pm"
+eng_reset_label() { # EPOCH [NOW]
+  local epoch=$1 now=${2:-$(date +%s)}
+  [[ $epoch =~ ^[1-9][0-9]*$ ]] || return 1
+  local rday today tday
+  rday=$(date -d "@$epoch" +%F 2>/dev/null) || return 1
+  today=$(date -d "@$now" +%F 2>/dev/null) || return 1
+  tday=$(date -d "@$(( now + 86400 ))" +%F 2>/dev/null) || return 1
+  if [[ $rday == "$today" ]]; then
+    date -d "@$epoch" '+resets %-I:%M%P'
+  elif [[ $rday == "$tday" ]]; then
+    date -d "@$epoch" '+resets %a %-I:%M%P'
+  else
+    date -d "@$epoch" '+resets %a %b %-d %-I:%M%P'
+  fi
+}
+
 # Formatted usage line(s) for ENGINE, using NOW for reset times.
 eng_usage() { # ENGINE [NOW]
   local eng=$1 now=${2:-$(date +%s)}
@@ -331,36 +351,46 @@ eng_usage() { # ENGINE [NOW]
           win = tolower($2)
           pct = $3
           reset = $4
-          if (index(win, "five hour")) five[pool] = pct
-          else if (index(win, "weekly")) weekly[pool] = pct
-          if (reset != "" && reset != "disabled") {
-            if (resets[pool] == "" || reset < resets[pool]) resets[pool] = reset
-          }
+          if (index(win, "five hour")) { five[pool] = pct; five_reset[pool] = reset }
+          else if (index(win, "weekly")) { weekly[pool] = pct; weekly_reset[pool] = reset }
         }
         END {
           for (i = 0; i < n; i++) {
             p = order[i]
-            print p "\t" five[p] "\t" weekly[p] "\t" resets[p]
+            print p "|" five[p] "|" five_reset[p] "|" weekly[p] "|" weekly_reset[p]
           }
-        }' <<<"$raw" | while IFS=$'\t' read -r pool five weekly reset; do
+        }' <<<"$raw" | while IFS='|' read -r pool five five_reset weekly weekly_reset; do
         [[ -z "$pool" ]] && continue
         local parts=""
-        [[ -n "$five" && "$five" != "disabled" ]] && parts="five_hour room $five"
-        if [[ -n "$weekly" && "$weekly" != "disabled" ]]; then
-          [[ -n "$parts" ]] && parts="$parts, weekly room $weekly" || parts="weekly room $weekly"
-        fi
-        local reset_lbl=""
-        if [[ -n "$reset" && "$reset" != "disabled" ]]; then
-          local epoch
-          epoch=$(date -d "$reset" +%s 2>/dev/null || echo 0)
-          if (( epoch > 0 )); then
-            local lbl
-            lbl=$(reset_label "$epoch" "" "$now")
-            [[ -n "$lbl" ]] && reset_lbl=" ($lbl)"
+        if [[ -n "$five" && "$five" != "disabled" ]]; then
+          local f_lbl=""
+          if [[ -n "$five_reset" && "$five_reset" != "disabled" ]]; then
+            local epoch
+            epoch=$(date -d "$five_reset" +%s 2>/dev/null || echo 0)
+            if (( epoch > 0 )); then
+              local lbl
+              lbl=$(eng_reset_label "$epoch" "$now")
+              [[ -n "$lbl" ]] && f_lbl=" ($lbl)"
+            fi
           fi
+          parts="five_hour room $five$f_lbl"
+        fi
+        if [[ -n "$weekly" && "$weekly" != "disabled" ]]; then
+          local w_lbl=""
+          if [[ -n "$weekly_reset" && "$weekly_reset" != "disabled" ]]; then
+            local epoch
+            epoch=$(date -d "$weekly_reset" +%s 2>/dev/null || echo 0)
+            if (( epoch > 0 )); then
+              local lbl
+              lbl=$(eng_reset_label "$epoch" "$now")
+              [[ -n "$lbl" ]] && w_lbl=" ($lbl)"
+            fi
+          fi
+          local w_part="weekly room $weekly$w_lbl"
+          [[ -n "$parts" ]] && parts="$parts, $w_part" || parts="$w_part"
         fi
         if [[ -n "$parts" ]]; then
-          printf '  agy %s: %s%s\n' "$pool" "$parts" "$reset_lbl"
+          printf '  agy %s: %s\n' "$pool" "$parts"
         elif [[ "$five" == "disabled" && "$weekly" == "disabled" ]]; then
           printf '  agy %s: disabled\n' "$pool"
         fi

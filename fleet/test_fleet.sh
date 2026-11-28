@@ -4296,9 +4296,9 @@ chmod +x "$work/stubs-588/copilot"
 rm -f -- "${FLEET_STATE:?}"/usage-*.cache
 accts_out=$(PATH="$work/stubs-588:$PATH" bash "$here/fleet" accounts)
 check "fleet accounts #588: agy Gemini pool room and reset" \
-  "$(grep 'agy Gemini:' <<<"$accts_out")" "  agy Gemini: five_hour room 99%, weekly room 74% (resets Sat 3:26am)"
+  "$(grep 'agy Gemini:' <<<"$accts_out")" "  agy Gemini: five_hour room 99% (resets Sat 3:26am), weekly room 74% (resets Fri Dec 4 5:26pm)"
 check "fleet accounts #588: agy Claude and GPT pool room and reset" \
-  "$(grep 'agy Claude and GPT:' <<<"$accts_out")" "  agy Claude and GPT: weekly room 0% (resets Tue 2:38pm)"
+  "$(grep 'agy Claude and GPT:' <<<"$accts_out")" "  agy Claude and GPT: weekly room 0% (resets Tue Dec 1 2:38pm)"
 check "fleet accounts #588: copilot monthly quota exceeded" \
   "$(grep 'copilot:' <<<"$accts_out")" "  copilot: monthly quota exceeded"
 check "fleet accounts #588: engine usage results are cached in state dir" \
@@ -4314,7 +4314,7 @@ exit 2
 EOF_FAIL
 accts_cached=$(PATH="$work/fail-588:$PATH" bash "$here/fleet" accounts)
 check "fleet accounts #588: cached agy returned within TTL" \
-  "$(grep 'agy Gemini:' <<<"$accts_cached")" "  agy Gemini: five_hour room 99%, weekly room 74% (resets Sat 3:26am)"
+  "$(grep 'agy Gemini:' <<<"$accts_cached")" "  agy Gemini: five_hour room 99% (resets Sat 3:26am), weekly room 74% (resets Fri Dec 4 5:26pm)"
 
 touch -d "@0" "$FLEET_STATE/usage-agy.cache" "$FLEET_STATE/usage-copilot.cache"
 accts_failed=$(PATH="$work/fail-588:$PATH" bash "$here/fleet" accounts)
