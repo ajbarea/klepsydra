@@ -135,6 +135,46 @@ for sig in INT TERM; do
   check "$sig to its group: the command is gone and the lock is free" "$(gone 'sleep 31.7') $(held)" "gone free"
 done
 
+# #595: SIGKILL on heavy.sh cannot run its trap, yet the child dies and the lock is free.
+pid_alive() {
+  local p=$1 st
+  [[ $p =~ ^[0-9]+$ ]] && kill -0 "$p" 2>/dev/null || return 1
+  { read -r st <"/proc/$p/stat"; } 2>/dev/null || return 1
+  st=${st##*) }; [[ ${st%% *} != Z ]]
+}
+pid_gone() { # pid: wait up to 5 s for that pid to exit
+  local p=$1
+  [[ $p =~ ^[0-9]+$ ]] || { echo missing; return; }
+  for _ in $(seq 50); do pid_alive "$p" || { echo gone; return; }; sleep 0.1; done
+  echo running; kill -KILL "$p" 2>/dev/null
+}
+: >"$work/k1.pid"
+# shellcheck disable=SC2016 # expanded by the inner bash
+FLEET_HEAVY_LOCK="$hl" "$root/fleet/heavy.sh" bash -c 'echo "$$" >"$1"; exec sleep 31.9' _ "$work/k1.pid" &
+hp=$!
+for _ in $(seq 50); do [[ -s $work/k1.pid && $(held) == held ]] && break; sleep 0.05; done
+cpid=$(<"$work/k1.pid")
+kill -KILL "$hp" 2>/dev/null; wait "$hp" 2>/dev/null
+check "SIGKILL on heavy.sh: its child dies and the lock is free" "$(pid_gone "$cpid") $(held)" "gone free"
+
+: >"$work/k2p.pid"; : >"$work/k2g.pid"
+# shellcheck disable=SC2016 # expanded by the inner bash
+FLEET_HEAVY_LOCK="$hl" "$root/fleet/heavy.sh" bash -c 'echo "$$" >"$1"; sleep 32.1 & echo "$!" >"$2"; wait' _ "$work/k2p.pid" "$work/k2g.pid" &
+hp=$!
+for _ in $(seq 50); do [[ -s $work/k2p.pid && -s $work/k2g.pid && $(held) == held ]] && break; sleep 0.05; done
+cpid=$(<"$work/k2p.pid") gpid=$(<"$work/k2g.pid")
+kill -KILL "$hp" 2>/dev/null; wait "$hp" 2>/dev/null
+check "SIGKILL on heavy.sh: child and background grandchild both die" "$(pid_gone "$cpid") $(pid_gone "$gpid") $(held)" "gone gone free"
+
+: >"$work/k3.pid"
+# shellcheck disable=SC2016 # expanded by the inner bash
+FLEET_HEAVY_LOCK="$hl" FLEET_HEAVY_KILL_S=1 "$root/fleet/heavy.sh" bash -c 'trap "" TERM; echo "$$" >"$1"; exec sleep 32.2' _ "$work/k3.pid" &
+hp=$!
+for _ in $(seq 50); do [[ -s $work/k3.pid && $(held) == held ]] && break; sleep 0.05; done
+cpid=$(<"$work/k3.pid")
+kill -KILL "$hp" 2>/dev/null; wait "$hp" 2>/dev/null
+check "SIGKILL on heavy.sh: a command ignoring TERM is killed after the grace" "$(pid_gone "$cpid") $(held)" "gone free"
+
 echo
 echo "$pass passed, $fail failed"
 (( fail == 0 ))

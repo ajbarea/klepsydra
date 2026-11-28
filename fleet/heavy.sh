@@ -6,7 +6,9 @@
 # leaves running keeps it (as flock -o). COMMAND runs under timeout in its own
 # process group: at the limit every process in it gets TERM, then KILL after
 # FLEET_HEAVY_KILL_S. INT, TERM or HUP here (Ctrl-C, a stopped tool call) is
-# passed on to that group as TERM, which a script's background job never ignores.
+# passed on to that group as TERM, which a script's background job never ignores;
+# setpriv --pdeathsig TERM delivers the same TERM to timeout if this script
+# dies by SIGKILL (#595).
 # Usage: fleet/heavy.sh COMMAND [ARGS...]
 set -u
 lock=${FLEET_HEAVY_LOCK:-/tmp/fleet-heavy.lock}
@@ -69,7 +71,11 @@ job="" stopping=0
 # shellcheck disable=SC2329 # run by the trap below
 stop() { stopping=1; [[ -n $job ]] && kill -TERM -- "$job" 2>/dev/null; }
 trap stop INT TERM HUP
-timeout -k "$grace" "$limit" "$@" 0<&0 {fd}>&- &
+me=$BASHPID
+# Arm PR_SET_PDEATHSIG=TERM so even SIGKILL on this script triggers timeout's
+# group cleanup; checking PPID closes the fork-to-prctl race if this script died first.
+# shellcheck disable=SC2016 # expanded by the inner sh
+setpriv --pdeathsig TERM sh -c '[ "$PPID" = "$1" ] || exit 1; g=$2 l=$3; shift 3; exec timeout -k "$g" -- "$l" "$@"' _ "$me" "$grace" "$limit" "$@" 0<&0 {fd}>&- &
 job=$!
 (( stopping )) && kill -TERM -- "$job" 2>/dev/null
 rc=0
