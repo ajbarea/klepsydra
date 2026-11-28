@@ -276,6 +276,7 @@ check "a resume that dies without a result marks the cost partial" "$(runj r6f) 
 check "--status shows a partial cost with +" "$(bash "$here/headless.sh" --status | grep -cF '$1+ of $10')" "1"
 echo slownever >"$work/rec/mode"
 check "the job's deadline holds across resumes" "$(FLEET_HEADLESS_TIMEOUT=3 runj r6g) $(rec r6g '[.result, .resumes] | join(" ")')" "124 timeout 1"
+check "the job's deadline holds without /proc/uptime" "$(FLEET_UPTIME="$work/no-uptime" FLEET_HEADLESS_TIMEOUT=3 runj r6g2) $(rec r6g2 '[.result, .resumes] | join(" ")')" "124 timeout 1"
 echo ok >"$work/rec/mode"
 KLEPSYDRA_HEADLESS=1 KLEPSYDRA_AGENT=r7e sleep 300 & before=$!
 check "a process older than the job, though it carries its variables, is left alone" "$(runj r7e) $(kill -0 "$before" 2>/dev/null && echo alive || echo gone)" "0 alive"
