@@ -4272,7 +4272,27 @@ check "review 1: a second folder whose skills link into the first is refused, an
   "$(acsync "$dst" >/dev/null; echo $?) $(find "$src/skills" -mindepth 1 -maxdepth 1 | sort | sed "s|$src/skills/||" | tr '\n' ' ')" "1 one synced two "
 
 echo "fleet accounts: agy and Copilot room (#588)"
-mkdir -p "$work/stubs-588" "$work/empty-588" "$work/fail-588" "$work/auth-588"
+mkdir -p "$work/stubs-588" "$work/empty-588" "$work/fail-588" "$work/auth-588" "$work/unk-588" "$work/dis-588"
+
+# eng_reset_label: all three label forms from fixed times (#588)
+ref_target=$(date -d "2026-11-28 03:26:00" +%s)
+now_tomorrow=$(date -d "2026-11-27 12:00:00" +%s)
+now_sameday=$(date -d "2026-11-28 01:00:00" +%s)
+now_later=$(date -d "2026-11-20 12:00:00" +%s)
+
+check "eng_reset_label #588: same day from fixed times" \
+  "$(bash -c '. "$1/engines.sh"; eng_reset_label '"$ref_target $now_sameday"'' _ "$here")" \
+  "$(date -d "@$ref_target" '+resets %-I:%M%P')"
+check "eng_reset_label #588: tomorrow from fixed times" \
+  "$(bash -c '. "$1/engines.sh"; eng_reset_label '"$ref_target $now_tomorrow"'' _ "$here")" \
+  "$(date -d "@$ref_target" '+resets %a %-I:%M%P')"
+check "eng_reset_label #588: later from fixed times" \
+  "$(bash -c '. "$1/engines.sh"; eng_reset_label '"$ref_target $now_later"'' _ "$here")" \
+  "$(date -d "@$ref_target" '+resets %a %b %-d %-I:%M%P')"
+check "eng_reset_label #588: honours FLEET_NOW when second arg omitted" \
+  "$(FLEET_NOW=$now_sameday bash -c '. "$1/engines.sh"; eng_reset_label '"$ref_target"'' _ "$here")" \
+  "$(date -d "@$ref_target" '+resets %-I:%M%P')"
+
 cat << EOF_AGY >"$work/stubs-588/agy"
 #!/usr/bin/env bash
 if [[ "\$*" == *"-p /usage"* ]]; then
@@ -4294,7 +4314,7 @@ EOF_COP
 chmod +x "$work/stubs-588/copilot"
 
 rm -f -- "${FLEET_STATE:?}"/usage-*.cache
-accts_out=$(PATH="$work/stubs-588:$PATH" bash "$here/fleet" accounts)
+accts_out=$(FLEET_NOW=$now_tomorrow PATH="$work/stubs-588:$PATH" bash "$here/fleet" accounts)
 check "fleet accounts #588: agy Gemini pool room and reset" \
   "$(grep 'agy Gemini:' <<<"$accts_out")" "  agy Gemini: five_hour room 99% (resets Sat 3:26am), weekly room 74% (resets Fri Dec 4 5:26pm)"
 check "fleet accounts #588: agy Claude and GPT pool room and reset" \
@@ -4304,6 +4324,10 @@ check "fleet accounts #588: copilot monthly quota exceeded" \
 check "fleet accounts #588: engine usage results are cached in state dir" \
   "$([[ -s $FLEET_STATE/usage-agy.cache && -s $FLEET_STATE/usage-copilot.cache ]] && echo cached)" "cached"
 
+accts_sameday=$(FLEET_NOW=$now_sameday PATH="$work/stubs-588:$PATH" bash "$here/fleet" accounts)
+check "fleet accounts #588: agy Gemini pool same-day reset label form" \
+  "$(grep 'agy Gemini:' <<<"$accts_sameday")" "  agy Gemini: five_hour room 99% (resets 3:26am), weekly room 74% (resets Fri Dec 4 5:26pm)"
+
 cat << 'EOF_FAIL' >"$work/fail-588/agy"; chmod +x "$work/fail-588/agy"
 #!/usr/bin/env bash
 exit 2
@@ -4312,9 +4336,36 @@ cat << 'EOF_FAIL' >"$work/fail-588/copilot"; chmod +x "$work/fail-588/copilot"
 #!/usr/bin/env bash
 exit 2
 EOF_FAIL
-accts_cached=$(PATH="$work/fail-588:$PATH" bash "$here/fleet" accounts)
+accts_cached=$(FLEET_NOW=$now_tomorrow PATH="$work/fail-588:$PATH" bash "$here/fleet" accounts)
 check "fleet accounts #588: cached agy returned within TTL" \
   "$(grep 'agy Gemini:' <<<"$accts_cached")" "  agy Gemini: five_hour room 99% (resets Sat 3:26am), weekly room 74% (resets Fri Dec 4 5:26pm)"
+
+cat << 'EOF_COP_UNK' >"$work/unk-588/copilot"; chmod +x "$work/unk-588/copilot"
+#!/usr/bin/env bash
+echo "Welcome to GitHub Copilot CLI v0.1.0"
+exit 0
+EOF_COP_UNK
+rm -f -- "${FLEET_STATE:?}"/usage-*.cache
+accts_unk=$(PATH="$work/unk-588:$work/stubs-588:$PATH" bash "$here/fleet" accounts)
+check "fleet accounts #588: unrecognised copilot output reports usage unknown" \
+  "$(grep 'copilot:' <<<"$accts_unk")" "  copilot: usage unknown (probe output not recognised)"
+
+cat << 'EOF_AGY_DIS' >"$work/dis-588/agy"; chmod +x "$work/dis-588/agy"
+#!/usr/bin/env bash
+printf 'Single Disabled Pool\tFive Hour Limit Remaining\tdisabled\t\n'
+printf 'Weekly Disabled Pool\tWeekly Limit Remaining\tdisabled\t\n'
+printf 'Both Disabled Pool\tFive Hour Limit Remaining\tdisabled\t\n'
+printf 'Both Disabled Pool\tWeekly Limit Remaining\tdisabled\t\n'
+exit 0
+EOF_AGY_DIS
+rm -f -- "${FLEET_STATE:?}"/usage-*.cache
+accts_dis=$(PATH="$work/dis-588:$work/stubs-588:$PATH" bash "$here/fleet" accounts)
+check "fleet accounts #588: agy pool with single disabled five_hour window prints what is known" \
+  "$(grep 'Single Disabled Pool:' <<<"$accts_dis")" "  agy Single Disabled Pool: five_hour disabled"
+check "fleet accounts #588: agy pool with single disabled weekly window prints what is known" \
+  "$(grep 'Weekly Disabled Pool:' <<<"$accts_dis")" "  agy Weekly Disabled Pool: weekly disabled"
+check "fleet accounts #588: agy pool with both windows disabled prints disabled" \
+  "$(grep 'Both Disabled Pool:' <<<"$accts_dis")" "  agy Both Disabled Pool: disabled"
 
 touch -d "@0" "$FLEET_STATE/usage-agy.cache" "$FLEET_STATE/usage-copilot.cache"
 accts_failed=$(PATH="$work/fail-588:$PATH" bash "$here/fleet" accounts)
@@ -4340,7 +4391,7 @@ rm -f -- "${FLEET_STATE:?}"/usage-*.cache
 accts_auth=$(PATH="$work/auth-588:$PATH" bash "$here/fleet" accounts)
 check "fleet accounts #588: auth failure reports not logged in" \
   "$(grep -E 'agy:|copilot:' <<<"$accts_auth")" $'  agy: not logged in\n  copilot: not logged in'
-rm -f -- "${FLEET_STATE:?}"/usage-*.cache
+rm -f -- "${FLEET_STATE:?}"/usage-*.cache*
 
 echo "recover after a hard shutdown (#154)"
 : >"$FLEET_LOG"; : >"$REGISTRY"

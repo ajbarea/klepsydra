@@ -50,7 +50,7 @@ case $cmd in
     if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
     # shellcheck source=fleet/lib.sh
     . "$here/lib.sh"
-    now=$(date +%s) best=$(best_account "$now")
+    now=${FLEET_NOW:-$(date +%s)} best=$(best_account "$now")
     for dir in $FLEET_ACCOUNTS; do
       if id=$(account_of "$dir"); then
         read -r five seven <<<"$(headroom "$id" "$now")"

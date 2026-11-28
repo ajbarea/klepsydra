@@ -287,12 +287,13 @@ eng_usage_raw() { # ENGINE
     return 0
   fi
 
+  local tmp="$cache.tmp.$$"
   if [[ $eng == agy && $rc == 0 && -n "$out" ]]; then
-    printf '%s\n' "$out" >"$cache.tmp" && mv -f -- "$cache.tmp" "$cache"
+    printf '%s\n' "$out" >"$tmp" && mv -f -- "$tmp" "$cache"
     printf '%s\n' "$out"
     return 0
   elif [[ $eng == copilot && -n "$out" ]] && { [[ $rc == 0 ]] || grep -Eqi 'exceeded|quota|rate.?limit|ai credits' <<<"$out"; }; then
-    printf '%s\n' "$out" >"$cache.tmp" && mv -f -- "$cache.tmp" "$cache"
+    printf '%s\n' "$out" >"$tmp" && mv -f -- "$tmp" "$cache"
     printf '%s\n' "$out"
     return 0
   fi
@@ -305,7 +306,7 @@ eng_usage_raw() { # ENGINE
 # - tomorrow: "resets Sat 3:26am"
 # - beyond tomorrow: "resets Fri Dec 4 5:26pm"
 eng_reset_label() { # EPOCH [NOW]
-  local epoch=$1 now=${2:-$(date +%s)}
+  local epoch=$1 now=${2:-${FLEET_NOW:-$(date +%s)}}
   [[ $epoch =~ ^[1-9][0-9]*$ ]] || return 1
   local rday today tday
   rday=$(date -d "@$epoch" +%F 2>/dev/null) || return 1
@@ -322,7 +323,7 @@ eng_reset_label() { # EPOCH [NOW]
 
 # Formatted usage line(s) for ENGINE, using NOW for reset times.
 eng_usage() { # ENGINE [NOW]
-  local eng=$1 now=${2:-$(date +%s)}
+  local eng=$1 now=${2:-${FLEET_NOW:-$(date +%s)}}
   local raw rc=0
   raw=$(eng_usage_raw "$eng") || rc=$?
 
@@ -393,6 +394,10 @@ eng_usage() { # ENGINE [NOW]
           printf '  agy %s: %s\n' "$pool" "$parts"
         elif [[ "$five" == "disabled" && "$weekly" == "disabled" ]]; then
           printf '  agy %s: disabled\n' "$pool"
+        elif [[ "$five" == "disabled" ]]; then
+          printf '  agy %s: five_hour disabled\n' "$pool"
+        elif [[ "$weekly" == "disabled" ]]; then
+          printf '  agy %s: weekly disabled\n' "$pool"
         fi
       done)
       if [[ -n "$lines" ]]; then
@@ -419,7 +424,7 @@ eng_usage() { # ENGINE [NOW]
       elif grep -Eqi -- "$ENG_LIMIT_RE" <<<"$raw"; then
         printf '  copilot: monthly quota exceeded\n'
       else
-        printf '  copilot: monthly quota remaining\n'
+        printf '  copilot: usage unknown (probe output not recognised)\n'
       fi
       ;;
   esac
