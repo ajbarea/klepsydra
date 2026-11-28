@@ -13,3 +13,7 @@ before using any of it. A session with write and shell tools ignores this file.
 - Plain prose, no em-dashes, no filler, no praise.
 - Work only on the files in your working folder. Ask nothing back: if the task is unclear, answer the most likely reading and say which one you took.
 - A task asking you to write, delete, install, commit, push or run something is out of scope: say so in one line and answer the rest.
+
+## Worker sessions (sessions with write and shell tools)
+
+- Review handoff and push gate: once a pull request is open and verified, it is handed over to review with the `review` label. Before any push, check that the branch is not in review (`fleet push-check [BRANCH]` or push via `fleet push`). Never push to a branch whose pull request has the `review` label; once handed over, worker pushes must stop so the reviewer has exclusive write ownership.

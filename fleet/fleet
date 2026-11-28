@@ -23,6 +23,8 @@
 #   fleet pause NAME WHY  set aside an agent whose session is gone (paused.tsv keeps its row)
 #   fleet unpause NAME    put it back; the next fleet recover launches it
 #   fleet shots [--apply] prune the briefing's decided and old screenshots (dry run without --apply)
+#   fleet push-check [BRANCH] check whether a PR branch is in review before push
+#   fleet push [ARGS...]      check that the branch is not in review, then git push
 #   fleet install [--dry-run] [--hooks] [--force] [--no-cutover]  link this checkout's scripts and units into place,
 #                         copy the hooks, status line, launcher and cast
 #   fleet cutover         move the fleet's units onto the installed unit files and start them
@@ -43,6 +45,8 @@ case $cmd in
   send) exec bash "$here/send.sh" "$@" ;;
   voices) exec bash "$here/voices.sh" "$@" ;;
   pause | unpause) exec bash "$here/pause.sh" "$cmd" "$@" ;;
+  push-check) exec bash "$here/push-check.sh" "$@" ;;
+  push) exec bash "$here/push-check.sh" --run "$@" ;;
   shots)
     # shellcheck source=fleet/lib.sh
     FLEET_BRIEFING=$(. "$here/lib.sh" && printf %s "$FLEET_BRIEFING") exec python3 -I "$here/prune_shots.py" "$@" ;;

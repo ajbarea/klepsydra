@@ -126,6 +126,25 @@ When a new model appears:
   that worker checks it; the verify pass before a merge stays with Opus
   (HEPH 11-11 06:24 budget rule).
 
+### Review handoff and push prevention (#596)
+
+When free-engine workers work alone up to an open PR, they hand off the branch
+to an Opus reviewer once CI is green. In the past, workers continued pushing
+rebases and extra commits to the branch while an reviewer was actively fixing
+findings (#538, #539), causing rejected pushes and risking lost commits.
+
+The handoff lifecycle enforces single-writer branch ownership:
+1. **Handoff signal:** when a worker completes its slice and verifies green CI,
+   it adds the `review` label to the pull request (`gh pr edit <PR> --add-label review`)
+   and reports to the orchestrator (`fleet send`).
+2. **Push prevention:** `fleet push-check [BRANCH]` (and `fleet push [ARGS...]`)
+   inspects GitHub for open pull requests on the branch. If the PR carries the
+   `review` (or `in-review`) label, worker pushes are refused in code with exit
+   status 1.
+3. **Reviewer ownership:** the reviewer fetches before pushing and updates the
+   branch using `--force-with-lease`. Worker pushes remain blocked until the
+   review is completed and merged.
+
 ## Two modes, one interface
 
 | | Print mode (default) | Interactive lane (`--interactive`) |

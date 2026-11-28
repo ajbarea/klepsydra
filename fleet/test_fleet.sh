@@ -5923,6 +5923,85 @@ check "#518 N2: without /proc/uptime it counts its ticks, still to the timeout" 
   "$(wr XDG_RUNTIME_DIR="$work/wr-never" FLEET_RUNTIME_WAIT=1 FLEET_RUNTIME_TICK=0.1 FLEET_UPTIME="$work/no-uptime" | sed 's/.*|//')" "1-3s"
 rm -rf -- "${work:?}/wr-own" "${work:?}/wr-late" "${work:?}/wr-link" "${work:?}/wr-late-link"
 
+echo "fleet push-check and fleet push: PR review handoff stops worker pushes (#596)"
+# 1. Outside a git repo or detached HEAD: exits 0 (nothing to check)
+check "#596: push-check with no branch exits 0" "$(FLEET_GH="$work/no-gh" bash "$here/fleet" push-check "" 2>&1; echo $?)" "0"
+
+# Set up mock gh
+mock_gh="$work/mock-gh"
+cat >"$mock_gh" <<'EOF'
+#!/usr/bin/env bash
+branch=""
+for a in "$@"; do
+  case $a in
+    in-review|clean-pr|closed-review|in-review-dash) branch=$a ;;
+  esac
+done
+case $branch in
+  in-review)
+    echo '{"number": 596, "state": "OPEN", "labels": [{"name": "enhancement"}, {"name": "review"}]}'
+    ;;
+  clean-pr)
+    echo '{"number": 597, "state": "OPEN", "labels": [{"name": "enhancement"}]}'
+    ;;
+  closed-review)
+    echo '{"number": 598, "state": "MERGED", "labels": [{"name": "review"}]}'
+    ;;
+  in-review-dash)
+    echo '{"number": 599, "state": "OPEN", "labels": [{"name": "in-review"}]}'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$mock_gh"
+
+# 2. Branch with open PR and label 'review': push-check refuses (exit 1) and logs
+out=$(FLEET_GH="$mock_gh" bash "$here/fleet" push-check in-review 2>&1); rc=$?
+check "#596: push-check refuses branch with open PR and review label" "$rc" "1"
+check "#596: push-check refusal message names branch, PR number, and review label" \
+  "$(grep -c 'refused: branch "in-review" is in review (PR #596 has label "review"); worker pushes are stopped' <<<"$out")" "1"
+
+# 3. Branch with open PR and label 'in-review': refuses
+out=$(FLEET_GH="$mock_gh" bash "$here/fleet" push-check in-review-dash 2>&1); rc=$?
+check "#596: push-check refuses branch with in-review label" "$rc" "1"
+
+# 4. Branch with open PR without review label: passes (exit 0)
+out=$(FLEET_GH="$mock_gh" bash "$here/fleet" push-check clean-pr 2>&1); rc=$?
+check "#596: push-check allows branch without review label" "$rc" "0"
+
+# 5. Branch with merged/closed PR and review label: passes (exit 0)
+out=$(FLEET_GH="$mock_gh" bash "$here/fleet" push-check closed-review 2>&1); rc=$?
+check "#596: push-check allows merged/closed PR even with review label" "$rc" "0"
+
+# 6. Branch with no PR: passes (exit 0)
+out=$(FLEET_GH="$mock_gh" bash "$here/fleet" push-check no-pr 2>&1); rc=$?
+check "#596: push-check allows branch with no PR" "$rc" "0"
+
+# 7. push-check origin branch syntax: extracts branch correctly
+out=$(FLEET_GH="$mock_gh" bash "$here/fleet" push-check origin in-review 2>&1); rc=$?
+check "#596: push-check origin branch syntax refuses review branch" "$rc" "1"
+
+# 8. fleet push (--run) with mock git
+mock_git_log="$work/mock-git.log"
+mock_git="$work/git"
+cat >"$mock_git" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >>"$mock_git_log"
+EOF
+chmod +x "$mock_git"
+
+# When branch is in review: fleet push refuses and does NOT call git push
+out=$(PATH="$work:$PATH" FLEET_GH="$mock_gh" bash "$here/fleet" push origin in-review 2>&1); rc=$?
+check "#596: fleet push refuses in-review branch and does not invoke git" "$rc $([[ -f $mock_git_log ]] && cat "$mock_git_log" || echo none)" "1 none"
+
+# When branch is clean: fleet push executes git push
+out=$(PATH="$work:$PATH" FLEET_GH="$mock_gh" bash "$here/push-check.sh" --run origin clean-pr 2>&1); rc=$?
+check "#596: fleet push executes git push when branch is not in review" "$rc $(cat "$mock_git_log")" "0 push origin clean-pr"
+
+rm -f -- "$mock_gh" "$mock_git" "$mock_git_log"
+
 echo "the suite's own isolation"
 check "#265 review: no case reached a systemctl it did not stub" "$(cat "$work/guard.calls" 2>/dev/null)" ""
 check_keryx_isolation
