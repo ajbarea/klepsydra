@@ -439,6 +439,18 @@ t kill-window -t "$p"
 reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
 
 : >"$FLEET_LOG"
+p=$(pane vanish_slow "{\"above\":[\"work\",\"$LIMIT\"],\"submit_delay\":0.1}"); settle
+t send-keys -t "$p" -l "AJ: the note that vanished on 10-28"; settle
+resume "$noon"
+state vanish_slow "{\"above\":[\"work\",\"$LIMIT\"],\"submit_delay\":0.1,\"clear\":true}"
+reading b RIT 10 2000
+resume "$(( noon + 60 ))"
+check "#573: a slow redraw after Enter on a limited pane still sends no extra empty SUBMIT" \
+  "$(events vanish_slow)" $'PASTE 35\nSUBMIT AJ: the note that vanished on 10-28'
+t kill-window -t "$p"
+reading a Personal 40 1000; rm -f "$KLEPSYDRA_DIR/accounts/b/s.json"
+
+: >"$FLEET_LOG"
 p=$(pane sent "{\"above\":[\"work\",\"$LIMIT\"]}"); settle
 t send-keys -t "$p" -l "AJ: sent while limited"; settle
 resume "$noon"
@@ -1168,6 +1180,11 @@ check "a box that emptied while the retry's log line ran gets no second Enter (t
         t() { [[ $1 == send-keys ]] && echo enter >>"$dbcalls"; return 0; }
         flog() { echo gone >"$work/db.gate"; }
         deliver_brief %9 /dev/null >/dev/null; grep -c enter "$dbcalls" ) )" "1"
+check "#573: sent_or_started stays false while the box holds text under an old limit banner" \
+  "$( ( p=$(pane sos "{\"above\":[\"work\",\"  ⎿  You've hit your session limit · resets 1:10pm (America/New_York)\"]}"); settle
+        t send-keys -t "$p" -l "unsent line"; settle
+        sent_or_started "$(screen "$p")" && echo yes || echo no
+        t kill-window -t "$p" ) )" "no"
 
 echo "launch.sh: a slow or stuck start (#187)"
 : >"$FLEET_LOG"
