@@ -446,6 +446,10 @@ let request = null; // the snapshot's wrap-up, while one is shown
 let native = false; // the snapshot's flag for a native Linux app, which reaches tmux itself (launch.rs NATIVE)
 // The Ledger and the Queue share the right edge, one open at a time. Docked,
 // a panel narrows the wall, and Auto measures again (its ResizeObserver).
+const savePanelWidth = (panel) => (width) =>
+  inTauri
+    ? tauri("set_panel_width", { panel, width }).catch((err) => log.warnRepeat(`panel_width:${panel}`, `set_panel_width ${panel} failed`, err))
+    : Promise.resolve();
 const edge = createEdge();
 const drawer = createDrawer({
   dialog: document.getElementById("ledger"),
@@ -455,6 +459,7 @@ const drawer = createDrawer({
   sessions: () => sessions,
   cast: () => cast,
   fetchToday: todayLedger,
+  saveWidth: savePanelWidth("ledger"),
   onResized: () => showDensity(),
 });
 let latest = { state: "empty", cards: [] }; // the last render's, which a deferred sync reads
@@ -469,10 +474,12 @@ const rooms = createRooms({
     agentsPill: document.getElementById("agents-pill"),
     tabs: document.getElementById("phone-tabs"),
     room: document.getElementById("needs-room"),
+    tab: document.getElementById("needs-tab"),
     toast: document.getElementById("room-toast"),
     picker: document.getElementById("needs-layout"),
     note: document.getElementById("layout-note"),
   },
+  edge,
   cards: () => latest.cards,
   makeFace: (c) => {
     if (!c.face) return null;
@@ -507,6 +514,8 @@ const rooms = createRooms({
     }
     return inTauri ? tauri("set_needs_layout", { layout }) : Promise.resolve();
   },
+  savePanelWidth: savePanelWidth("needs"),
+  onPanelResized: () => showDensity(),
   onLayout: () => {
     render();
     showDensity();
@@ -1810,6 +1819,10 @@ new ResizeObserver(() => {
 }).observe(wall);
 if (inTauri) window.__TAURI__.core.invoke("get_wall_density").then(choose, () => {});
 if (inTauri) tauri("get_needs_layout").then((l) => rooms.setLayout(l), () => {});
+if (inTauri) {
+  tauri("get_panel_width", { panel: "ledger" }).then((w) => drawer.setWidth(w), () => {});
+  tauri("get_panel_width", { panel: "needs" }).then((w) => rooms.setPanelWidth(w), () => {});
+}
 
 // Amber Door's panel stands beside the wall, under the bar (a standard side sheet):
 // its top follows the bar's foot as the bar wraps or scrolls away.

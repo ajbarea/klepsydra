@@ -143,90 +143,119 @@ const store = (key, value) => {
 };
 
 /**
- * Wire the panel `name` to its `dialog`, toggled by `button` and reopened
- * from `tab`. The dialog holds `#<name>-title` and the elements classed
- * `<name>-body`, `-content` (one or more: the text size zooms each, and a
- * `.list-scroll` around one keeps its place), `-resize`, `-smaller`,
- * `-reset`, `-larger`, `-full`, `-close` and `-live`. `returnTo()` is where focus goes when the
- * panel is closed (Close, Esc, the button); `onOpen()` runs as it opens and
- * `onShut()` once it has shut; `onLayout()` on every layout; `onResized()`
- * once at the end of a drag of the separator.
+ * Wire the panel `name` to its `dialog` (a `<dialog>` or a region element such
+ * as `#needs-room`), toggled by `button` and reopened from `tab`. The container
+ * holds `#<name>-title` and elements classed `<name>-body`, `-content` (optional:
+ * the text size zooms each, and a `.list-scroll` around one keeps its place),
+ * `-resize`, `-smaller`, `-reset`, `-larger`, `-full`, `-close` and `-live`.
+ * `active()` says whether the panel is currently acting as an edge panel;
+ * `persistView` keeps the view across loads; `wireButton` wires clicks on
+ * `button`; `saveWidth(w)` persists width to `prefs.json`; `returnTo()` is
+ * where focus goes when closed (Close, Esc, the button); `onOpen()`, `onShut()`,
+ * `onLayout()`, and `onResized()` run at those lifecycle points.
  */
 export function createSidePanel({
   name, dialog, button, tab, edge = createEdge(), returnTo = () => button,
+  active = () => true, persistView = true, wireButton = true, saveWidth = () => {},
   onOpen = () => {}, onShut = () => {}, onLayout = () => {}, onResized = () => {},
 }) {
+  const isDialog = typeof dialog.showModal === "function";
   const STORE = storeKeys(name);
   const part = (role) => dialog.querySelector(`.${name}-${role}`);
   const body = part("body");
   const content = part("content");
   // A panel of several lists zooms each, and keeps each one's scroll place.
   const contents = [...dialog.querySelectorAll(`.${name}-content`)];
-  const scrollers = () => [body, ...contents.map((c) => c.closest(".list-scroll")).filter(Boolean)];
+  const scrollers = () => [body, ...contents.map((c) => c.closest(".list-scroll")).filter(Boolean)].filter(Boolean);
   const live = part("live");
   const grip = part("resize");
   const smaller = part("smaller");
   const larger = part("larger");
   const reset = part("reset");
   const fill = part("full");
+  const allowFull = Boolean(fill);
   const title = dialog.querySelector(`#${name}-title`);
   const wide = matchMedia(`(min-width: ${DOCK_MIN_PX}px)`);
   // Reopened at start only where it docks: a dialog over the wall at launch
   // would hide it. A narrow start keeps the stored view for a wide one. The
   // phone has no button to open a panel, so it never starts one open.
-  let view = wide.matches && !served ? parseView(stored(STORE.view), stored(STORE.open)) : "shut";
+  let view = persistView && active() && wide.matches && !served ? parseView(stored(STORE.view), stored(STORE.open)) : "shut";
   // The width asked for; a narrow window shows less of it without forgetting it.
   let wanted = clampWidth(Number(stored(STORE.width) ?? NaN), Infinity);
   let width = clampWidth(wanted, innerWidth);
   let preview = null; // where a held drag would land
 
-  const docked = () => view === "docked" && wide.matches;
+  const docked = () => active() && view === "docked" && wide.matches;
+  const snapTo = (w) => {
+    const s = snap(w, innerWidth);
+    return !allowFull && s === "full" ? "docked" : s;
+  };
 
   function layout() {
     width = clampWidth(wanted, innerWidth);
     const max = clampWidth(Infinity, innerWidth);
+    const on = active();
     dialog.style.setProperty("--panel-w", `${width}px`);
     const taking = docked() && preview !== "shut";
     // One panel docks at a time, so the docked one sets the wall's room.
     if (taking) document.documentElement.style.setProperty("--dock-w", `${width}px`);
     document.body.classList.toggle(`${name}-docked`, taking);
-    // The tab needs an edge to spare: none on the phone, in a half-screen
+    // The tab needs an edge to spare: none when inactive, on the phone, in a half-screen
     // window, or while another panel holds the edge.
-    const tabbed = view === "shut" && wide.matches && !served && !edge.othersOpen(api);
+    const tabbed = on && view === "shut" && wide.matches && !served && !edge.othersOpen(api);
     document.body.classList.toggle(`${name}-tabbed`, tabbed);
     tab.hidden = !tabbed;
-    if (preview) dialog.dataset.snap = preview;
+    if (!on) {
+      delete dialog.dataset.mode;
+      delete dialog.dataset.snap;
+    } else if (preview) dialog.dataset.snap = preview;
     else delete dialog.dataset.snap;
-    grip.hidden = !wide.matches;
-    grip.setAttribute("aria-valuemin", String(WIDTH.min));
-    grip.setAttribute("aria-valuemax", String(max));
-    grip.setAttribute("aria-valuenow", String(view === "full" ? max : width));
-    if (view === "full") grip.setAttribute("aria-valuetext", "Full screen");
-    else grip.removeAttribute("aria-valuetext");
-    fill.setAttribute("aria-pressed", String(view === "full"));
-    button.setAttribute("aria-expanded", String(view !== "shut"));
+    if (grip) {
+      grip.hidden = !on || !wide.matches;
+      grip.setAttribute("aria-valuemin", String(WIDTH.min));
+      grip.setAttribute("aria-valuemax", String(max));
+      grip.setAttribute("aria-valuenow", String(view === "full" ? max : width));
+      if (view === "full") grip.setAttribute("aria-valuetext", "Full screen");
+      else grip.removeAttribute("aria-valuetext");
+    }
+    fill?.setAttribute("aria-pressed", String(view === "full"));
+    if (on) button.setAttribute("aria-expanded", String(view !== "shut"));
+    else if (!wireButton) button.removeAttribute("aria-expanded");
     onLayout();
   }
 
-  /** Show the dialog in the mode the view and the window's width call for; `focus` as setView's. */
+  /** Show the panel in the mode the view and the window's width call for; `focus` as setView's. */
   function place(focus) {
+    if (!active()) {
+      if (isDialog && dialog.open) dialog.close();
+      layout();
+      return;
+    }
     const before = document.activeElement;
-    if (dialog.open) dialog.close();
+    if (isDialog && dialog.open) dialog.close();
     if (view !== "shut") {
-      const mode = view === "full" ? "full" : wide.matches ? "docked" : "modal";
-      if (mode === "docked") dialog.show();
-      else dialog.showModal();
+      const mode = view === "full" && allowFull ? "full" : wide.matches ? "docked" : isDialog ? "modal" : "overlay";
+      if (isDialog) {
+        if (mode === "docked") dialog.show();
+        else dialog.showModal();
+      } else {
+        dialog.hidden = false;
+      }
       dialog.dataset.mode = mode;
       layout();
       // show() focuses the first control inside; a panel reopened at load
-      // leaves focus where it was, and a modal one starts at its title.
-      if (focus === true || (!focus && mode !== "docked")) title.focus();
+      // leaves focus where it was, and a modal/overlay one starts at its title.
+      if (focus === true || (!focus && mode !== "docked")) title?.focus();
       else if (focus) focus.focus();
       else if (dialog.contains(document.activeElement)) {
         if (before && !dialog.contains(before)) before.focus({ preventScroll: true });
         if (dialog.contains(document.activeElement)) document.activeElement.blur();
       }
       return;
+    }
+    if (!isDialog) {
+      dialog.hidden = true;
+      delete dialog.dataset.mode;
     }
     layout();
   }
@@ -241,9 +270,10 @@ export function createSidePanel({
   function setView(next, focus = next !== "shut", quiet = false) {
     const had = dialog.contains(document.activeElement);
     const was = view;
-    if (next !== "shut") edge.opening(api);
-    view = next;
-    store(STORE.view, view);
+    const to = !allowFull && next === "full" ? "docked" : next;
+    if (to !== "shut") edge.opening(api);
+    view = to;
+    if (persistView) store(STORE.view, view);
     if (was === "shut" && view !== "shut") onOpen();
     place(view === "shut" ? false : focus);
     edge.changed(api);
@@ -256,29 +286,46 @@ export function createSidePanel({
   /** The button's toggle: shut opens docked; open shuts, focus staying on the button. */
   const toggle = () => (view === "shut" ? setView("docked") : setView("shut", button));
 
-  button.addEventListener("click", toggle);
+  if (wireButton) button.addEventListener("click", toggle);
   tab.addEventListener("click", () => setView("docked"));
-  fill.addEventListener("click", () => setView(view === "full" ? "docked" : "full", fill));
-  part("close").addEventListener("click", () => setView("shut", returnTo()));
-  // A modal closes itself on Esc; the docked panel shuts on it too, and full
+  fill?.addEventListener("click", () => setView(view === "full" ? "docked" : "full", fill));
+  part("close")?.addEventListener("click", () => setView("shut", returnTo()));
+  // A modal closes itself on Esc; the docked/overlay panel shuts on it too, and full
   // steps back to docked (its keydown default, the modal's cancel, prevented).
   // The close event comes a task later, so one from a switch of mode finds
   // the dialog open again and is ignored.
-  dialog.addEventListener("close", () => {
-    if (view !== "shut" && !dialog.open) setView("shut", returnTo());
-  });
+  if (isDialog) {
+    dialog.addEventListener("close", () => {
+      if (view !== "shut" && !dialog.open) setView("shut", returnTo());
+    });
+  }
   dialog.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
+    if (e.key !== "Escape" || !active() || view === "shut" || behind()) return;
     if (view === "full") setView("docked");
-    else if (!dialog.matches(":modal")) setView("shut", returnTo());
+    else if (!isDialog || !dialog.matches(":modal")) setView("shut", returnTo());
     else return;
     e.preventDefault();
+    e.stopPropagation();
   });
-  // A click on the backdrop lands on the dialog itself, never on its body.
-  dialog.addEventListener("click", (e) => {
-    if (e.target === dialog && dialog.dataset.mode === "modal") setView("shut", returnTo());
-  });
+  // A click on the backdrop lands on the dialog itself, never on its body;
+  // for a non-dialog overlay, a click on the wall outside the bar and panel shuts it.
+  if (isDialog) {
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog && dialog.dataset.mode === "modal") setView("shut", returnTo());
+    });
+  } else {
+    document.addEventListener("pointerdown", (e) => {
+      if (!active() || view === "shut" || dialog.dataset.mode !== "overlay") return;
+      if (dialog.contains(e.target) || button.contains(e.target)) return;
+      if (e.target.closest?.(".bar, #room-toast, dialog[open], [popover]:popover-open, [role='menu']:not([hidden])")) return;
+      setView("shut", returnTo());
+    });
+  }
   wide.addEventListener("change", () => {
+    if (!active()) {
+      layout();
+      return;
+    }
     const had = dialog.contains(document.activeElement);
     place(had);
     edge.changed(api);
@@ -295,21 +342,30 @@ export function createSidePanel({
   function resizeTo(w) {
     wanted = clampWidth(w, innerWidth);
     store(STORE.width, String(wanted));
+    saveWidth(wanted);
     layout();
   }
   // A drag moves the panel once a frame and settles once, on release: the
   // wall's Auto measure skips the frames in between (`resizing`).
   let resizing = false;
   let frame = 0;
-  grip.addEventListener("keydown", (e) => {
-    const to = separatorKey(e.key, view, width, clampWidth(Infinity, innerWidth));
-    if (!to) return;
+  grip?.addEventListener("keydown", (e) => {
+    if (!active()) return;
+    const raw = separatorKey(e.key, view, width, clampWidth(Infinity, innerWidth));
+    if (!raw) return;
+    const to = !allowFull && raw.view === "full" ? { view: "docked", width: raw.width } : raw;
     e.preventDefault();
     if (to.width !== width) resizeTo(to.width);
     if (to.view !== view) setView(to.view, to.view === "shut" ? tab : grip);
   });
-  grip.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
+  grip?.addEventListener("dblclick", () => {
+    if (!active() || !wide.matches) return;
+    if (view === "full") setView("docked", grip);
+    resizeTo(WIDTH.initial);
+    onResized();
+  });
+  grip?.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !active()) return;
     grip.setPointerCapture(e.pointerId);
     resizing = true;
     const from = wanted; // kept by a drag that snaps, as VS Code keeps a snapped view's size
@@ -321,7 +377,7 @@ export function createSidePanel({
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        preview = snap(reach(), innerWidth);
+        preview = snapTo(reach());
         wanted = preview === "docked" ? clampWidth(reach(), innerWidth) : from;
         layout();
       });
@@ -337,7 +393,7 @@ export function createSidePanel({
       resizing = false;
       preview = null;
       wanted = from;
-      const to = land ? snap(reach(), innerWidth) : view;
+      const to = land ? snapTo(reach()) : view;
       if (to === "docked" && land) resizeTo(reach());
       // A modal's focus would drop to the page as it docks; it stays on the separator.
       // Shut, the separator goes with the panel, so the focus moves to the tab once it shows.
@@ -358,6 +414,7 @@ export function createSidePanel({
   });
 
   const announce = (text) => {
+    if (!live) return;
     live.textContent = "";
     setTimeout(() => {
       live.textContent = text;
@@ -367,6 +424,7 @@ export function createSidePanel({
   // Text size: the content only, by CSS zoom, so tables and buttons grow with the words.
   let size = textSize(stored(STORE.text));
   function showText() {
+    if (!smaller || !larger || !reset || !contents.length) return;
     for (const c of contents) c.style.zoom = String(size);
     const pct = `${Math.round(size * 100)}%`;
     reset.textContent = pct;
@@ -375,7 +433,7 @@ export function createSidePanel({
     larger.setAttribute("aria-disabled", String(size === TEXT_SIZES.at(-1)));
   }
   function setText(next) {
-    if (next === size) return;
+    if (next === size || !contents.length) return;
     // Keep the reader's place: the same share of the way down.
     const places = scrollers().map((el) => {
       const range = el.scrollHeight - el.clientHeight;
@@ -387,30 +445,32 @@ export function createSidePanel({
     for (const [el, share] of places) el.scrollTop = share * (el.scrollHeight - el.clientHeight);
     announce(`Text ${Math.round(size * 100)}%`);
   }
-  smaller.addEventListener("click", () => setText(stepText(size, -1)));
-  larger.addEventListener("click", () => setText(stepText(size, 1)));
-  reset.addEventListener("click", () => setText(1));
-  // The keys act while the panel is open, unless another dialog is in front of it.
-  addEventListener("keydown", (e) => {
-    const by = textKey(e);
-    if (by === null || view === "shut" || behind()) return;
-    e.preventDefault();
-    setText(by === 0 ? 1 : stepText(size, by));
-  });
-  // Ctrl+wheel over the panel (not a modal's backdrop), a notch a step; touchpad pinches add up to one.
-  let wheel = null;
-  body.addEventListener(
-    "wheel",
-    (e) => {
-      if (!e.ctrlKey) return;
+  if (smaller && larger && reset && contents.length) {
+    smaller.addEventListener("click", () => setText(stepText(size, -1)));
+    larger.addEventListener("click", () => setText(stepText(size, 1)));
+    reset.addEventListener("click", () => setText(1));
+    // The keys act while the panel is open, unless another dialog is in front of it.
+    addEventListener("keydown", (e) => {
+      const by = textKey(e);
+      if (by === null || !active() || view === "shut" || behind()) return;
       e.preventDefault();
-      const turn = wheelStep(wheel, wheelPixels(e.deltaY, e.deltaMode), e.timeStamp);
-      wheel = turn.state;
-      if (turn.steps) setText(stepText(size, turn.steps));
-    },
-    { passive: false },
-  );
-  showText();
+      setText(by === 0 ? 1 : stepText(size, by));
+    });
+    // Ctrl+wheel over the panel (not a modal's backdrop), a notch a step; touchpad pinches add up to one.
+    let wheel = null;
+    body?.addEventListener(
+      "wheel",
+      (e) => {
+        if (!e.ctrlKey || !active()) return;
+        e.preventDefault();
+        const turn = wheelStep(wheel, wheelPixels(e.deltaY, e.deltaMode), e.timeStamp);
+        wheel = turn.state;
+        if (turn.steps) setText(stepText(size, turn.steps));
+      },
+      { passive: false },
+    );
+    showText();
+  }
 
   const api = {
     dialog,
@@ -423,19 +483,41 @@ export function createSidePanel({
     layout,
     /** Shut by another panel opening: no focus moves. */
     shut: () => setView("shut", false, true),
-    /** Open docked if shut, focusing the title; an open panel keeps its view and takes the focus to its title. */
-    open() {
-      if (view === "shut") setView("docked");
-      else title.focus();
+    /** Open docked (or overlay when narrow) if shut; an open panel keeps its view and focuses `focus` if given. */
+    open(focus = true) {
+      if (!active()) return;
+      if (view === "shut") setView("docked", focus);
+      else if (focus === true) title?.focus();
+      else if (focus instanceof HTMLElement) focus.focus();
     },
-    /** The docked panel's width in px; 0 while it is closed or a dialog. */
+    /** Close the panel and move focus to `focus` (defaults to `returnTo()`). */
+    close(focus = returnTo()) {
+      if (view !== "shut") setView("shut", focus);
+    },
+    /** Re-sync after `active()` changes (e.g. layout switch in Settings). */
+    sync() {
+      if (!active()) {
+        if (view !== "shut") view = "shut";
+        if (isDialog && dialog.open) dialog.close();
+      }
+      layout();
+      edge.changed(api);
+    },
+    /** Apply a saved width loaded asynchronously from prefs.json. */
+    setWidth(w) {
+      if (typeof w !== "number" || !Number.isFinite(w)) return;
+      wanted = clampWidth(w, Infinity);
+      store(STORE.width, String(wanted));
+      layout();
+    },
+    /** The docked panel's width in px; 0 while it is closed or an overlay/dialog. */
     dockedWidth: () => (docked() ? width : 0),
     /** True while the separator is being dragged. */
     get resizing() {
       return resizing;
     },
     get isOpen() {
-      return view !== "shut";
+      return active() && view !== "shut";
     },
     /** The content's text size, 1 for 100%. */
     get textSize() {

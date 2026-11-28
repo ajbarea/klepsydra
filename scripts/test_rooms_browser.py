@@ -40,6 +40,7 @@ HOSTILE = (
 
 STUB = """
 window.__calls = [];
+window.__panelWidths = %(panel_widths)s;
 window.__needsText = %(needs)s;
 window.__layout = %(layout)s;
 const send = (ch, v) => setTimeout(() => ch && ch.onmessage(v), 0);
@@ -59,10 +60,12 @@ window.__TAURI__ = { core: {
     if (cmd === 'plugin:log|log') return Promise.resolve();
     if (cmd === 'get_wall_density') return Promise.resolve('auto');
     if (cmd === 'get_needs_layout') return Promise.resolve(window.__layout);
+    if (cmd === 'get_panel_width') return Promise.resolve(window.__panelWidths[args.panel] ?? null);
     if (cmd === 'read_usage') return Promise.resolve([]);
     if (cmd === 'engines_status') return Promise.resolve({ claude: [], agy: false, copilot: false });
     if (cmd === 'new_session_prefs') return Promise.resolve({ default: null, last: null });
     window.__calls.push([cmd, JSON.parse(JSON.stringify(args ?? null))]);
+    if (cmd === 'set_panel_width') { window.__panelWidths[args.panel] = args.width; return Promise.resolve(); }
     if (cmd === 'needs_done') {
       // needs.rs remove: only while the file is the text the wall rendered, exactly the lines at `line`.
       if (args.seen !== window.__needsText) return Promise.reject('The Needs you file changed since the wall showed it.');
@@ -144,7 +147,7 @@ STATE = """() => {
 }"""
 
 
-def open_wall(browser, port, layout, width, height, needs, scheme="dark"):
+def open_wall(browser, port, layout, width, height, needs, scheme="dark", panel_widths=None):
     fixture = json.loads((ROOT / "scripts/fixtures/fleet-demo.json").read_text())
     at = fixture.pop("at")
     snapshot = shifted(fixture, int(time.time()) - at)
@@ -154,6 +157,7 @@ def open_wall(browser, port, layout, width, height, needs, scheme="dark"):
     page.add_init_script(
         STUB
         % {
+            "panel_widths": json.dumps(panel_widths or {}),
             "needs": json.dumps(needs),
             "layout": json.dumps(layout),
             "snapshot": json.dumps(snapshot),
@@ -342,6 +346,128 @@ def flow_b(run, page, needs):
 
 def flow_e(run, browser, port, needs):
     page = open_wall(browser, port, "E", 1920, 1080, needs)
+    # 1. Right-edge tabs stacked when shut, clear of cards.
+    shut_e = page.evaluate("""() => {
+      const nt = document.getElementById('needs-tab').getBoundingClientRect();
+      const lt = document.getElementById('ledger-tab').getBoundingClientRect();
+      const cards = [...document.querySelectorAll('#wall .card')].map((c) => c.getBoundingClientRect());
+      return {
+        nt: [Math.round(nt.left), Math.round(nt.top), Math.round(nt.right), Math.round(nt.bottom)],
+        lt: [Math.round(lt.left), Math.round(lt.top), Math.round(lt.right), Math.round(lt.bottom)],
+        tabbed: document.body.classList.contains('needs-tabbed'),
+        cardsRight: Math.round(Math.max(...cards.map((c) => c.right))),
+        wallWidthBefore: Math.round(document.getElementById('wall').getBoundingClientRect().width),
+      };
+    }""")
+    run.check(
+        shut_e["tabbed"]
+        and shut_e["nt"][2] == 1920
+        and shut_e["nt"][2] - shut_e["nt"][0] >= 24
+        and shut_e["lt"][3] < shut_e["nt"][1]
+        and shut_e["cardsRight"] <= shut_e["nt"][0],
+        "E: shut edge tabs stack cleanly clear of the cards",
+        shut_e,
+    )
+    # 2. Clicking the edge tab opens docked (push), complementary landmark, no dimming, wall reflows.
+    page.click("#needs-tab")
+    page.wait_for_timeout(150)
+    docked_e = page.evaluate("""() => {
+      const r = document.getElementById('needs-room');
+      const rb = r.getBoundingClientRect();
+      const wb = document.getElementById('wall').getBoundingClientRect();
+      const grip = r.querySelector('.needs-resize').getBoundingClientRect();
+      return {
+        mode: r.dataset.mode,
+        role: r.getAttribute('role'),
+        docked: document.body.classList.contains('needs-docked'),
+        width: Math.round(rb.width),
+        wallWidth: Math.round(wb.width),
+        wallRight: Math.round(wb.right),
+        panelLeft: Math.round(rb.left),
+        filter: getComputedStyle(document.getElementById('wall')).filter,
+        gripWidth: Math.round(grip.width),
+        gripVis: r.querySelector('.needs-resize').checkVisibility(),
+        ledgerTabVis: document.getElementById('ledger-tab').checkVisibility(),
+        hscroll: document.documentElement.scrollWidth > innerWidth,
+      };
+    }""")
+    run.check(
+        docked_e["mode"] == "docked"
+        and docked_e["role"] == "complementary"
+        and page.get_by_role("complementary", name="Needs you").count() == 1
+        and docked_e["docked"]
+        and docked_e["width"] == 480
+        and docked_e["wallWidth"] < shut_e["wallWidthBefore"]
+        and docked_e["wallRight"] <= docked_e["panelLeft"]
+        and docked_e["filter"] == "none"
+        and docked_e["gripWidth"] >= 10
+        and docked_e["gripVis"]
+        and not docked_e["ledgerTabVis"]
+        and not docked_e["hscroll"],
+        "E: docked panel pushes and reflows wall without dimming, wide grab zone, complementary role",
+        docked_e,
+    )
+    # 3. Drag resize + limits + double-click reset + prefs persistence.
+    grip = page.locator("#needs-room .needs-resize").bounding_box()
+    gx, gy = grip["x"] + grip["width"] / 2, grip["y"] + 250
+    page.mouse.move(gx, gy)
+    page.mouse.down()
+    page.mouse.move(1920 - 650, gy, steps=12)
+    page.mouse.up()
+    page.wait_for_timeout(150)
+    dragged = page.evaluate("""() => ({
+      width: Math.round(document.getElementById('needs-room').getBoundingClientRect().width),
+      saved: window.__panelWidths.needs,
+      wallRight: Math.round(document.getElementById('wall').getBoundingClientRect().right),
+      panelLeft: Math.round(document.getElementById('needs-room').getBoundingClientRect().left),
+    })""")
+    run.check(
+        abs(dragged["width"] - 650) <= 2 and abs(dragged["saved"] - 650) <= 2 and dragged["wallRight"] <= dragged["panelLeft"],
+        "E: drag resize updates width, pushes wall, and persists via set_panel_width",
+        dragged,
+    )
+    # Double-click resets width to 480.
+    grip = page.locator("#needs-room .needs-resize").bounding_box()
+    page.mouse.dblclick(grip["x"] + grip["width"] / 2, grip["y"] + 250)
+    page.wait_for_timeout(150)
+    dbl = page.evaluate("({ w: Math.round(document.getElementById('needs-room').getBoundingClientRect().width), saved: window.__panelWidths.needs })")
+    run.check(dbl["w"] == 480 and dbl["saved"] == 480, "E: double-click on handle resets width to 480", dbl)
+    # Keyboard resize on focused handle (ArrowLeft, Home to min, End to max).
+    page.locator("#needs-room .needs-resize").focus()
+    page.keyboard.press("ArrowLeft")
+    page.keyboard.press("ArrowLeft")
+    kbd_up = page.evaluate("Math.round(document.getElementById('needs-room').getBoundingClientRect().width)")
+    page.keyboard.press("Home")
+    kbd_min = page.evaluate("({ w: Math.round(document.getElementById('needs-room').getBoundingClientRect().width), sw: document.querySelector('#needs-room .needs-body').scrollWidth - document.querySelector('#needs-room .needs-body').clientWidth })")
+    page.keyboard.press("End")
+    kbd_max = page.evaluate("({ w: Math.round(document.getElementById('needs-room').getBoundingClientRect().width), mode: document.getElementById('needs-room').dataset.mode })")
+    run.check(
+        kbd_up == 512 and kbd_min["w"] == 320 and kbd_min["sw"] <= 0 and kbd_max["w"] == 900 and kbd_max["mode"] == "docked",
+        "E: keyboard resize steps, hits min (320, no overflow) and max (900, stays docked)",
+        [kbd_up, kbd_min, kbd_max],
+    )
+    # 4. Escape closes and returns focus to #needs-pill; pill toggles open/shut.
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(100)
+    esc = page.evaluate("({ view: document.body.dataset.view, active: document.activeElement?.id, docked: document.body.classList.contains('needs-docked') })")
+    run.check(esc["view"] == "agents" and esc["active"] == "needs-pill" and not esc["docked"], "E: Escape closes panel and returns focus to toggle", esc)
+    page.click("#needs-pill")
+    page.wait_for_timeout(100)
+    toggled_on = page.evaluate("document.body.dataset.view")
+    page.click("#needs-pill")
+    page.wait_for_timeout(100)
+    toggled_off = page.evaluate("({ view: document.body.dataset.view, active: document.activeElement?.id })")
+    run.check(toggled_on == "needs" and toggled_off["view"] == "agents" and toggled_off["active"] == "needs-pill", "E: header pill toggles panel open and shut", [toggled_on, toggled_off])
+    # 5. Edge exclusivity with Ledger.
+    page.click("#needs-pill")
+    page.wait_for_timeout(100)
+    page.click("#ledger-open")
+    page.wait_for_timeout(150)
+    ledger_took = page.evaluate("({ ledgerOpen: document.getElementById('ledger').open, view: document.body.dataset.view, needsTab: document.getElementById('needs-tab').checkVisibility() })")
+    run.check(ledger_took["ledgerOpen"] and ledger_took["view"] == "agents" and not ledger_took["needsTab"], "E: opening Ledger shuts Needs you and hides its tab", ledger_took)
+    page.click("#ledger-open")
+    page.wait_for_timeout(100)
+    # 6. Auto-open on newly blocked session, and never while typing.
     snap = json.loads(json.dumps(page.snapshot))
     victim = next(x for x in snap["sessions"] if x["status"] == "working")
     victim["status"] = "needs_you"
@@ -364,14 +490,68 @@ def flow_e(run, browser, port, needs):
     run.check(s["view"] == "agents" and s["active"] == "typing", "E: never while typing (a toast says it instead)", [s["view"], s["active"], s["toast"]])
     page.close()
 
+    # 7. Saved width from prefs.json loads on startup + 1280 push limit (580 max leaving 700 for wall).
+    page1280 = open_wall(browser, port, "E", 1280, 800, needs, panel_widths={"needs": 540})
+    page1280.click("#needs-pill")
+    page1280.wait_for_timeout(150)
+    at1280 = page1280.evaluate("({ w: Math.round(document.getElementById('needs-room').getBoundingClientRect().width), mode: document.getElementById('needs-room').dataset.mode, wallRight: Math.round(document.getElementById('wall').getBoundingClientRect().right), panelLeft: Math.round(document.getElementById('needs-room').getBoundingClientRect().left), hscroll: document.documentElement.scrollWidth > innerWidth })")
+    page1280.locator("#needs-room .needs-resize").focus()
+    page1280.keyboard.press("End")
+    max1280 = page1280.evaluate("Math.round(document.getElementById('needs-room').getBoundingClientRect().width)")
+    run.check(at1280["w"] == 540 and at1280["mode"] == "docked" and at1280["wallRight"] <= at1280["panelLeft"] and not at1280["hscroll"] and max1280 == 580, "E at 1280: loads saved width from prefs, pushes wall, max leaves 700 px for cards", [at1280, max1280])
+    page1280.close()
+
+    # 8. Narrow desktop (< 1200, > 640): overlay mode, handle hidden, wall dimmed, Escape returns focus.
+    page945 = open_wall(browser, port, "E", 945, 1000, needs)
+    page945.click("#needs-pill")
+    page945.wait_for_timeout(200)
+    ov = page945.evaluate("""() => {
+      const r = document.getElementById('needs-room');
+      const rb = r.getBoundingClientRect();
+      const wb = document.getElementById('wall').getBoundingClientRect();
+      return {
+        mode: r.dataset.mode,
+        docked: document.body.classList.contains('needs-docked'),
+        gripVis: r.querySelector('.needs-resize').checkVisibility(),
+        wallWidth: Math.round(wb.width),
+        wallRight: Math.round(wb.right),
+        panelLeft: Math.round(rb.left),
+        filter: getComputedStyle(document.getElementById('wall')).filter,
+      };
+    }""")
+    page945.keyboard.press("Escape")
+    page945.wait_for_timeout(100)
+    ov_esc = page945.evaluate("({ view: document.body.dataset.view, active: document.activeElement?.id })")
+    run.check(
+        ov["mode"] == "overlay" and not ov["docked"] and not ov["gripVis"] and ov["wallRight"] > ov["panelLeft"] and ov["filter"] != "none" and ov_esc["view"] == "agents" and ov_esc["active"] == "needs-pill",
+        "E at 945: overlays dimmed wall without pushing, hides resize handle, Escape returns focus",
+        [ov, ov_esc],
+    )
+    page945.close()
+
+
+def capture_amber_shots(browser, port, needs, out_dir):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for width, height in [(1920, 1080), (1280, 800), (450, 900)]:
+        for theme in ("dark", "light"):
+            page = open_wall(browser, port, "E", width, height, needs, scheme=theme)
+            if width > 640:
+                page.click("#needs-pill")
+            else:
+                page.click("#phone-tabs [data-view=needs]")
+            page.wait_for_timeout(250)
+            page.screenshot(path=str(out_dir / f"klepsydra-600-amber-door-{width}-{theme}.png"))
+            page.close()
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shots", type=pathlib.Path)
+    ap.add_argument("--amber-shots", type=pathlib.Path)
     ap.add_argument("--needs", type=pathlib.Path)
     args = ap.parse_args()
     base = scrub(args.needs.read_text()) if args.needs else (ROOT / "scripts/fixtures/needs-demo.md").read_text()
-    needs = base.replace("## When convenient\n", "## When convenient\n\n" + HOSTILE, 1) if not args.shots else base
+    needs = base.replace("## When convenient\n", "## When convenient\n\n" + HOSTILE, 1) if not (args.shots or args.amber_shots) else base
     if args.shots:
         args.shots.mkdir(parents=True, exist_ok=True)
     run = Run()
@@ -379,7 +559,10 @@ def main():
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()
-            checks(run, browser, port, needs, args.shots)
+            if args.amber_shots:
+                capture_amber_shots(browser, port, needs, args.amber_shots)
+            else:
+                checks(run, browser, port, needs, args.shots)
             browser.close()
     finally:
         httpd.shutdown()

@@ -80,21 +80,6 @@
   </section>
   <h1 id="wall-title" class="visually-hidden">Claude Code sessions</h1>
   <section id="wall" class="wall" aria-labelledby="wall-title" tabindex="-1"></section>
-  <section id="needs-room" class="needs-room" aria-labelledby="needs-title" tabindex="-1" hidden>
-    <header class="ny-head">
-      <h2 id="needs-title">Needs you</h2>
-      <p class="ny-sub"></p>
-    </header>
-    <p class="ny-problem" role="status" hidden></p>
-    <p class="ny-next" hidden></p>
-    <div class="ny-focus" hidden></div>
-    <div class="ny-groups"></div>
-    <div class="ny-clear" hidden>
-      <p class="ny-clear-title">Nothing waits on you.</p>
-      <p class="ny-clear-sub">New asks and sessions waiting on you land here first.</p>
-    </div>
-    <p class="ny-keys" aria-hidden="true"><kbd>J</kbd><kbd>K</kbd> move · <kbd>O</kbd> open · <kbd>C</kbd> copy link · <kbd>E</kbd> done · <kbd>U</kbd> undo · <kbd>Esc</kbd> back</p>
-  </section>
   <section id="empty" class="empty" aria-labelledby="empty-title" hidden>
     <img class="keeper" alt="" />
     <h2 id="empty-title" tabindex="-1">All quiet.</h2>
@@ -118,6 +103,27 @@
     <p class="queue-live visually-hidden" role="status"></p>
   </section>
   </main>
+  <section id="needs-room" class="needs-room" aria-labelledby="needs-title" tabindex="-1" hidden>
+    <div class="needs-resize" role="separator" aria-orientation="vertical" aria-label="Needs you panel width" aria-controls="needs-room" tabindex="0" hidden></div>
+    <div class="needs-body">
+      <header class="ny-head">
+        <h2 id="needs-title" tabindex="-1">Needs you</h2>
+        <p class="ny-sub"></p>
+        <button type="button" class="needs-close" hidden>Close</button>
+      </header>
+      <p class="ny-problem" role="status" hidden></p>
+      <p class="ny-next" hidden></p>
+      <div class="ny-focus" hidden></div>
+      <div class="ny-groups"></div>
+      <div class="ny-clear" hidden>
+        <p class="ny-clear-title">Nothing waits on you.</p>
+        <p class="ny-clear-sub">New asks and sessions waiting on you land here first.</p>
+      </div>
+      <p class="ny-keys" aria-hidden="true"><kbd>J</kbd><kbd>K</kbd> move · <kbd>O</kbd> open · <kbd>C</kbd> copy link · <kbd>E</kbd> done · <kbd>U</kbd> undo · <kbd>Esc</kbd> back</p>
+      <p class="needs-live visually-hidden" role="status"></p>
+    </div>
+  </section>
+  <button type="button" id="needs-tab" class="needs-tab" aria-label="Open Needs you" aria-controls="needs-room" aria-expanded="false" title="Open Needs you" hidden>Needs you</button>
   <p id="live" class="visually-hidden" aria-live="polite"></p>
   <dialog id="portrait" aria-labelledby="portrait-name">
     <img class="full" alt="" />

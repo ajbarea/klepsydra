@@ -94,7 +94,7 @@ const FIGURES = (totals) => {
  * character theme now worn, `fetchToday(session)` the ledger_today view;
  * `onResized()` runs once at the end of a drag of the separator.
  */
-export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchToday, onResized }) {
+export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchToday, onResized, saveWidth }) {
   const content = dialog.querySelector(".ledger-content");
   const dayLabel = dialog.querySelector(".ledger-day");
   let filter = null; // a session id, or null for all
@@ -362,7 +362,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   }
 
   const panel = createSidePanel({
-    name: "ledger", dialog, button, tab, edge, onResized,
+    name: "ledger", dialog, button, tab, edge, onResized, saveWidth,
     // Focus goes back to what opened it, or to the Ledger button once that is gone.
     returnTo: () => (usable(opener) ? opener : button),
     onOpen: start,
@@ -379,6 +379,7 @@ export function createDrawer({ dialog, button, tab, edge, sessions, cast, fetchT
   return {
     /** Paint the last read again, in the theme now worn: a theme switch reads nothing. */
     repaint: () => paint(),
+    setWidth: (w) => panel.setWidth(w),
     /** Open for all sessions, or for one `session`; `from` is the button to give focus back to. */
     open(session, from) {
       filter = session ?? null;

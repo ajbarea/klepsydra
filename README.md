@@ -1366,7 +1366,7 @@ sessions and points to the app for the to-do file.
 |---|---|---|
 | **Two rooms** (default) | a full-page list, every row with its detail and links | lanes Blocked, Working, Finished, Idle |
 | **Inbox and Floor** | one line a row; the focused row opens to its detail | lanes Working, Needs you, Finished, Idle; a blocked card links to its row |
-| **Amber Door** | a panel a third of the screen wide over the dimmed wall, the focused ask large on top | the wall as it is |
+| **Amber Door** | a docked right-edge panel (`sidepanel.js`), resizable from its inner edge, that pushes the wall on wide screens and overlays on narrow ones; the focused ask large on top | the wall as it is, reflowing into the space left |
 
 When a session blocks or finishes while you are in Needs you, a toast names
 it, and **Enter** shows its card. The view never switches itself, except in
