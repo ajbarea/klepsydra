@@ -891,6 +891,8 @@ fn main() {
             fleet::set_wall_density,
             fleet::get_needs_layout,
             fleet::set_needs_layout,
+            fleet::get_panel_width,
+            fleet::set_panel_width,
             fleet::needs_done,
             fleet::needs_undo,
             fleet::needs_open,

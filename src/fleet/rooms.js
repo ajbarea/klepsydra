@@ -7,6 +7,7 @@ import { build } from "./queue.js";
 import { dueLabel, dueNow, isTodaySection, needsModel } from "./needs.js";
 import { press, say, setOff, syncChildren } from "./dom.js";
 import { startedNeeding } from "./model.js";
+import { createSidePanel } from "./sidepanel.js";
 
 export const LAYOUTS = ["B", "D", "E"];
 export const DEFAULT_LAYOUT = "B";
@@ -175,6 +176,7 @@ export function createRooms({
   doc = document,
   body = document.body,
   nodes,
+  edge = null,
   cards = () => [],
   makeFace = () => null,
   focusCard = () => {},
@@ -183,16 +185,19 @@ export function createRooms({
   copy = (text) => navigator.clipboard.writeText(text),
   savedLayout = DEFAULT_LAYOUT,
   saveLayout = () => Promise.resolve(),
+  savePanelWidth = () => {},
+  onPanelResized = () => {},
   onLayout = () => {},
   now = () => new Date(),
 }) {
-  const { needsPill, agentsPill, tabs, room, toast, picker, note } = nodes;
+  const { needsPill, agentsPill, tabs, room, tab, toast, picker, note } = nodes;
   const groupsBox = room.querySelector(".ny-groups");
   const sub = room.querySelector(".ny-sub");
   const problemLine = room.querySelector(".ny-problem");
   const nextLine = room.querySelector(".ny-next");
   const clear = room.querySelector(".ny-clear");
   const focusBox = room.querySelector(".ny-focus");
+  const closeButton = room.querySelector(".needs-close");
   const writer = invoke ? createDone(invoke) : null;
 
   let layout = parseLayout(savedLayout);
@@ -204,6 +209,7 @@ export function createRooms({
   let before = null; // statuses at the last look
   let toastTimer = 0;
   let toastJump = null; // the session id a jump toast names
+  let panel = null;
 
   const blocked = () => cards().filter((c) => isBlocked(c.status));
   const shownItems = () => needs.items.filter((i) => !hidden.has(i.key));
@@ -220,6 +226,7 @@ export function createRooms({
     needsPill.querySelector(".rp-count").textContent = String(n);
     needsPill.classList.toggle("is-amber", n > 0);
     needsPill.setAttribute("aria-label", `Needs you, ${n === 0 ? "all clear" : n}`);
+    if (tab) tab.classList.toggle("is-amber", n > 0);
     agentsPill.querySelector(".rp-count").textContent = `${working} working`;
     for (const [pill, name] of [
       [needsPill, "needs"],
@@ -238,7 +245,11 @@ export function createRooms({
   function paintBody() {
     body.dataset.layout = layout;
     body.dataset.view = view;
-    room.hidden = view !== "needs";
+    const isE = layout === "E";
+    if (isE) room.setAttribute("role", "complementary");
+    else room.removeAttribute("role");
+    if (closeButton) closeButton.hidden = !isE;
+    if (!panel || !isE) room.hidden = view !== "needs";
     if (picker) picker.value = layout;
   }
 
@@ -432,10 +443,14 @@ export function createRooms({
     if (view === "needs") paintRoom();
   }
 
-  function setView(next, { focus = true } = {}) {
+  function setView(next, { focus = true, focusTo = null } = {}) {
     view = next === "needs" ? "needs" : "agents";
     paint();
-    if (view === "needs" && focus) focusRow(focusKey) ?? room.focus({ preventScroll: true });
+    if (panel && layout === "E") {
+      if (view === "needs") panel.open(false);
+      else panel.close(focusTo ?? needsPill);
+    }
+    if (view === "needs" && focus) focusRow(focusKey) ?? panel?.title?.focus({ preventScroll: true }) ?? room.focus({ preventScroll: true });
   }
 
   function focusRow(key) {
@@ -645,8 +660,8 @@ export function createRooms({
     if (swipeDone(dx, dy)) markDone(shownItems().find((i) => i.key === t.row.dataset.key));
   });
 
-  needsPill.addEventListener("click", () => setView(layout === "D" && view === "needs" ? "agents" : "needs"));
-  agentsPill.addEventListener("click", () => setView("agents"));
+  needsPill.addEventListener("click", () => setView((layout === "D" || layout === "E") && view === "needs" ? "agents" : "needs", { focusTo: needsPill }));
+  agentsPill.addEventListener("click", () => setView("agents", { focusTo: room.contains(doc.activeElement) ? agentsPill : false }));
   for (const t of tabs.querySelectorAll("button")) t.addEventListener("click", () => setView(t.dataset.view));
   picker?.addEventListener("change", () => setLayout(picker.value, true));
 
@@ -654,6 +669,10 @@ export function createRooms({
     const was = layout;
     layout = parseLayout(next);
     if (focusBox) delete focusBox.dataset.key;
+    if (panel) {
+      if (layout === "E" && view === "needs") panel.open(false);
+      else panel.sync();
+    }
     paint();
     if (save && layout !== was)
       Promise.resolve()
@@ -674,8 +693,9 @@ export function createRooms({
     const act = keyAction(e, { view, typing: typingIn(a), modal: modalOpen(), control: onControl(a), jump: Boolean(toastJump) });
     if (!act) return;
     e.preventDefault();
-    if (act === "needs") setView(layout === "D" && view === "needs" ? "agents" : "needs");
-    else if (act === "agents" || act === "back") setView("agents");
+    if (act === "needs") setView((layout === "D" || layout === "E") && view === "needs" ? "agents" : "needs", { focusTo: needsPill });
+    else if (act === "agents") setView("agents", { focusTo: room.contains(a) ? agentsPill : false });
+    else if (act === "back") setView("agents", { focusTo: needsPill });
     else if (act === "jump") jumpTo(toastJump);
     else if (act === "down") step(1);
     else if (act === "up") step(-1);
@@ -691,6 +711,34 @@ export function createRooms({
       else if (item) showToast("This item has no link to copy.");
     }
   });
+
+  if (tab) {
+    panel = createSidePanel({
+      name: "needs",
+      dialog: room,
+      button: needsPill,
+      tab,
+      edge: edge ?? undefined,
+      active: () => layout === "E",
+      persistView: false,
+      wireButton: false,
+      saveWidth: savePanelWidth,
+      returnTo: () => needsPill,
+      onOpen: () => {
+        if (view !== "needs") {
+          view = "needs";
+          paint();
+        }
+      },
+      onShut: () => {
+        if (view === "needs") {
+          view = "agents";
+          paint();
+        }
+      },
+      onResized: onPanelResized,
+    });
+  }
 
   paint();
 
@@ -730,6 +778,7 @@ export function createRooms({
     },
     setLayout,
     setView,
+    setPanelWidth: (w) => panel?.setWidth(w),
     /** Open Needs you on session `id`'s blocked row. */
     showBlocked(id) {
       setView("needs", { focus: false });

@@ -4826,6 +4826,46 @@ def theme_renames_the_queue_file_keeper(wall):
     page.close()
 
 
+def amber_door_sidepanel(wall):
+    """Amber Door (#600) shares sidepanel.js with the Ledger: docked push at
+    1920, Auto density re-measures, double-click resets width, overlay at 945."""
+    page = wall.open(1920, 1000, 8, query="&layout=E")
+    before = page.evaluate(STATE)
+    page.click("#needs-tab")
+    page.wait_for_timeout(SETTLE_MS)
+    docked = page.evaluate(STATE)
+    wall.check(
+        before["density"] == "comfortable"
+        and docked["density"] == "compact"
+        and not docked["scrolls"]
+        and page.evaluate("document.body.classList.contains('needs-docked')"),
+        "Amber Door docked narrows the wall so Auto re-measures to compact without scrolling",
+        [before, docked],
+    )
+    box = page.locator("#needs-room .needs-resize").bounding_box()
+    drag(page, (box["x"] + box["width"] / 2, box["y"] + 250), 1920 - 660, steps=15)
+    page.mouse.up()
+    page.wait_for_timeout(SETTLE_MS)
+    widened = page.evaluate("localStorage.getItem('klepsydra.needs.width')")
+    box2 = page.locator("#needs-room .needs-resize").bounding_box()
+    page.mouse.dblclick(box2["x"] + box2["width"] / 2, box2["y"] + 250)
+    page.wait_for_timeout(SETTLE_MS)
+    reset = page.evaluate("localStorage.getItem('klepsydra.needs.width')")
+    wall.check(abs(int(widened or 0) - 660) <= 2 and reset == "480", "Amber Door drag resizes and double-click resets width", [widened, reset])
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(SETTLE_MS)
+    esc = page.evaluate("({ view: document.body.dataset.view, active: document.activeElement?.id })")
+    wall.check(esc["view"] == "agents" and esc["active"] == "needs-pill", "Amber Door Escape shuts and returns focus to the pill", esc)
+    page.close()
+
+    narrow = wall.open(945, 1000, 8, query="&layout=E")
+    narrow.click("#needs-pill")
+    narrow.wait_for_timeout(SETTLE_MS)
+    ov = narrow.evaluate("({ mode: document.getElementById('needs-room').dataset.mode, docked: document.body.classList.contains('needs-docked'), grip: document.querySelector('.needs-resize').checkVisibility() })")
+    wall.check(ov["mode"] == "overlay" and not ov["docked"] and not ov["grip"], "Amber Door at 945 overlays without pushing and hides the resize handle", ov)
+    narrow.close()
+
+
 def main() -> int:
     handler = functools.partial(Quiet, directory=str(ROOT))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)  # a free port
@@ -4950,6 +4990,7 @@ def main() -> int:
             theme_file_that_never_answers,
             theme_retry_waits_before_loading,
             living_backdrop_and_arrival_motifs,
+            amber_door_sidepanel,
         )
         for case in cases:
             if not only or case.__name__ in only:

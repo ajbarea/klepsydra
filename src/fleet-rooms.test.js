@@ -349,6 +349,22 @@ test("the old stacked drawer is gone: no Queue button, edge tab or Ctrl+Alt+B", 
   assert.match(html, /id="agents-pill"[^>]*aria-keyshortcuts="A"/);
 });
 
+test("#600: Amber Door wires the Needs you panel through sidepanel.js with resize handle, close button, and edge tab", () => {
+  const html = read("src/wall.html");
+  const start = html.indexOf('<section id="needs-room"');
+  const room = html.slice(start, html.indexOf("</section>", start));
+  assert.match(room, /role="separator" aria-orientation="vertical" aria-label="Needs you panel width" aria-controls="needs-room"/);
+  assert.match(room, /class="needs-body"/);
+  assert.match(room, /<button type="button" class="needs-close" hidden>Close<\/button>/);
+  assert.match(room, /class="needs-live /);
+  assert.match(html, /<\/section>\s*<button type="button" id="needs-tab" class="needs-tab" aria-label="Open Needs you" aria-controls="needs-room"[^>]*>Needs you<\/button>/);
+  const roomsSrc = read("src/fleet/rooms.js");
+  assert.match(roomsSrc, /createSidePanel\(\{\s*name: "needs"/);
+  assert.match(roomsSrc, /room\.setAttribute\("role", "complementary"\)/);
+  assert.match(read("src/fleet/wall.js"), /get_panel_width/);
+  assert.match(read("src/fleet/wall.js"), /set_panel_width/);
+});
+
 test("no worker's private spec file is tracked", () => {
   const tracked = execFileSync("git", ["ls-files"], { cwd: new URL("..", import.meta.url), encoding: "utf8" }).split("\n");
   assert.deepEqual(tracked.filter((f) => /(^|\/)IMPL-[^/]*\.md$/.test(f)), []);

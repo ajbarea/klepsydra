@@ -523,6 +523,37 @@ pub fn set_wall_density(app: AppHandle, density: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The side panels (`sidepanel.js`) whose docked width is kept in `prefs.json`.
+const PANEL_WIDTH_MIN: u32 = 320;
+const PANEL_WIDTH_MAX: u32 = 900;
+
+fn panel_width_key(panel: &str) -> Result<&'static str, String> {
+    match panel {
+        "ledger" => Ok("ledger_width"),
+        "needs" => Ok("needs_width"),
+        _ => Err(format!("unknown panel {panel:?}; one of ledger, needs")),
+    }
+}
+
+fn panel_width_of(prefs: Option<&serde_json::Map<String, Value>>, panel: &str) -> Option<u32> {
+    let key = panel_width_key(panel).ok()?;
+    let n = prefs?.get(key)?.as_u64()?;
+    let w = u32::try_from(n).ok()?;
+    (PANEL_WIDTH_MIN..=PANEL_WIDTH_MAX)
+        .contains(&w)
+        .then_some(w)
+}
+
+fn panel_width_value(width: u32) -> Result<Value, String> {
+    if (PANEL_WIDTH_MIN..=PANEL_WIDTH_MAX).contains(&width) {
+        Ok(Value::from(width))
+    } else {
+        Err(format!(
+            "panel width {width} out of range ({PANEL_WIDTH_MIN}..={PANEL_WIDTH_MAX})"
+        ))
+    }
+}
+
 /// The wall's saved Needs you layout.
 #[tauri::command]
 pub fn get_needs_layout(app: AppHandle) -> String {
@@ -534,6 +565,23 @@ pub fn get_needs_layout(app: AppHandle) -> String {
 pub fn set_needs_layout(app: AppHandle, layout: String) -> Result<(), String> {
     if !crate::write_pref(&app, LAYOUT_KEY, choice_value("layout", &layout, &LAYOUTS)?) {
         return Err("prefs.json could not be saved, so the layout is not kept.".to_string());
+    }
+    Ok(())
+}
+
+/// The saved docked width of side panel `panel` (`"ledger"` or `"needs"`), if valid.
+#[tauri::command]
+pub fn get_panel_width(app: AppHandle, panel: String) -> Option<u32> {
+    panel_width_of(crate::read_prefs(&app).as_ref(), &panel)
+}
+
+/// Save the docked width of side panel `panel` (`"ledger"` or `"needs"`) in `prefs.json`.
+#[tauri::command]
+pub fn set_panel_width(app: AppHandle, panel: String, width: u32) -> Result<(), String> {
+    let key = panel_width_key(&panel)?;
+    let val = panel_width_value(width)?;
+    if !crate::write_pref(&app, key, val) {
+        return Err("prefs.json could not be saved, so the panel width is not kept.".to_string());
     }
     Ok(())
 }
@@ -683,5 +731,24 @@ mod tests {
         let err = density_value("Compact").unwrap_err();
         assert!(err.contains("auto, comfortable, compact"), "{err}");
         assert!(density_value("").is_err());
+    }
+
+    #[test]
+    fn panel_widths_validate_panel_and_bounds_and_read_back() {
+        assert_eq!(panel_width_of(None, "needs"), None);
+        assert_eq!(panel_width_of(None, "unknown"), None);
+        assert!(panel_width_key("other").is_err());
+        assert!(panel_width_value(319).is_err());
+        assert!(panel_width_value(901).is_err());
+        for (panel, key, w) in [
+            ("ledger", "ledger_width", 480),
+            ("needs", "needs_width", 520),
+        ] {
+            let p = prefs(serde_json::json!({ key: panel_width_value(w).unwrap() }));
+            assert_eq!(panel_width_of(Some(&p), panel), Some(w));
+        }
+        let bad = prefs(serde_json::json!({ "needs_width": 100, "ledger_width": "480" }));
+        assert_eq!(panel_width_of(Some(&bad), "needs"), None);
+        assert_eq!(panel_width_of(Some(&bad), "ledger"), None);
     }
 }

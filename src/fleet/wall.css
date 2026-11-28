@@ -1434,8 +1434,8 @@ button.link:hover:not([aria-disabled="true"]) { background: none; }
   .tools { column-gap: var(--space-2); }
   #ledger-open, #wrapup-open { padding-inline: var(--space-4); }
 }
-/* --panel-w is each panel's docked width (on its dialog), --dock-w the docked one's. */
-body.ledger-docked { padding-right: var(--dock-w); }
+/* --panel-w is each panel's docked width (on its element), --dock-w the docked one's. */
+body:is(.ledger-docked, .needs-docked) { padding-right: var(--dock-w); }
 .ledger {
   position: fixed;
   inset: 0 0 0 auto;
@@ -1452,12 +1452,13 @@ body.ledger-docked { padding-right: var(--dock-w); }
 }
 .ledger[data-mode="modal"] { width: min(600px, 100vw); }
 .ledger::backdrop { background: rgb(0 0 0 / 60%); }
-/* The separator is the panel's left edge: drag it, or focus it and use the arrow keys. */
-.ledger-resize { position: absolute; inset: 0 auto 0 -4px; width: 9px; cursor: col-resize; z-index: 1; touch-action: none; }
-.ledger-resize::after { content: ""; position: absolute; inset: 0 4px 0 4px; background: transparent; }
-.ledger-resize:is(:hover, :focus-visible)::after { background: var(--text-dim); }
-.ledger-resize:focus-visible { outline: 2px solid var(--card-focus); outline-offset: -2px; }
-.ledger[data-mode="modal"] .ledger-resize { display: none; }
+/* The separator is the panel's left edge: drag it, focus it and use arrow keys, or double-click to reset. */
+:is(.ledger-resize, .needs-resize) { position: absolute; inset: 0 auto 0 -6px; width: 12px; cursor: col-resize; z-index: 2; touch-action: none; }
+:is(.ledger-resize, .needs-resize)::after { content: ""; position: absolute; inset: 0 5px 0 5px; background: transparent; }
+:is(.ledger-resize, .needs-resize):is(:hover, :focus-visible)::after { background: var(--text-dim); }
+:is(.ledger-resize, .needs-resize):focus-visible { outline: 2px solid var(--card-focus); outline-offset: -2px; }
+.ledger[data-mode="modal"] .ledger-resize,
+.needs-room[data-mode="overlay"] .needs-resize { display: none; }
 /* Full: a modal over the whole window. A held drag previews where it will land. */
 /* Inset, not 100vw: a classic scrollbar is in 100vw, and the separator would sit off screen. */
 .ledger:is([data-mode="full"], [data-snap="full"]) { inset: 0; width: auto; }
@@ -1468,10 +1469,10 @@ body.ledger-docked { padding-right: var(--dock-w); }
 .ledger-full svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .ledger-full[aria-pressed="true"] { background: var(--button-hover); border-color: var(--text-dim); }
 /* Shut: a tab on the right edge reopens it, 24 px across (WCAG 2.5.8), and the
-   wall's padding keeps it off the cards. Queue's sits mid edge and Ledger's
-   just above it, each as tall as the longer name, so the two stack. */
-:root { --edge-tab: 24px; --tab-h: 72px; }
-.ledger-tab {
+   wall's padding keeps it off the cards. In Amber Door, Needs you sits mid
+   edge and Ledger just above it, so the two stack. */
+:root { --edge-tab: 24px; --tab-h: 88px; }
+:is(.ledger-tab, .needs-tab) {
   position: fixed;
   right: 0;
   top: 50%;
@@ -1482,15 +1483,18 @@ body.ledger-docked { padding-right: var(--dock-w); }
   justify-content: center;
   width: var(--edge-tab);
   height: var(--tab-h);
-  padding: var(--space-5) 0;
+  padding: var(--space-4) 0;
   writing-mode: vertical-rl;
   font-size: 12px;
   border-right: 0;
   border-radius: 8px 0 0 8px;
 }
-.ledger-tab[hidden] { display: none; }
-.ledger-tab:focus-visible { outline-offset: -4px; }
-body.ledger-tabbed .wall { padding-right: max(var(--wall-pad), calc(var(--edge-tab) + var(--space-1))); }
+body[data-layout="E"] .ledger-tab { translate: 0 calc(-150% - var(--space-2)); }
+.needs-tab.is-amber { background: var(--tone-needs); border-color: var(--tone-needs); color: var(--needs-ink); font-weight: 650; }
+.needs-tab.is-amber:hover { background: color-mix(in oklab, var(--tone-needs) 88%, var(--text)); }
+:is(.ledger-tab, .needs-tab)[hidden] { display: none; }
+:is(.ledger-tab, .needs-tab):focus-visible { outline-offset: -4px; }
+body:is(.ledger-tabbed, .needs-tabbed) .wall { padding-right: max(var(--wall-pad), calc(var(--edge-tab) + var(--space-1))); }
 /* A narrow panel puts the tools on a line of their own under the title. */
 .ledger-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-4) var(--space-7); }
 .ledger-head > div:first-child { min-width: 0; flex: 1 1 9rem; }
