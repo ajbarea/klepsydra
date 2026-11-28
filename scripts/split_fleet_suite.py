@@ -103,6 +103,7 @@ TABLE = [
             r"^two accounts: the orchestrator at a limit",
             r"^two accounts: back to the preferred account",
             r"^two accounts: the second folder follows the first$",
+            r"^fleet accounts:",
         ],
     ),
     (

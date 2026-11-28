@@ -16,6 +16,7 @@
 #                                   no echo of PROMPT on screen gives nothing, never another turn's
 #   eng_trust_key           the key that answers a trust dialog
 #   eng_models              the sorted list of available model identifiers (one per line)
+#   eng_usage [NOW]         formatted usage line(s) for the engine
 # The lock is the point: every lane starts with write tools, the shell, MCP and
 # the browser off, and a failure to build the lock starts nothing.
 
@@ -243,4 +244,155 @@ eng_answer_copilot() { # SCREEN [SENT]
     { sub(/[ \t]+$/, ""); a[n++] = $0 }
     END { for (i = 0; i < n; i++) print a[i] }' <<<"$1" | sed -e 's/^ ● //' | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' | sed -e '/./,$!d'
 }
+
+# Probed usage quota from ENGINE: cached in $FLEET_STATE/usage-<engine>.cache
+# with TTL $FLEET_USAGE_TTL (default 300 s). Prints raw output on success,
+# exits 127 if CLI is missing, exits 1 on probe failure / timeout.
+eng_usage_raw() { # ENGINE
+  local eng=$1
+  local fake
+  case $eng in
+    agy) fake=${FLEET_AGY_USAGE-} ;;
+    copilot) fake=${FLEET_COPILOT_USAGE-} ;;
+  esac
+  if [[ -n $fake ]]; then printf '%s\n' "$fake"; return 0; fi
+
+  local cache="${FLEET_STATE:-$HOME/.local/state/fleet-orchestrator}/usage-$eng.cache"
+  local ttl="${FLEET_USAGE_TTL:-300}"
+  local now
+  now=$(date +%s)
+
+  if [[ -f "$cache" ]]; then
+    local mtime
+    mtime=$(stat -c %Y "$cache" 2>/dev/null || echo 0)
+    if (( now - mtime < ttl )); then
+      cat "$cache"
+      return 0
+    fi
+  fi
+
+  if ! eng_has "$eng"; then
+    return 127
+  fi
+
+  local bin out rc=0
+  bin=$(eng_bin "$eng") || return 127
+  local timeout_s="${FLEET_USAGE_TIMEOUT:-10}"
+  mkdir -p -- "${cache%/*}" 2>/dev/null
+
+  out=$(timeout "$timeout_s" "$bin" -p /usage 2>&1) || rc=$?
+
+  if [[ -n "$out" ]] && grep -Eqi -- "$ENG_AUTH_RE" <<<"$out"; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+
+  if [[ $eng == agy && $rc == 0 && -n "$out" ]]; then
+    printf '%s\n' "$out" >"$cache.tmp" && mv -f -- "$cache.tmp" "$cache"
+    printf '%s\n' "$out"
+    return 0
+  elif [[ $eng == copilot && -n "$out" ]] && { [[ $rc == 0 ]] || grep -Eqi 'exceeded|quota|rate.?limit|ai credits' <<<"$out"; }; then
+    printf '%s\n' "$out" >"$cache.tmp" && mv -f -- "$cache.tmp" "$cache"
+    printf '%s\n' "$out"
+    return 0
+  fi
+
+  return 1
+}
+
+# Formatted usage line(s) for ENGINE, using NOW for reset times.
+eng_usage() { # ENGINE [NOW]
+  local eng=$1 now=${2:-$(date +%s)}
+  local raw rc=0
+  raw=$(eng_usage_raw "$eng") || rc=$?
+
+  if (( rc == 127 )); then
+    printf '  %s: not installed\n' "$eng"
+    return 0
+  elif (( rc != 0 )); then
+    printf '  %s: probe failed\n' "$eng"
+    return 0
+  fi
+
+  if grep -Eqi -- "$ENG_AUTH_RE" <<<"$raw"; then
+    printf '  %s: not logged in\n' "$eng"
+    return 0
+  fi
+
+  case $eng in
+    agy)
+      local lines
+      lines=$(awk -F'\t' '
+        {
+          pool = $1
+          sub(/ [Mm]odels$/, "", pool)
+          sub(/ [Mm]odel$/, "", pool)
+          if (!seen[pool]++) order[n++] = pool
+          win = tolower($2)
+          pct = $3
+          reset = $4
+          if (index(win, "five hour")) five[pool] = pct
+          else if (index(win, "weekly")) weekly[pool] = pct
+          if (reset != "" && reset != "disabled") {
+            if (resets[pool] == "" || reset < resets[pool]) resets[pool] = reset
+          }
+        }
+        END {
+          for (i = 0; i < n; i++) {
+            p = order[i]
+            print p "\t" five[p] "\t" weekly[p] "\t" resets[p]
+          }
+        }' <<<"$raw" | while IFS=$'\t' read -r pool five weekly reset; do
+        [[ -z "$pool" ]] && continue
+        local parts=""
+        [[ -n "$five" && "$five" != "disabled" ]] && parts="five_hour room $five"
+        if [[ -n "$weekly" && "$weekly" != "disabled" ]]; then
+          [[ -n "$parts" ]] && parts="$parts, weekly room $weekly" || parts="weekly room $weekly"
+        fi
+        local reset_lbl=""
+        if [[ -n "$reset" && "$reset" != "disabled" ]]; then
+          local epoch
+          epoch=$(date -d "$reset" +%s 2>/dev/null || echo 0)
+          if (( epoch > 0 )); then
+            local lbl
+            lbl=$(reset_label "$epoch" "" "$now")
+            [[ -n "$lbl" ]] && reset_lbl=" ($lbl)"
+          fi
+        fi
+        if [[ -n "$parts" ]]; then
+          printf '  agy %s: %s%s\n' "$pool" "$parts" "$reset_lbl"
+        elif [[ "$five" == "disabled" && "$weekly" == "disabled" ]]; then
+          printf '  agy %s: disabled\n' "$pool"
+        fi
+      done)
+      if [[ -n "$lines" ]]; then
+        printf '%s\n' "$lines"
+      else
+        printf '  agy: probe failed\n'
+      fi
+      ;;
+    copilot)
+      if grep -Eiq 'exceeded.*(monthly )?quota|(monthly )?quota.*exceeded' <<<"$raw"; then
+        printf '  copilot: monthly quota exceeded\n'
+      elif grep -Eiq 'monthly quota' <<<"$raw"; then
+        local line
+        line=$(grep -Ei 'monthly quota' <<<"$raw" | head -1)
+        printf '  copilot: %s\n' "$line"
+      elif grep -Eiq 'ai credits[[:space:]]+[1-9][0-9]*' <<<"$raw"; then
+        local credits
+        credits=$(grep -Eio 'ai credits[[:space:]]+[1-9][0-9]*' <<<"$raw" | head -1)
+        printf '  copilot: %s\n' "$credits"
+      elif grep -Eiq 'remaining' <<<"$raw"; then
+        local line
+        line=$(grep -Ei 'remaining' <<<"$raw" | head -1)
+        printf '  copilot: %s\n' "$line"
+      elif grep -Eqi -- "$ENG_LIMIT_RE" <<<"$raw"; then
+        printf '  copilot: monthly quota exceeded\n'
+      else
+        printf '  copilot: monthly quota remaining\n'
+      fi
+      ;;
+  esac
+}
+
 
