@@ -50,7 +50,7 @@ case $cmd in
     if [[ ${1:-} == sync ]]; then shift; exec bash "$here/accounts-sync.sh" "$@"; fi
     # shellcheck source=fleet/lib.sh
     . "$here/lib.sh"
-    now=$(date +%s) best=$(best_account "$now")
+    now=${FLEET_NOW:-$(date +%s)} best=$(best_account "$now")
     for dir in $FLEET_ACCOUNTS; do
       if id=$(account_of "$dir"); then
         read -r five seven <<<"$(headroom "$id" "$now")"
@@ -65,6 +65,7 @@ case $cmd in
     for acct_dir in "$KLEPSYDRA_DIR"/accounts/*; do
       [[ -d "$acct_dir" ]] || continue
       acct=$(basename "$acct_dir")
+      [[ $acct == agy-* ]] && continue
       skip=0
       for dir in $FLEET_ACCOUNTS; do
         if id=$(account_of "$dir") && [[ "$id" == "$acct" ]]; then skip=1; break; fi
@@ -78,6 +79,11 @@ case $cmd in
         .windows | to_entries[] | "\(.key) room \((room(.value) | floor))%"
       ' "$f" 2>/dev/null | tr '\n' ', ' | sed 's/, $//')
       [[ -n $windows_info ]] && printf '  %s: %s, %s\n' "$acct" "$lbl" "$windows_info"
+    done
+    # shellcheck source=fleet/engines.sh
+    . "$here/engines.sh"
+    for eng in "${ENGINES[@]}"; do
+      eng_usage "$eng" "$now"
     done
     ;;
   log)
