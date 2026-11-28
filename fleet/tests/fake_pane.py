@@ -20,6 +20,7 @@ A test steers it through a JSON state file, re-read on every tick:
   rc_delay   seconds before /remote-control's answer shows
   limit_delay  seconds a "limit" submit spins before its synthetic error record and banner
   busy_delay seconds before a submitted turn's spinner shows
+  submit_delay seconds submit() takes before clearing the box and redrawing
   menu       "limit" shows Claude Code's limit menu
   paste_prefix  text typed into the box just before the next paste (AJ
              typing as a paste goes in), then removed from the file
@@ -222,6 +223,9 @@ class Pane:
             json.dump(self.state, f)
 
     def submit(self):
+        delay = float(self.state.get("submit_delay", 0))
+        if delay:
+            time.sleep(delay)
         text = self.input
         self.input = ""
         if text.strip() == "/remote-control":

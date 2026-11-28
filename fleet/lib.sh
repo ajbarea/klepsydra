@@ -552,7 +552,13 @@ await_turn() { # PANE
     echo not-delivered
   fi
 }
-sent_or_started() { started "$1" || { has_input_box "$1" && [[ -z $(input_text "$1") ]]; }; }
+# Input is no longer unsent in the box: a turn is running, the box emptied,
+# or no box shows and a limit banner took its place (a limit banner above an
+# input box that still holds text is a prior limit, not a sent prompt).
+sent_or_started() {
+  busy "$1" && return 0
+  if has_input_box "$1"; then [[ -z $(input_text "$1") ]]; else limit_line "$1" >/dev/null; fi
+}
 
 # Paste inbox file FILE into PANE and send it, only while the box is empty and
 # no turn runs, right before the paste; it is sent only when the box then
