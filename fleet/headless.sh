@@ -127,6 +127,19 @@ reap() { # SID UNIT (job.json's, or empty)
   REAPED=${#seen[@]}
 }
 
+# Monotonic clock in centiseconds: /proc/uptime via uptime_cs, falling back
+# to EPOCHREALTIME (or whole SECONDS) when unavailable.
+now_cs() {
+  if uptime_cs; then
+    NOW_CS=$UPTIME_CS
+  elif [[ ${EPOCHREALTIME:-} =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+    local frac=${BASH_REMATCH[2]}00
+    NOW_CS=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${frac:0:2} ))
+  else
+    NOW_CS=$(( SECONDS * 100 ))
+  fi
+}
+
 # The job's runner, inside its scope: claude, resumed until it ends with its
 # report (at most FLEET_HEADLESS_RESUMES times, within the budget and the job's
 # wall-clock limit), then the reaper and the record.
@@ -160,7 +173,10 @@ run_job() { # NAME
   envargs+=("CLAUDE_CONFIG_DIR=$FLEET_HEADLESS_CONFIG" "BASH_ENV=$FLEET_OOM_TOOL" "KLEPSYDRA_AGENT=$name"
     KLEPSYDRA_HEADLESS=1 CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=2 CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
     CLAUDE_CODE_DISABLE_AGENT_VIEW=1 BASH_DEFAULT_TIMEOUT_MS=960000 BASH_MAX_TIMEOUT_MS=960000)
-  local t0=$SECONDS deadline=$((SECONDS + ${FLEET_HEADLESS_TIMEOUT:-21600}))
+  local timeout_s=${FLEET_HEADLESS_TIMEOUT:-21600}
+  [[ $timeout_s =~ ^[0-9]{1,7}$ ]] && timeout_s=$((10#$timeout_s)) || timeout_s=21600
+  local t0_cs deadline_cs left_cs
+  now_cs; t0_cs=$NOW_CS deadline_cs=$((t0_cs + timeout_s * 100))
   local max_resumes=${FLEET_HEADLESS_RESUMES:-4}
   [[ $max_resumes =~ ^[0-9]{1,3}$ ]] && max_resumes=$((10#$max_resumes)) || max_resumes=4
   local rc=0 resumes=0 waits=0 spent=null sid="" outcome="" res="" last_res="" partial=false lines left rem input text why=""
@@ -173,8 +189,9 @@ run_job() { # NAME
   printf '%s\n' "$CONTINUE" >"$dir/continue.md"
   while :; do
     (( stopping )) && { outcome=stopped; break; }
-    left=$((deadline - SECONDS))
-    (( left > 0 )) || { rc=124; outcome=timeout; break; }
+    now_cs; left_cs=$((deadline_cs - NOW_CS))
+    (( left_cs > 0 )) || { rc=124; outcome=timeout; break; }
+    printf -v left '%d.%02d' "$((left_cs / 100))" "$((left_cs % 100))"
     args=(-p --model "$model" --max-budget-usd "$budget")
     input=$dir/brief.md
     if [[ -n $sid ]]; then
@@ -246,7 +263,9 @@ run_job() { # NAME
       cost_usd="$spent" budget_left_usd="$rem" said="$(tail -c 200 <<<"$text" | tr '\n' ' ')"
   done
   trap - TERM INT HUP
-  local secs=$((SECONDS - t0)) last rec
+  now_cs
+  local secs=$(( (NOW_CS - t0_cs) / 100 )) last rec
+  (( secs < 0 )) && secs=0
   last=${res:-'{}'}
   rec=$(jq -c --argjson res "$last" --argjson exit "$rc" --argjson secs "$secs" --arg ended "$(date -u +%FT%TZ)" \
     --arg outcome "$outcome" --argjson spent "$spent" --argjson resumes "$resumes" --argjson reaped "${REAPED_ALL:-0}" \
