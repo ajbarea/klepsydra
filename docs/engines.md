@@ -60,9 +60,10 @@ When a new model appears:
 
 - **Prompt shape.** Put the answer first in the task and ask for `path:line`
   citations; `hooks/klepsydra-engine-rules.md` already tells the engine to do
-  both, so the task only has to say what to check and against what. Name the
-  columns of every table next to the table: Copilot misread a row whose column
-  order the brief did not give (friction 11-11 qml-paper).
+  both, so the task only has to say what to check and against what. For `--kind draft`,
+  the helper rules tell the engine that the deliverable is a unified diff written
+  as text in the answer. Name the columns of every table next to the table:
+  Copilot misread a row whose column order the brief did not give (friction 11-11 qml-paper).
 - **File set.** The engine sees committed text files only. Binary files (PDF,
   PNG) are withheld and the lane still runs: a review of a slide bundle
   returned "Waiting for the research subagent..." with status `ok`

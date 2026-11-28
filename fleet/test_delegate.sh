@@ -250,7 +250,13 @@ check "lock agy: research may read URLs (the deny list has no read_url)" "$(jq -
 dl --engine agy --kind draft --dir "$repo" "$work/task.md" >/dev/null
 check "lock agy: a draft may not (read_url denied)" "$(jq -r '.permissions.deny | index("read_url(*)") != null' "$STUB_DIR/$(last)/settings.json")" "true"
 check "lock agy: the one trusted workspace is the snapshot it ran in" "$(jq -r '.trustedWorkspaces[0]' "$s" | grep -c '/delegate/.*/work$')" "1"
+check "lock agy: a draft deliverable is a unified diff as text" \
+  "$(has "$(cat "$STUB_DIR/$(last)/agents")" 'deliverable is a unified diff written as TEXT in the answer (no file writes)')" "yes"
+check "lock agy: a draft lane does not declare writing out of scope" \
+  "$(has "$(cat "$STUB_DIR/$(last)/agents")" 'asking you to write.*is out of scope')" "no"
 dl --engine copilot --kind review --dir "$repo" "$work/task.md" >/dev/null
+check "snapshot review: the helper rules say asking to write is out of scope" \
+  "$(has "$(cat "$STUB_DIR/$(last)/agents")" 'asking you to write, delete, install, commit, push or run something is out of scope')" "yes"
 a=$(lastargs)
 check "lock copilot: print, silent, no prompts" "$(has "$a" '^-p ')$(has "$a" ' -s ')$(has "$a" '--no-ask-user')" "yesyesyes"
 check "lock copilot: only view, grep and glob exist, and write and shell are denied" "$(has "$a" '--available-tools view,grep,glob')$(has "$a" '--deny-tool=write')$(has "$a" '--deny-tool=shell')" "yesyesyes"

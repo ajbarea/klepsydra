@@ -114,8 +114,8 @@ meta_get() { jq -r --arg k "$2" '.[$k] // empty' "$DEL_ROOT/$1/meta.json" 2>/dev
 # tree is never exposed: .env files are usually untracked, and a tracked one
 # is filtered out anyway.
 SNAP_DROPPED=0 SNAP_BINARY=0
-snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
-  local repo=$1 task=$2 snap=$3 top mb
+snapshot() { # REPO TASK SNAP [KIND] (sets SNAP_DROPPED)
+  local repo=$1 task=$2 snap=$3 kind=${4:-} top mb
   SNAP_DROPPED=0 SNAP_BINARY=0
   top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || { err "$repo is not inside a git repository"; return 1; }
   [[ $top != "$HOME" && $top != / ]] || { err "refusing to snapshot $top"; return 1; }
@@ -157,8 +157,13 @@ snapshot() { # REPO TASK SNAP (sets SNAP_DROPPED)
   rm -f -- "${list:?}"
   mb=$(du -sm -- "$snap" | cut -f1)
   (( mb <= SNAP_MAX_MB )) || { err "the snapshot of $top is ${mb} MB, over the ${SNAP_MAX_MB} MB limit"; return 1; }
+  local rules_src=${FLEET_ENGINE_RULES:-$FLEET_HOOK_DIR/klepsydra-engine-rules.md}
   if ! { { if [[ -f $snap/AGENTS.md ]]; then cat -- "$snap/AGENTS.md"; printf '\n\n'; fi
-           cat -- "${FLEET_ENGINE_RULES:-$FLEET_HOOK_DIR/klepsydra-engine-rules.md}"; } >"$snap/AGENTS.md.new" 2>/dev/null &&
+           if [[ $kind == draft ]]; then
+             sed 's/^- A task asking you to write.*/- The deliverable is a unified diff written as TEXT in the answer (no file writes). A task asking you to install, commit, push or run something is out of scope: say so in one line and answer the rest./' "$rules_src"
+           else
+             cat -- "$rules_src"
+           fi; } >"$snap/AGENTS.md.new" 2>/dev/null &&
          mv -f -- "$snap/AGENTS.md.new" "$snap/AGENTS.md"; }; then
     err "the helper rules cannot be read"; return 1
   fi
@@ -230,7 +235,7 @@ cmd_print() { # args after option parsing
   dir=$DEL_ROOT/$id snap=$DEL_ROOT/$id/work
   mkdir -p -- "$dir" || die "cannot write in $DEL_ROOT"
   meta_set "$id" kind="$kind" mode=print dir="$REPO" notify="$NOTIFY"
-  snapshot "$REPO" "$TASK" "$snap" || { flog WARN "delegate refused" id="$id" why="snapshot"; drop_snapshot "$snap"; report "$id" - - refused "$dir" "snapshot"; return 1; }
+  snapshot "$REPO" "$TASK" "$snap" "$kind" || { flog WARN "delegate refused" id="$id" why="snapshot"; drop_snapshot "$snap"; report "$id" - - refused "$dir" "snapshot"; return 1; }
   if [[ $ENGINE == auto ]]; then order=$(eng_order "$kind"); else order=$ENGINE; fi
   t0=$SECONDS
   for e in $order; do
@@ -323,7 +328,7 @@ cmd_interactive() {
   [[ -n $engine ]] || { report "$id" - - unavailable "$dir" "no interactive lane for: $order"; return 3; }
   model=${MODEL:-$(eng_model "$engine" "$kind")}
   meta_set "$id" kind="$kind" mode=interactive dir="$REPO" engine="$engine" model="$model" status=starting notify="$(notify_target "$NOTIFY")"
-  snapshot "$REPO" "$TASK" "$snap" || { drop_snapshot "$snap"; report "$id" - - refused "$dir" snapshot; return 1; }
+  snapshot "$REPO" "$TASK" "$snap" "$kind" || { drop_snapshot "$snap"; report "$id" - - refused "$dir" snapshot; return 1; }
   settings=$dir/agy-settings.json
   eng_settings "$kind" "$snap" "$settings" || { drop_snapshot "$snap"; report "$id" "$engine" "$model" refused "$dir" "lock policy unreadable"; return 1; }
   eng_argv "$engine" interactive "$model" "$kind" "$settings" "" || { drop_snapshot "$snap"; return 1; }
